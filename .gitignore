@@ -1,0 +1,13 @@
+# 가상환경 (라이브러리가 쌓이는 큰 폴더라 올리지 않음)
+.venv/
+
+# Python이 자동으로 만드는 캐시
+__pycache__/
+*.pyc
+
+# Google 인증 파일 (비밀번호와 같음, 절대 올리면 안 됨)
+credentials.json
+token.json
+
+# 개인 데이터
+studyflow.db
