@@ -1,0 +1,47 @@
+/* 모든 요소의 기본 바깥 여백을 없애서 화면이 가장자리까지 쓰이게 한다 */
+body {
+    margin: 0;
+    font-family: "Malgun Gothic", sans-serif;
+}
+
+/* 탭 버튼 영역: 버튼들을 가로로 나란히 놓는다 */
+nav {
+    display: flex;
+    background-color: #f0f0f0;
+    border-bottom: 1px solid #cccccc;
+}
+
+/* 탭 버튼 하나하나의 기본 모양 */
+.tab-button {
+    padding: 12px 24px;
+    border: none;
+    background: none;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+/* 마우스를 올렸을 때 */
+.tab-button:hover {
+    background-color: #e0e0e0;
+}
+
+/* 지금 선택된 탭 버튼: 아래에 파란 줄을 긋고 글자를 굵게 한다 */
+.tab-button.active {
+    border-bottom: 3px solid #4a7cff;
+    font-weight: bold;
+}
+
+/* 탭 내용 영역 안쪽 여백 */
+main {
+    padding: 20px;
+}
+
+/* 탭 내용은 기본적으로 숨긴다 */
+.tab-content {
+    display: none;
+}
+
+/* active가 붙은 내용만 보여준다 */
+.tab-content.active {
+    display: block;
+}

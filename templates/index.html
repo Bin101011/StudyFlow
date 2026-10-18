@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <!-- 글자가 깨지지 않게 한글(UTF-8)을 쓴다고 알려준다 -->
+    <meta charset="UTF-8">
+    <!-- 브라우저 탭이나 창 제목줄에 표시되는 이름 -->
+    <title>StudyFlow</title>
+    <!-- static 폴더의 style.css를 불러와서 화면에 적용한다 -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <!-- 탭 버튼들이 모이는 영역. active가 붙은 버튼이 "지금 선택된 탭"이다 -->
+    <nav>
+        <button class="tab-button active" data-tab="calendar">캘린더</button>
+        <button class="tab-button" data-tab="today">오늘</button>
+        <button class="tab-button" data-tab="projects">프로젝트</button>
+        <button class="tab-button" data-tab="settings">설정</button>
+    </nav>
+
+    <!-- 탭을 누르면 보여줄 내용들이 모이는 영역. active가 붙은 내용만 화면에 보인다 -->
+    <main>
+        <div class="tab-content active" id="calendar">
+            <h1>캘린더</h1>
+            <p>여기는 캘린더 탭입니다.</p>
+        </div>
+        <div class="tab-content" id="today">
+            <h1>오늘</h1>
+            <p>여기는 오늘 탭입니다.</p>
+        </div>
+        <div class="tab-content" id="projects">
+            <h1>프로젝트</h1>
+            <p>여기는 프로젝트 탭입니다.</p>
+        </div>
+        <div class="tab-content" id="settings">
+            <h1>설정</h1>
+            <p>여기는 설정 탭입니다.</p>
+        </div>
+    </main>
+
+    <!-- 버튼과 내용이 모두 만들어진 뒤에 실행되도록 body 맨 끝에서 app.js를 불러온다 -->
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
