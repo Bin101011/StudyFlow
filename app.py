@@ -68,6 +68,11 @@ def get_thread_service(creds):
     return service
 
 
+def can_edit(calendar):
+    """이 캘린더에 일정을 쓸 수 있는지 알려준다. accessRole이 owner(소유자)나 writer(편집자)면 쓸 수 있다."""
+    return calendar.get("accessRole") in ("owner", "writer")
+
+
 def fetch_calendar_events(creds, calendar, start, end):
     """캘린더 하나의 일정을 가져와서 FullCalendar 형식의 리스트로 돌려준다."""
     # Google 연결(service)은 여러 스레드가 함께 쓰면 SSL 오류가 난다.
@@ -96,6 +101,8 @@ def fetch_calendar_events(creds, calendar, start, end):
             "end": event_end,
             "color": calendar.get("backgroundColor", "#3788d8"),  # 일정 색 = 캘린더 색
             "calendarId": calendar["id"],  # 나중에 체크박스로 캘린더별 숨기기에 쓴다
+            "editable": can_edit(calendar),  # False면 FullCalendar가 드래그를 막아준다
+            "canEdit": can_edit(calendar),  # 클릭했을 때 수정 창을 열어도 되는지 app.js가 확인하는 용도
         })
     return result
 
@@ -148,6 +155,8 @@ def api_calendars():
             "id": calendar["id"],  # 캘린더 고유 번호
             "name": calendar["summary"],  # 캘린더 이름
             "color": calendar.get("backgroundColor", "#3788d8"),  # Google에서 정한 색. 없으면 기본 파랑
+            "canEdit": can_edit(calendar),  # 일정을 추가/수정할 수 있는 캘린더인가 (공휴일 캘린더 등은 False)
+            "primary": calendar.get("primary", False),  # 내 기본 캘린더인가
         })
     return jsonify(result)
 
@@ -177,6 +186,90 @@ def api_events():
     result = [event for events in per_calendar for event in events]
 
     return jsonify(result)
+
+
+def missing_key(data, keys):
+    """data에 없는 키가 있으면 '요청이 잘못됐다'는 뜻의 400 응답을 만들어 돌려준다. 다 있으면 None."""
+    for key in keys:
+        if key not in data:
+            return jsonify({"error": f"'{key}' 값이 없습니다."}), 400
+    return None
+
+
+def run_google_write(action, operation):
+    """Google에 쓰는 일(추가/수정/삭제)을 작업자 스레드에서 실행한다.
+    성공하면 None, Google이 거절하면 화면에 보여줄 오류 응답을 돌려준다.
+    operation: service를 받아서 Google 요청을 보내는 함수"""
+    creds = get_creds()
+
+    def job():
+        # 작업자 스레드 안에서 실행되므로, 그 스레드 전용 Google 연결을 쓴다
+        return operation(get_thread_service(creds))
+
+    try:
+        # _pool.submit(...).result(): 작업자 한 명에게 일을 시키고 끝날 때까지 기다린다
+        _pool.submit(job).result()
+    except HttpError as error:
+        # Google이 거절했을 때(권한 없음, 잘못된 값 등). 화면이 오류를 보여줄 수 있게 이유를 담아 보낸다
+        print(f"[일정 {action} 실패] {error}")
+        return jsonify({"error": f"Google에 일정을 {action}하지 못했습니다."}), 502
+    return None
+
+
+# 같은 주소 "/api/events"라도 POST 요청이 오면 "일정 새로 만들기"로 처리한다.
+# GET은 가져오기, POST는 만들기. 메서드가 다르면 같은 주소로도 서로 다른 함수가 실행된다
+@app.route("/api/events", methods=["POST"])
+def api_create_event():
+    # request.get_json(): 화면이 body에 담아 보낸 JSON 글자를 파이썬 딕셔너리로 바꿔 꺼낸다
+    data = request.get_json()
+    error_response = missing_key(data, ("calendarId", "title", "allDay", "start", "end"))
+    if error_response:
+        return error_response
+
+    error_response = run_google_write("추가", lambda service: google_calendar.create_event(
+        service, data["calendarId"], data["title"], data["allDay"], data["start"], data["end"]
+    ))
+    if error_response:
+        return error_response
+
+    # 201: "새로 만들어졌다"는 뜻의 성공 번호
+    return jsonify({"ok": True}), 201
+
+
+# 주소에 일정 번호가 붙은 "/api/events/<event_id>"는 일정 하나를 가리킨다.
+# <event_id> 자리에 온 글자가 함수의 event_id 값으로 들어온다.
+# PATCH: 일정의 일부(제목, 시간)만 고친다. 제목을 안 보내면 제목은 그대로 둔다 (드래그할 때)
+@app.route("/api/events/<event_id>", methods=["PATCH"])
+def api_update_event(event_id):
+    data = request.get_json()
+    error_response = missing_key(data, ("calendarId", "allDay", "start", "end"))
+    if error_response:
+        return error_response
+
+    error_response = run_google_write("수정", lambda service: google_calendar.update_event(
+        service, data["calendarId"], event_id, data["allDay"], data["start"], data["end"],
+        title=data.get("title"),
+    ))
+    if error_response:
+        return error_response
+
+    return jsonify({"ok": True})
+
+
+# DELETE: 일정을 지운다. 어느 캘린더의 일정인지는 주소 뒤(?calendarId=...)로 받는다
+@app.route("/api/events/<event_id>", methods=["DELETE"])
+def api_delete_event(event_id):
+    calendar_id = request.args.get("calendarId")
+    if not calendar_id:
+        return jsonify({"error": "'calendarId' 값이 없습니다."}), 400
+
+    error_response = run_google_write("삭제", lambda service: google_calendar.delete_event(
+        service, calendar_id, event_id
+    ))
+    if error_response:
+        return error_response
+
+    return jsonify({"ok": True})
 
 
 # 이 파일을 직접 실행했을 때만 서버를 켠다

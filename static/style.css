@@ -72,6 +72,95 @@ main {
     margin: 0 6px;
 }
 
+/* 일정 추가/수정 창 */
+#event-dialog {
+    width: 360px;
+    border: 1px solid #cccccc;
+    border-radius: 8px;
+    padding: 20px;
+}
+
+/* showModal()로 열었을 때 창 뒤를 어둡게 덮는 막 */
+#event-dialog::backdrop {
+    background-color: rgba(0, 0, 0, 0.3);
+}
+
+#event-dialog h2 {
+    margin: 0 0 16px;
+    font-size: 18px;
+}
+
+/* 창 안의 한 줄: 이름 글자 + 입력 칸을 가로로 놓는다 */
+.dialog-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+/* 제목, 캘린더 칸은 남은 폭을 채운다 */
+.dialog-row input[type="text"],
+.dialog-row select {
+    flex: 1;
+}
+
+.dialog-error {
+    min-height: 1.2em;
+    margin: 0 0 8px;
+    color: #d93025;
+    font-size: 14px;
+}
+
+.dialog-buttons {
+    display: flex;
+    gap: 8px;
+}
+
+/* 삭제 버튼과 나머지 버튼 사이를 벌리는 빈 칸 */
+.dialog-buttons .spacer {
+    flex: 1;
+}
+
+.dialog-buttons button {
+    padding: 6px 14px;
+    cursor: pointer;
+}
+
+.dialog-buttons .primary {
+    background-color: #4a7cff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+}
+
+.dialog-buttons .danger {
+    color: #d93025;
+}
+
+/* hidden 속성이 붙은 요소는 숨긴다 (위의 flex 설정이 hidden을 덮어쓰지 않게 한다) */
+[hidden] {
+    display: none !important;
+}
+
+/* 화면 아래 가운데에 잠깐 떴다 사라지는 알림 */
+#toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 10px 18px;
+    background-color: #323232;
+    color: white;
+    border-radius: 6px;
+    opacity: 0;
+    pointer-events: none;  /* 안 보일 때는 클릭을 가로채지 않는다 */
+    transition: opacity 0.2s;
+}
+
+#toast.show {
+    opacity: 1;
+}
+
 /* 캘린더 목록의 체크박스 한 줄 */
 #calendar-list label {
     display: block;

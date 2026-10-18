@@ -91,6 +91,56 @@ def get_events(service, calendar_id, start, end):
     return result.get("items", [])
 
 
+def to_local_datetime(text):
+    """'2026-10-18T09:00' 같은 글자를 '2026-10-18T09:00:00+09:00'처럼 시간대가 붙은 글자로 바꾼다."""
+    # fromisoformat: 글자 → datetime. 시간대가 없는 값이면 astimezone()이 이 컴퓨터의 시간대를 붙여준다
+    return datetime.datetime.fromisoformat(text).astimezone().isoformat()
+
+
+def build_time_fields(all_day, start, end):
+    """일정의 시작/끝을 Google이 요구하는 모양의 딕셔너리로 만든다.
+    start, end는 FullCalendar와 같은 규칙이다. 종일 일정은 '2026-10-18' 형식이고 end는 포함하지 않는 날짜다.
+    (하루짜리 종일 일정이면 end는 다음 날)"""
+    if all_day:
+        # 종일 일정은 "date"에 날짜만 넣는다
+        return {"start": {"date": start}, "end": {"date": end}}
+    # 시간 있는 일정은 "dateTime"에 시간대가 붙은 시각을 넣는다
+    return {
+        "start": {"dateTime": to_local_datetime(start)},
+        "end": {"dateTime": to_local_datetime(end)},
+    }
+
+
+def create_event(service, calendar_id, title, all_day, start, end):
+    """캘린더에 일정 하나를 새로 만들고, Google이 돌려준 일정 정보를 그대로 돌려준다."""
+    body = {"summary": title, **build_time_fields(all_day, start, end)}
+
+    # insert: 새 일정을 만든다. 이게 HTTP의 POST 요청에 해당한다
+    return service.events().insert(calendarId=calendar_id, body=body).execute()
+
+
+def update_event(service, calendar_id, event_id, all_day, start, end, title=None):
+    """일정의 시간(과 제목)을 고친다. title이 None이면 제목은 건드리지 않는다(드래그할 때)."""
+    body = build_time_fields(all_day, start, end)
+
+    # 종일 ↔ 시간 있는 일정으로 바뀔 때, 반대쪽 값("date" 또는 "dateTime")이 남아 있으면 Google이 거절한다.
+    # PATCH에서는 값을 None(JSON의 null)으로 보내면 그 값을 지우라는 뜻이다
+    stale_key = "dateTime" if all_day else "date"
+    body["start"][stale_key] = None
+    body["end"][stale_key] = None
+
+    if title is not None:
+        body["summary"] = title
+
+    # patch: 보낸 항목만 고친다. 이게 HTTP의 PATCH 요청에 해당한다
+    return service.events().patch(calendarId=calendar_id, eventId=event_id, body=body).execute()
+
+
+def delete_event(service, calendar_id, event_id):
+    """일정 하나를 지운다. 이게 HTTP의 DELETE 요청에 해당한다."""
+    service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+
+
 def format_event(event):
     """일정 하나를 '10-18 14:00 - 제목' 형태의 글자로 만든다."""
     # 1단계: 제목 꺼내기
