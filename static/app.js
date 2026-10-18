@@ -21,5 +21,3 @@ tabButtons.forEach(function (button) {
         document.getElementById(tabName).classList.add("active");
     });
 });
-
-console.log(tabButtons);
