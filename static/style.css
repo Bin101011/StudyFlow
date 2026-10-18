@@ -45,3 +45,36 @@ main {
 .tab-content.active {
     display: block;
 }
+
+/* 캘린더 탭: 왼쪽 목록과 오른쪽 달력을 가로로 나란히 놓는다 */
+.calendar-layout {
+    display: flex;
+    gap: 20px;
+}
+
+/* 왼쪽 캘린더 목록은 폭을 200px로 고정한다 */
+#calendar-list {
+    width: 200px;
+    flex-shrink: 0;  /* 달력이 넓어져도 목록이 줄어들지 않게 한다 */
+}
+
+/* 오른쪽 달력은 남은 폭을 전부 차지한다 */
+#calendar-view {
+    flex: 1;
+}
+
+/* 캘린더 이름 앞에 붙는 색깔 동그라미. 색은 app.js가 캘린더마다 넣어준다 */
+.color-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin: 0 6px;
+}
+
+/* 캘린더 목록의 체크박스 한 줄 */
+#calendar-list label {
+    display: block;
+    padding: 4px 0;
+    cursor: pointer;
+}

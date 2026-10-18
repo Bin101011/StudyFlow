@@ -56,11 +56,15 @@ def get_week_range():
     return monday, next_monday
 
 
-def get_service():
-    """로그인 정보로 Google Calendar API를 호출할 수 있는 service 객체를 만든다."""
-    creds = get_credentials()
+def build_service(creds):
+    """이미 있는 로그인 정보(creds)로 service 객체를 만든다. 파일을 읽지 않아 빠르다."""
     # "calendar" API의 "v3" 버전을 쓰겠다는 뜻
     return build("calendar", "v3", credentials=creds)
+
+
+def get_service():
+    """로그인 정보를 준비한 뒤 service 객체를 만든다."""
+    return build_service(get_credentials())
 
 
 def get_calendars(service):
