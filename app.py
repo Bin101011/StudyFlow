@@ -27,8 +27,14 @@ import google_calendar
 # 화면 설정값을 settings.json에 읽고 쓰는 함수들
 import settings_store
 
+# 할 일을 studyflow.db에 읽고 쓰는 함수들
+import database
+
 # Flask 앱(서버) 하나를 만든다. __name__은 "이 파일이 어디 있는지" 알려주는 값이다
 app = Flask(__name__)
+
+# 할 일 테이블이 없으면 만든다. 서버가 켜질 때 한 번 실행된다
+database.init_db()
 
 # 파일(HTML, JS, CSS)을 고쳤는데 창에는 예전 모습이 남아 있는 일이 없도록 한다.
 # no-cache: "저장해둔 파일을 그냥 쓰지 말고, 쓰기 전에 서버에 바뀌었는지 물어봐라"는 뜻이다.
@@ -344,6 +350,79 @@ def api_get_settings():
 def api_save_settings():
     saved = settings_store.save_settings(request.get_json())
     return jsonify(saved)
+
+
+def valid_date(text):
+    """'2026-10-19' 모양의 진짜 날짜인지 확인한다. 맞으면 True."""
+    try:
+        datetime.date.fromisoformat(text)
+        return isinstance(text, str) and len(text) == 10
+    except (TypeError, ValueError):
+        return False
+
+
+# 할 일 목록: 그 날짜의 할 일(tasks)과, 그 날짜 이전에 잡혀 있는데 끝내지 못한 할 일(overdue)을 함께 돌려준다.
+# 날짜는 화면이 이 컴퓨터의 "오늘"을 계산해서 ?date=2026-10-19 로 보낸다
+@app.route("/api/tasks")
+def api_get_tasks():
+    date = request.args.get("date", "")
+    if not valid_date(date):
+        return jsonify({"error": "'date'는 2026-10-19 같은 날짜여야 합니다."}), 400
+    return jsonify({
+        "tasks": database.list_tasks(date),
+        "overdue": database.list_overdue_tasks(date),
+    })
+
+
+# 할 일 추가 (POST)
+@app.route("/api/tasks", methods=["POST"])
+def api_create_task():
+    data = request.get_json()
+    error_response = missing_key(data, ("content", "date"))
+    if error_response:
+        return error_response
+
+    content = str(data["content"]).strip()
+    if not content:
+        return jsonify({"error": "할 일 내용을 입력하세요."}), 400
+    if not valid_date(data["date"]):
+        return jsonify({"error": "'date'는 2026-10-19 같은 날짜여야 합니다."}), 400
+
+    # 만들어진 할 일(번호 포함)을 돌려준다. 201: "새로 만들어졌다"
+    return jsonify(database.add_task(content, data["date"])), 201
+
+
+# 할 일 일부 수정 (PATCH): 체크 표시(done), 날짜 이동(date), 내용 고치기(content). 보낸 것만 바꾼다
+@app.route("/api/tasks/<int:task_id>", methods=["PATCH"])
+def api_update_task(task_id):
+    data = request.get_json()
+    changes = {}
+
+    if "done" in data:
+        changes["done"] = 1 if data["done"] else 0  # true/false를 SQLite에 저장하는 1/0으로 바꾼다
+    if "date" in data:
+        if not valid_date(data["date"]):
+            return jsonify({"error": "'date'는 2026-10-19 같은 날짜여야 합니다."}), 400
+        changes["date"] = data["date"]
+    if "content" in data:
+        content = str(data["content"]).strip()
+        if not content:
+            return jsonify({"error": "할 일 내용을 입력하세요."}), 400
+        changes["content"] = content
+
+    if not changes:
+        return jsonify({"error": "바꿀 값이 없습니다."}), 400
+    if not database.update_task(task_id, changes):
+        return jsonify({"error": "그 할 일을 찾을 수 없습니다."}), 404
+    return jsonify({"ok": True})
+
+
+# 할 일 삭제 (DELETE)
+@app.route("/api/tasks/<int:task_id>", methods=["DELETE"])
+def api_delete_task(task_id):
+    if not database.delete_task(task_id):
+        return jsonify({"error": "그 할 일을 찾을 수 없습니다."}), 404
+    return jsonify({"ok": True})
 
 
 # 이 파일을 직접 실행했을 때만 서버를 켠다

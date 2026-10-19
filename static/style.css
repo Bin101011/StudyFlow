@@ -135,6 +135,118 @@ input.color-dot::-webkit-color-swatch {
     border-radius: 50%;
 }
 
+/* 오늘 탭: 왼쪽(일정)과 오른쪽(할 일)을 가로로 나란히 놓는다. 글자 크기는 설정 탭의 "글자 크기"를 따른다 */
+.today-layout {
+    display: flex;
+    gap: 40px;
+    font-size: var(--cal-font-size);
+}
+
+/* 두 칸이 같은 폭을 나눠 갖는다. min-width: 0은 긴 글자가 칸을 밀어내지 않게 하는 것 */
+.today-column {
+    flex: 1;
+    min-width: 0;
+}
+
+.today-column h2 {
+    margin: 0 0 12px;
+    font-size: 1.2em;
+}
+
+.today-column h3 {
+    margin: 16px 0 6px;
+    font-size: 1em;
+    color: #d93025;
+}
+
+/* 일정과 할 일 목록: <ul>의 기본 점과 들여쓰기를 없앤다 */
+.today-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.today-empty {
+    color: #888888;
+    padding: 6px 0;
+}
+
+/* 일정 한 줄: 색 동그라미 + 시간 + 제목 */
+.today-event {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 0;
+    border-bottom: 1px solid #eeeeee;
+}
+
+.event-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.event-time {
+    width: 6.5em;
+    flex-shrink: 0;
+    color: #555555;
+}
+
+/* 할 일 입력 줄 */
+.task-add {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.task-add input {
+    flex: 1;
+    padding: 6px 8px;
+    font-size: inherit;
+}
+
+.task-add button {
+    padding: 6px 14px;
+    cursor: pointer;
+}
+
+/* 할 일 한 줄: 체크박스 + 내용 + (날짜) + 버튼들 */
+.task-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 0;
+    border-bottom: 1px solid #eeeeee;
+}
+
+.task-content {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;  /* 띄어쓰기 없는 긴 글자도 칸 안에서 줄바꿈된다 */
+}
+
+/* 끝낸 할 일은 회색에 취소선 */
+.task-content.done {
+    color: #999999;
+    text-decoration: line-through;
+}
+
+.task-date {
+    color: #d93025;
+    font-size: 0.9em;
+}
+
+.task-row button {
+    padding: 2px 8px;
+    font-size: 0.85em;
+    cursor: pointer;
+}
+
+.task-row button.danger {
+    color: #d93025;
+}
+
 /* 설정 탭 */
 .settings-section {
     max-width: 520px;

@@ -31,8 +31,34 @@
             </div>
         </div>
         <div class="tab-content" id="today">
-            <h1>오늘</h1>
-            <p>여기는 오늘 탭입니다.</p>
+            <!-- 맨 위: 오늘 날짜 제목 (예: 2026년 10월 19일 월요일). app.js가 채운다 -->
+            <h1 id="today-title"></h1>
+
+            <!-- 오늘 탭 전체를 왼쪽(오늘의 일정)과 오른쪽(오늘 할 일)으로 나누는 상자 -->
+            <div class="today-layout">
+                <section class="today-column">
+                    <h2>오늘의 일정</h2>
+                    <!-- 일정 줄들은 app.js가 /api/events에서 받아 여기에 만든다 -->
+                    <ul id="today-events" class="today-list"></ul>
+                </section>
+
+                <section class="today-column">
+                    <h2>오늘 할 일</h2>
+                    <!-- 할 일 입력 줄: 글자를 쓰고 Enter를 누르거나 추가 버튼을 누른다 -->
+                    <div class="task-add">
+                        <input type="text" id="task-input" placeholder="할 일을 입력하고 Enter">
+                        <button id="task-add-button">추가</button>
+                    </div>
+
+                    <!-- 지난 날짜에 끝내지 못한 할 일. 있을 때만 보인다 -->
+                    <div id="overdue-section" hidden>
+                        <h3>밀린 할 일</h3>
+                        <ul id="overdue-tasks" class="today-list"></ul>
+                    </div>
+
+                    <ul id="today-tasks" class="today-list"></ul>
+                </section>
+            </div>
         </div>
         <div class="tab-content" id="projects">
             <h1>프로젝트</h1>
