@@ -1,6 +1,9 @@
 # 날짜를 다루는 파이썬 기본 도구
 import datetime
 
+# 글자가 정해진 모양인지 검사하는 도구(정규식). 색이 "#rrggbb" 모양인지 확인하는 데 쓴다
+import re
+
 # 여러 요청이 동시에 오더라도 한 번에 하나씩만 처리하도록 줄 세우는 도구(Lock)
 import threading
 
@@ -21,8 +24,22 @@ from flask import Flask, jsonify, render_template, request
 # google_calendar.py에서 만들어둔 함수들을 가져온다
 import google_calendar
 
+# 화면 설정값을 settings.json에 읽고 쓰는 함수들
+import settings_store
+
 # Flask 앱(서버) 하나를 만든다. __name__은 "이 파일이 어디 있는지" 알려주는 값이다
 app = Flask(__name__)
+
+# 파일(HTML, JS, CSS)을 고쳤는데 창에는 예전 모습이 남아 있는 일이 없도록 한다.
+# no-cache: "저장해둔 파일을 그냥 쓰지 말고, 쓰기 전에 서버에 바뀌었는지 물어봐라"는 뜻이다.
+# (안 바뀌었으면 서버가 304로 짧게 답해서 느려지지 않는다)
+app.config["TEMPLATES_AUTO_RELOAD"] = True  # HTML 템플릿도 고치면 서버를 껐다 켜지 않아도 다시 읽는다
+
+
+@app.after_request
+def disable_browser_cache(response):
+    response.headers["Cache-Control"] = "no-cache"
+    return response
 
 # 로그인 정보(creds)를 준비하는 동안 다른 요청이 끼어들지 못하게 하는 열쇠.
 # 동시에 여러 요청이 token.json을 읽고 쓰면 파일이 꼬일 수 있어서 필요하다
@@ -32,6 +49,9 @@ _creds_lock = threading.Lock()
 _calendar_cache = {"data": None, "time": 0}
 _calendar_lock = threading.Lock()
 CALENDAR_CACHE_SECONDS = 600  # 10분이 지나면 목록을 다시 가져온다
+
+# "#" 다음에 16진수(0-9, a-f) 6글자. 예: #9fc6e7
+COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 # 일정을 가져오는 작업자(스레드) 8명을 미리 만들어 계속 살려둔다.
 # 요청 때마다 새로 만들면 그때마다 Google 연결도 새로 만들어야 해서 느리다
@@ -196,9 +216,10 @@ def missing_key(data, keys):
     return None
 
 
-def run_google_write(action, operation):
-    """Google에 쓰는 일(추가/수정/삭제)을 작업자 스레드에서 실행한다.
+def run_google_write(failure_message, operation):
+    """Google에 쓰는 일(추가/수정/삭제/캘린더 색 변경)을 작업자 스레드에서 실행한다.
     성공하면 None, Google이 거절하면 화면에 보여줄 오류 응답을 돌려준다.
+    failure_message: 실패했을 때 화면에 보여줄 문장 (예: "일정을 추가하지 못했습니다.")
     operation: service를 받아서 Google 요청을 보내는 함수"""
     creds = get_creds()
 
@@ -211,8 +232,12 @@ def run_google_write(action, operation):
         _pool.submit(job).result()
     except HttpError as error:
         # Google이 거절했을 때(권한 없음, 잘못된 값 등). 화면이 오류를 보여줄 수 있게 이유를 담아 보낸다
-        print(f"[일정 {action} 실패] {error}")
-        return jsonify({"error": f"Google에 일정을 {action}하지 못했습니다."}), 502
+        print(f"[Google 쓰기 실패] {failure_message} {error}")
+        message = f"Google에 {failure_message}"
+        if error.resp.status == 403:
+            # 403: 권한이 없다는 뜻. 읽기 전용 캘린더이거나, 로그인할 때 받은 권한이 모자란 경우다
+            message += " (권한이 부족합니다. 프로그램을 껐다 켜서 Google 로그인을 다시 해보세요.)"
+        return jsonify({"error": message}), 502
     return None
 
 
@@ -226,7 +251,7 @@ def api_create_event():
     if error_response:
         return error_response
 
-    error_response = run_google_write("추가", lambda service: google_calendar.create_event(
+    error_response = run_google_write("일정을 추가하지 못했습니다.", lambda service: google_calendar.create_event(
         service, data["calendarId"], data["title"], data["allDay"], data["start"], data["end"]
     ))
     if error_response:
@@ -246,7 +271,7 @@ def api_update_event(event_id):
     if error_response:
         return error_response
 
-    error_response = run_google_write("수정", lambda service: google_calendar.update_event(
+    error_response = run_google_write("일정을 수정하지 못했습니다.", lambda service: google_calendar.update_event(
         service, data["calendarId"], event_id, data["allDay"], data["start"], data["end"],
         title=data.get("title"),
     ))
@@ -263,13 +288,62 @@ def api_delete_event(event_id):
     if not calendar_id:
         return jsonify({"error": "'calendarId' 값이 없습니다."}), 400
 
-    error_response = run_google_write("삭제", lambda service: google_calendar.delete_event(
+    error_response = run_google_write("일정을 삭제하지 못했습니다.", lambda service: google_calendar.delete_event(
         service, calendar_id, event_id
     ))
     if error_response:
         return error_response
 
     return jsonify({"ok": True})
+
+
+# 캘린더 색 바꾸기: Google의 "내 캘린더 목록"에서 이 캘린더의 색을 바꾼다 (폰, 웹에도 똑같이 반영된다)
+# 캘린더 id에는 @, # 같은 글자가 들어 있어서 주소에 넣지 않고 body로 받는다
+@app.route("/api/calendar-color", methods=["PATCH"])
+def api_calendar_color():
+    data = request.get_json()
+    error_response = missing_key(data, ("calendarId", "color"))
+    if error_response:
+        return error_response
+
+    # 색은 "#rrggbb" 모양(예: #9fc6e7)이어야 한다
+    color = data["color"]
+    if not isinstance(color, str) or not COLOR_PATTERN.match(color):
+        return jsonify({"error": "색은 #rrggbb 형식이어야 합니다."}), 400
+    color = color.lower()
+
+    error_response = run_google_write("캘린더 색을 바꾸지 못했습니다.", lambda service: google_calendar.set_calendar_color(
+        service, data["calendarId"], color
+    ))
+    if error_response:
+        return error_response
+
+    # 기억해둔 캘린더 목록(캐시)의 색도 새 색으로 바꿔서, 이후에 불러오는 일정도 새 색으로 그려지게 한다
+    with _calendar_lock:
+        for calendar in _calendar_cache["data"] or []:
+            if calendar["id"] == data["calendarId"]:
+                calendar["backgroundColor"] = color
+                calendar["foregroundColor"] = google_calendar.text_color_for(color)
+
+    return jsonify({"ok": True})
+
+
+# 설정 읽기: 저장된 값(values)과 슬라이더 정의(sliders)를 함께 돌려준다.
+# 화면은 sliders를 보고 슬라이더를 만들고, values로 현재 위치를 맞춘다
+@app.route("/api/settings")
+def api_get_settings():
+    return jsonify({
+        "values": settings_store.load_settings(),
+        "sliders": settings_store.SLIDER_DEFINITIONS,
+    })
+
+
+# 설정 저장: 화면이 보낸 값을 정리(범위 밖 값 보정)해서 저장하고, 실제로 저장된 값을 돌려준다.
+# PUT은 "이 자리의 내용을 통째로 이걸로 바꿔라"라는 뜻의 HTTP 메서드다
+@app.route("/api/settings", methods=["PUT"])
+def api_save_settings():
+    saved = settings_store.save_settings(request.get_json())
+    return jsonify(saved)
 
 
 # 이 파일을 직접 실행했을 때만 서버를 켠다

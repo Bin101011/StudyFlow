@@ -1,4 +1,5 @@
 import datetime
+import json
 import os.path
 
 from google.auth.transport.requests import Request
@@ -14,8 +15,18 @@ TOKEN_PATH = os.path.join(BASE_DIR, "token.json")  # 로그인 결과를 저장�
 # 앱이 요청할 권한(스코프). Google Cloud 콘솔에 등록한 두 개와 같아야 한다
 SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",  # 일정 읽기/쓰기
-    "https://www.googleapis.com/auth/calendar.calendarlist.readonly",  # 캘린더 목록 읽기
+    "https://www.googleapis.com/auth/calendar.calendarlist",  # 캘린더 목록 읽기/쓰기 (캘린더 색 변경에 필요)
 ]
+
+
+def has_all_scopes():
+    """token.json에 저장된 권한 목록이 지금 필요한 권한(SCOPES)을 모두 포함하는지 확인한다."""
+    try:
+        with open(TOKEN_PATH, encoding="utf-8") as token_file:
+            saved_scopes = set(json.load(token_file).get("scopes") or [])
+    except (OSError, ValueError):
+        return False
+    return set(SCOPES) <= saved_scopes  # <= : 앞의 집합이 뒤의 집합에 모두 들어 있는가
 
 
 def get_credentials():
@@ -25,6 +36,9 @@ def get_credentials():
     # 1) 이전에 로그인해서 저장해둔 token.json이 있으면 읽어온다
     if os.path.exists(TOKEN_PATH):
         creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
+        # 새 기능 때문에 필요한 권한이 늘었다면, 예전 로그인으로는 부족하다. 새로 로그인하게 한다
+        if not has_all_scopes():
+            creds = None
 
     # 2) 없거나, 있어도 쓸 수 없는 상태라면 새로 준비한다
     if not creds or not creds.valid:
@@ -134,6 +148,24 @@ def update_event(service, calendar_id, event_id, all_day, start, end, title=None
 
     # patch: 보낸 항목만 고친다. 이게 HTTP의 PATCH 요청에 해당한다
     return service.events().patch(calendarId=calendar_id, eventId=event_id, body=body).execute()
+
+
+def text_color_for(background):
+    """배경색(#rrggbb) 위에 놓을 글자색으로 검은색 또는 흰색 중 더 잘 보이는 쪽을 돌려준다."""
+    red, green, blue = (int(background[i:i + 2], 16) for i in (1, 3, 5))
+    # 사람 눈이 느끼는 밝기 공식. 밝은 배경이면 검은 글자, 어두운 배경이면 흰 글자
+    brightness = 0.299 * red + 0.587 * green + 0.114 * blue
+    return "#000000" if brightness > 150 else "#ffffff"
+
+
+def set_calendar_color(service, calendar_id, color):
+    """내 캘린더 목록에서 이 캘린더의 색을 바꾼다. color는 '#rrggbb' 형식이다.
+    이 색은 Google Calendar 웹과 폰 앱에서도 똑같이 바뀐다."""
+    body = {"backgroundColor": color, "foregroundColor": text_color_for(color)}
+    # colorRgbFormat=True: 정해진 색 번호 대신 #rrggbb 값을 직접 쓰겠다는 표시다
+    return service.calendarList().patch(
+        calendarId=calendar_id, body=body, colorRgbFormat=True
+    ).execute()
 
 
 def delete_event(service, calendar_id, event_id):

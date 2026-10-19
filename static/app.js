@@ -1,3 +1,13 @@
+// 화면 코드(JavaScript)에서 오류가 나면 조용히 멈추지 않고 화면 아래 알림으로 알려준다.
+// 창 안에서는 개발자 도구를 열기 어려워서, 무슨 일이 생겼는지 바로 보이게 하려는 것이다
+window.addEventListener("error", function (e) {
+    showToast("화면 오류: " + e.message);
+});
+// await 하다가 실패했는데 아무도 잡지 않은 오류도 같은 방식으로 알려준다
+window.addEventListener("unhandledrejection", function (e) {
+    showToast("화면 오류: " + (e.reason && e.reason.message ? e.reason.message : e.reason));
+});
+
 // 탭 버튼 4개와 탭 내용 4개를 모두 찾아서 변수에 담는다
 const tabButtons = document.querySelectorAll(".tab-button");
 const tabContents = document.querySelectorAll(".tab-content");
@@ -553,6 +563,154 @@ document.addEventListener("keydown", function (e) {
     }
 });
 
+// ---------- 설정 탭 ----------
+
+// 현재 설정값. 서버에서 불러오기 전에도 코드가 안전하도록 최소한의 모양을 미리 만들어 둔다
+let settings = { defaultCalendarId: "" };
+// 일정을 쓸 수 있는 캘린더 목록 ({id, primary}). loadCalendarList가 채운다
+const editableCalendars = [];
+
+const sliderListElement = document.getElementById("slider-list");
+const defaultCalendarSelect = document.getElementById("default-calendar-select");
+
+// 설정 이름 → 그 값을 담는 CSS 변수 이름. 슬라이더 값이 바뀌면 이 CSS 변수를 바꾼다
+const SETTING_CSS_VARS = {
+    fontSize: "--cal-font-size",
+    monthCellHeight: "--month-cell-height",
+    timeSlotHeight: "--time-slot-height",
+    cellMaxWidth: "--cell-max-width",
+    eventGap: "--event-gap",
+    sidebarWidth: "--sidebar-width",
+};
+
+// 설정값을 CSS 변수에 넣어서 화면에 반영한다
+function applySettings() {
+    for (const key in SETTING_CSS_VARS) {
+        if (settings[key] !== undefined) {
+            // documentElement = <html>. :root에 정의한 CSS 변수는 여기서 바꾼다
+            document.documentElement.style.setProperty(SETTING_CSS_VARS[key], settings[key] + "px");
+        }
+    }
+    // 칸 크기가 바뀌었으니 FullCalendar가 레이아웃을 다시 계산하게 한다
+    calendar.updateSize();
+}
+
+// 설정을 서버에 보내 settings.json에 저장한다
+async function saveSettings() {
+    try {
+        await sendRequest("/api/settings", "PUT", settings);
+    } catch (error) {
+        showToast("설정을 저장하지 못했습니다: " + error.message);
+    }
+}
+
+// 서버에서 설정을 받아와서 슬라이더를 만들고 화면에 반영한다
+async function loadSettings() {
+    try {
+        const response = await fetch("/api/settings");
+        if (!response.ok) {
+            throw new Error("서버 오류: " + response.status);
+        }
+        const data = await response.json();
+        settings = data.values;
+
+        // 저장되어 있던 "숨기기로 한 캘린더"를 숨김 목록(Set)에 옮겨 담는다
+        hiddenCalendarIds.clear();
+        (settings.hiddenCalendarIds || []).forEach(function (id) {
+            hiddenCalendarIds.add(id);
+        });
+
+        sliderListElement.innerHTML = "";  // 혹시 이미 있던 슬라이더를 비운다
+        data.sliders.forEach(function (def) {
+            // 한 줄: 이름 글자 + 슬라이더 + 현재 값 글자
+            const row = document.createElement("label");
+            row.className = "settings-row";
+
+            const name = document.createElement("span");
+            name.className = "settings-label";
+            name.textContent = def.label;
+
+            const slider = document.createElement("input");
+            slider.type = "range";
+            slider.min = def.min;
+            slider.max = def.max;
+            slider.step = def.step;
+            slider.value = settings[def.key];
+            slider.dataset.key = def.key;       // 나중에 "기본값으로"에서 이 슬라이더를 찾기 위한 표시
+            slider.dataset.default = def.default;
+            slider.dataset.unit = def.unit;
+
+            const valueText = document.createElement("span");
+            valueText.className = "settings-value";
+            valueText.textContent = settings[def.key] + def.unit;
+
+            row.append(name, slider, valueText);
+            sliderListElement.appendChild(row);
+
+            // input 이벤트: 슬라이더를 끄는 동안 계속 발생 → 화면에 즉시 반영
+            slider.addEventListener("input", function () {
+                settings[def.key] = Number(slider.value);
+                valueText.textContent = slider.value + def.unit;
+                applySettings();
+            });
+            // change 이벤트: 마우스를 놓았을 때 한 번 발생 → 이때 저장 (끄는 동안 저장 요청이 쏟아지지 않게)
+            slider.addEventListener("change", saveSettings);
+        });
+    } catch (error) {
+        // 실패해도 기본 모양으로 계속 쓸 수 있다
+        console.error("설정을 불러오지 못했습니다:", error);
+        showToast("설정을 불러오지 못해 기본값으로 표시합니다.");
+    }
+    applySettings();
+}
+
+// "기본값으로" 버튼: 모든 슬라이더를 기본값으로 되돌리고 저장한다 (기본 캘린더는 그대로 둔다)
+document.getElementById("settings-reset").addEventListener("click", function () {
+    sliderListElement.querySelectorAll("input[type=range]").forEach(function (slider) {
+        slider.value = slider.dataset.default;
+        settings[slider.dataset.key] = Number(slider.dataset.default);
+        // 슬라이더 오른쪽의 값 글자도 기본값으로 바꾼다 (nextElementSibling = 바로 다음 요소)
+        slider.nextElementSibling.textContent = slider.dataset.default + slider.dataset.unit;
+    });
+    applySettings();
+    saveSettings();
+});
+
+// 일정 추가 창에서 미리 선택해둘 캘린더를 정한다.
+// 설정 탭에서 지정한 캘린더가 있으면 그걸 쓰고, 없으면 내 기본 캘린더(primary), 그것도 없으면 쓸 수 있는 첫 캘린더
+function updateDefaultCalendar() {
+    const chosen = editableCalendars.find(function (cal) {
+        return cal.id === settings.defaultCalendarId;
+    });
+    const primary = editableCalendars.find(function (cal) {
+        return cal.primary;
+    });
+    const fallback = chosen || primary || editableCalendars[0];
+    defaultCalendarId = fallback ? fallback.id : null;
+
+    // 설정 탭의 선택 칸도 현재 설정에 맞춘다. 지정한 게 없으면 맨 위 "자동" 항목
+    defaultCalendarSelect.value = chosen ? chosen.id : "";
+}
+
+// 설정 탭에서 기본 캘린더를 바꿨을 때
+defaultCalendarSelect.addEventListener("change", function () {
+    settings.defaultCalendarId = defaultCalendarSelect.value;
+    updateDefaultCalendar();
+    saveSettings();
+});
+
+// 지금 화면에 있는 일정 중 이 캘린더의 일정을 새 색으로 바꿔 그린다
+function applyCalendarColor(calendarId, color) {
+    calendar.batchRendering(function () {
+        calendar.getEvents().forEach(function (event) {
+            if (event.extendedProps.calendarId === calendarId) {
+                event.setProp("backgroundColor", color);  // 칸 색 (종일 일정)
+                event.setProp("borderColor", color);      // 테두리와 점 색 (시간 있는 일정의 동그라미)
+            }
+        });
+    });
+}
+
 // 왼쪽 캘린더 목록(체크박스)을 만든다
 async function loadCalendarList() {
     // index.html에서 만들어둔 빈 칸(<aside id="calendar-list">)
@@ -566,6 +724,9 @@ async function loadCalendarList() {
         }
         const calendars = await response.json();
 
+        // 저장된 기본 캘린더 설정을 쓰려면 설정을 먼저 불러온 상태여야 한다
+        await settingsReady;
+
         // 캘린더마다 "체크박스 + 색 점 + 이름" 한 줄을 만든다
         calendars.forEach(function (cal) {
             // document.createElement: 자바스크립트로 HTML 요소를 새로 만든다
@@ -573,20 +734,45 @@ async function loadCalendarList() {
 
             const checkbox = document.createElement("input");
             checkbox.type = "checkbox";
-            checkbox.checked = true; // 기본은 모두 선택
+            // 기본은 모두 선택. 지난번에 숨기기로 저장해둔 캘린더만 체크를 꺼둔다
+            checkbox.checked = !hiddenCalendarIds.has(cal.id);
 
-            // Google에서 정한 캘린더 색을 보여주는 작은 동그라미
-            const dot = document.createElement("span");
+            // 캘린더 색을 보여주는 동그라미. 누르면 색 선택 창이 열리고, 고른 색은 Google Calendar에도 저장된다.
+            // <input type="color">는 브라우저가 기본으로 주는 색 선택 도구다
+            const dot = document.createElement("input");
+            dot.type = "color";
             dot.className = "color-dot";
-            dot.style.backgroundColor = cal.color;
+            dot.value = cal.color;
+            dot.title = "클릭해서 캘린더 색 바꾸기";
 
-            // 일정을 쓸 수 있는 캘린더만 입력 창의 캘린더 선택 칸에 넣는다.
-            // 기본으로 선택할 캘린더는 내 기본 캘린더(primary), 없으면 쓸 수 있는 첫 캘린더다
+            // 실패하면 이전 색으로 되돌리려고, 지금 색을 기억해둔다
+            let currentColor = cal.color;
+
+            // change 이벤트: 색 선택 창에서 색을 정하고 닫았을 때 발생한다
+            dot.addEventListener("change", async function () {
+                const newColor = dot.value;
+                const oldColor = currentColor;
+
+                // Google의 응답을 기다리지 않고 화면에는 먼저 반영한다
+                applyCalendarColor(cal.id, newColor);
+                currentColor = newColor;
+
+                try {
+                    await sendRequest("/api/calendar-color", "PATCH", { calendarId: cal.id, color: newColor });
+                } catch (error) {
+                    // Google이 거절하면 원래 색으로 되돌리고 이유를 알려준다
+                    applyCalendarColor(cal.id, oldColor);
+                    dot.value = oldColor;
+                    currentColor = oldColor;
+                    showToast(error.message);
+                }
+            });
+
+            // 일정을 쓸 수 있는 캘린더만 일정 입력 창과 설정 탭의 캘린더 선택 칸에 넣는다
             if (cal.canEdit) {
                 eventCalendarSelect.add(new Option(cal.name, cal.id));
-                if (defaultCalendarId === null || cal.primary) {
-                    defaultCalendarId = cal.id;
-                }
+                defaultCalendarSelect.add(new Option(cal.name, cal.id));
+                editableCalendars.push({ id: cal.id, primary: cal.primary });
             }
 
             // label 안에 체크박스, 색 점, 이름 글자를 차례로 넣는다
@@ -602,6 +788,9 @@ async function loadCalendarList() {
                 } else {
                     hiddenCalendarIds.add(cal.id);
                 }
+                // 다음 실행에도 유지되도록 설정 파일에 저장한다 (Set을 리스트로 바꿔서 보낸다)
+                settings.hiddenCalendarIds = Array.from(hiddenCalendarIds);
+                saveSettings();
 
                 // 지금 화면에 있는 일정 중 이 캘린더의 것만 숨기거나 다시 보이게 한다.
                 // batchRendering: 여러 일정을 바꾸는 동안 화면을 한 번만 다시 그리게 한다
@@ -614,11 +803,26 @@ async function loadCalendarList() {
                 });
             });
         });
+
+        // 일정이 설정보다 먼저 도착해서 이미 화면에 그려졌을 수도 있으니,
+        // 숨기기로 한 캘린더의 일정을 한 번 더 숨긴다
+        calendar.batchRendering(function () {
+            calendar.getEvents().forEach(function (event) {
+                if (hiddenCalendarIds.has(event.extendedProps.calendarId)) {
+                    event.setProp("display", "none");
+                }
+            });
+        });
+
+        // 선택 칸을 모두 채웠으니, 새 일정에 미리 선택할 기본 캘린더를 정한다
+        updateDefaultCalendar();
     } catch (error) {
         console.error("캘린더 목록을 불러오지 못했습니다:", error);
         listElement.append("캘린더 목록을 불러오지 못했습니다.");
     }
 }
 
-// 위 함수를 실행한다 (함수는 만들기만 하면 실행되지 않고, 이렇게 불러야 실행된다)
+// 위 함수들을 실행한다 (함수는 만들기만 하면 실행되지 않고, 이렇게 불러야 실행된다)
+// 설정과 캘린더 목록을 동시에 불러온다. loadCalendarList는 settingsReady(설정 불러오기가 끝났다는 약속)를 기다린다
+const settingsReady = loadSettings();
 loadCalendarList();

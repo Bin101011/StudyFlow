@@ -1,3 +1,15 @@
+/* CSS 변수: 이름 앞에 --를 붙여 값을 한 번 정해두고, 아래에서 var(--이름)으로 가져다 쓴다.
+   설정 탭의 슬라이더를 움직이면 app.js가 이 값들을 바꾸고, 그걸 쓰는 모든 곳이 한꺼번에 바뀐다.
+   여기 적힌 값은 설정을 불러오기 전의 기본값이다 (settings_store.py의 기본값과 같다) */
+:root {
+    --cal-font-size: 16px;
+    --month-cell-height: 100px;
+    --time-slot-height: 24px;
+    --cell-max-width: 200px;
+    --event-gap: 1px;
+    --sidebar-width: 200px;
+}
+
 /* 모든 요소의 기본 바깥 여백을 없애서 화면이 가장자리까지 쓰이게 한다 */
 body {
     margin: 0;
@@ -52,24 +64,121 @@ main {
     gap: 20px;
 }
 
-/* 왼쪽 캘린더 목록은 폭을 200px로 고정한다 */
+/* 왼쪽 캘린더 목록의 폭. 설정 탭의 슬라이더로 바꾼다 */
 #calendar-list {
-    width: 200px;
+    width: var(--sidebar-width);
     flex-shrink: 0;  /* 달력이 넓어져도 목록이 줄어들지 않게 한다 */
 }
 
-/* 오른쪽 달력은 남은 폭을 전부 차지한다 */
+/* 오른쪽 달력은 남은 폭을 전부 차지한다. 단, 칸 하나가 설정한 최대 너비를 넘지 않게 달력 전체 폭을 제한한다 (7칸 × 최대 너비).
+   글자 크기도 여기서 정하면 달력 안의 글자가 모두 따라 바뀐다 */
 #calendar-view {
+    flex: 1;
+    max-width: calc(7 * var(--cell-max-width));
+    font-size: var(--cal-font-size);
+}
+
+/* 월간 보기: 날짜 칸 하나의 최소 높이. FullCalendar가 직접 넣는 값을 덮어쓰려고 !important를 쓴다 */
+.fc .fc-daygrid-day-frame {
+    min-height: var(--month-cell-height) !important;
+}
+
+/* FullCalendar는 달력 전체 높이에 맞추려고 월간 표의 높이를 직접 정해두고, 칸이 낮아져서 남는 공간을
+   칸들에 나눠 늘려준다. 이때 일정이 많은 칸이 내용보다 더 커지는 문제가 있어서, 표 높이를 풀어준다.
+   그러면 칸 높이는 "슬라이더 값"과 "일정이 차지하는 높이" 중 큰 쪽이 된다 */
+.fc .fc-daygrid-body .fc-scrollgrid-sync-table {
+    height: auto !important;
+}
+
+/* 종일(여러 날 포함) 일정은 칸 색 위에 글자가 놓이는데, 기본 흰색 대신 검은색으로 보이게 한다.
+   FullCalendar가 글자색으로 쓰는 변수를 이 일정에서만 바꾼다 */
+.fc .fc-daygrid-block-event {
+    --fc-event-text-color: #000000;
+}
+
+/* 종일 일정의 제목은 굵게 */
+.fc .fc-daygrid-block-event .fc-event-title {
+    font-weight: bold;
+}
+
+/* 주간/일간 보기: 시간 칸 하나(30분)의 높이 */
+.fc .fc-timegrid-slot {
+    height: var(--time-slot-height);
+}
+
+/* 월간 보기: 일정 블록 위쪽 간격 */
+.fc .fc-daygrid-event {
+    margin-top: var(--event-gap);
+}
+
+/* 캘린더 이름 앞에 붙는 색깔 동그라미. 사실은 색 선택 도구(<input type="color">)인데,
+   기본의 네모난 모양을 없애고 동그라미로 보이게 꾸민 것이다. 누르면 색 선택 창이 열린다 */
+input.color-dot {
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    border: none;
+    background: none;
+    margin: 0 6px;
+    vertical-align: middle;
+    cursor: pointer;
+}
+
+/* 색 도구 안쪽 여백을 없애고, 색이 칠해지는 부분(swatch)을 동그랗게 깎는다 */
+input.color-dot::-webkit-color-swatch-wrapper {
+    padding: 0;
+}
+
+input.color-dot::-webkit-color-swatch {
+    border: none;
+    border-radius: 50%;
+}
+
+/* 설정 탭 */
+.settings-section {
+    max-width: 520px;
+    margin-bottom: 28px;
+}
+
+.settings-section h2 {
+    margin: 0 0 6px;
+    font-size: 18px;
+}
+
+.settings-hint {
+    margin: 0 0 14px;
+    color: #666666;
+    font-size: 14px;
+}
+
+/* 설정 한 줄: 이름 + 슬라이더(또는 선택 칸) + 현재 값 */
+.settings-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.settings-label {
+    width: 190px;
+    flex-shrink: 0;
+}
+
+.settings-row input[type="range"] {
     flex: 1;
 }
 
-/* 캘린더 이름 앞에 붙는 색깔 동그라미. 색은 app.js가 캘린더마다 넣어준다 */
-.color-dot {
-    display: inline-block;
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    margin: 0 6px;
+/* 슬라이더 오른쪽의 현재 값 글자 */
+.settings-value {
+    width: 56px;
+    text-align: right;
+    color: #444444;
+}
+
+#settings-reset {
+    padding: 6px 14px;
+    cursor: pointer;
 }
 
 /* 일정 추가/수정 창 */

@@ -11,3 +11,5 @@ token.json
 
 # 개인 데이터
 studyflow.db
+settings.json
+settings.json.tmp

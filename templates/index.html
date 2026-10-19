@@ -40,7 +40,26 @@
         </div>
         <div class="tab-content" id="settings">
             <h1>설정</h1>
-            <p>여기는 설정 탭입니다.</p>
+
+            <section class="settings-section">
+                <h2>화면 크기</h2>
+                <p class="settings-hint">슬라이더를 움직이면 캘린더에 바로 반영되고, 자동으로 저장됩니다.</p>
+                <!-- 슬라이더들은 app.js가 서버(/api/settings)에서 정의를 받아 여기에 만든다 -->
+                <div id="slider-list"></div>
+                <button id="settings-reset">기본값으로</button>
+            </section>
+
+            <section class="settings-section">
+                <h2>일정 추가</h2>
+                <label class="settings-row">
+                    <span class="settings-label">기본 캘린더</span>
+                    <!-- 선택지는 app.js가 캘린더 목록으로 채운다 -->
+                    <select id="default-calendar-select">
+                        <!-- 이 항목을 고르면 Google에서 정한 내 기본 캘린더가 미리 선택된다 -->
+                        <option value="">자동 (내 기본 캘린더)</option>
+                    </select>
+                </label>
+            </section>
         </div>
     </main>
 
