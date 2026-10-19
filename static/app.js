@@ -113,9 +113,9 @@ const calendar = new FullCalendar.Calendar(calendarElement, {
                 "/api/events?start=" + encodeURIComponent(info.startStr) +
                 "&end=" + encodeURIComponent(info.endStr)
             );
-            // 서버가 오류를 돌려줬다면(예: 인터넷 끊김) 오류로 취급한다
+            // 서버가 오류를 돌려줬다면(예: 인터넷 끊김) 오류로 취급한다. 서버가 알려준 이유가 있으면 그걸 쓴다
             if (!response.ok) {
-                throw new Error("서버 오류: " + response.status);
+                throw new Error(await errorMessageFrom(response));
             }
             // 받은 JSON 글자를 자바스크립트 리스트로 바꾼다
             const events = await response.json();
@@ -133,6 +133,7 @@ const calendar = new FullCalendar.Calendar(calendarElement, {
         } catch (error) {
             // 실패하면 콘솔에 이유를 남기고, 화면에는 알려준다
             console.error("일정을 불러오지 못했습니다:", error);
+            showToast("일정을 불러오지 못했습니다: " + error.message);
             failureCallback(error);
         }
     },
@@ -211,6 +212,20 @@ function showToast(message) {
     }, 4000);
 }
 
+// 실패한 응답에서 화면에 보여줄 이유를 꺼낸다. 서버가 {"error": "이유"}를 담아 보냈으면 그 이유를,
+// 아니면(서버 응답이 JSON이 아닌 경우 등) "서버 오류: 번호"를 돌려준다
+async function errorMessageFrom(response) {
+    try {
+        const data = await response.json();
+        if (data.error) {
+            return data.error;
+        }
+    } catch (error) {
+        // JSON이 아니면 아래의 기본 메시지를 쓴다
+    }
+    return "서버 오류: " + response.status;
+}
+
 // 서버에 JSON 요청을 보낸다. 실패하면 서버가 알려준 이유를 담은 Error를 던진다.
 // method: "POST"(만들기), "PATCH"(일부 고치기), "DELETE"(지우기)
 async function sendRequest(url, method, body) {
@@ -222,16 +237,7 @@ async function sendRequest(url, method, body) {
         body: body ? JSON.stringify(body) : undefined,
     });
     if (!response.ok) {
-        let message = "서버 오류: " + response.status;
-        try {
-            const data = await response.json();
-            if (data.error) {
-                message = data.error;
-            }
-        } catch (error) {
-            // 서버 응답이 JSON이 아니면 위의 기본 메시지를 쓴다
-        }
-        throw new Error(message);
+        throw new Error(await errorMessageFrom(response));
     }
 }
 
@@ -1657,3 +1663,101 @@ async function loadCalendarList() {
 // 설정과 캘린더 목록을 동시에 불러온다. loadCalendarList는 settingsReady(설정 불러오기가 끝났다는 약속)를 기다린다
 const settingsReady = loadSettings();
 loadCalendarList();
+
+// ---------- 자동 동기화 ----------
+// 서버는 1분마다 Google에 "바뀐 게 있나?" 묻는다(syncToken). 화면은 그 결과를 15초마다 서버(내 컴퓨터)에서 확인해서,
+// 폰 등에서 일정이 바뀌었다고 하면 일정을 다시 불러온다. 그래서 바뀐 일정이 길어도 1~2분 안에 보인다.
+
+const syncStatusElement = document.getElementById("sync-status");
+const syncTextElement = document.getElementById("sync-text");
+const syncRefreshButton = document.getElementById("sync-refresh");
+
+// 서버가 마지막으로 알려준 변경 번호. 이 번호가 달라지면 다른 곳에서 일정이 바뀐 것이다. null이면 아직 한 번도 못 받았다
+let lastSeenVersion = null;
+// 새로고침 요청이 진행 중인지
+let refreshing = false;
+
+// 동기화 상태 글자를 만든다. 예: "14:32 동기화", "오프라인 · 마지막 동기화 14:32"
+function describeSync(status) {
+    let when = "아직 동기화 안 됨";
+    if (status.lastSync) {
+        const date = new Date(status.lastSync * 1000);  // 서버는 초 단위, 자바스크립트는 밀리초 단위
+        // 오늘이 아니면 날짜도 같이 보여줘서, 오래된 정보를 최신으로 착각하지 않게 한다
+        const dayText = toDateText(date) === toDateText(new Date()) ? "" : (date.getMonth() + 1) + "/" + date.getDate() + " ";
+        when = dayText + toTimeText(date) + " 동기화";
+    }
+    return status.online ? when : "오프라인 · 마지막 " + when;
+}
+
+function showSyncStatus(status) {
+    syncTextElement.textContent = describeSync(status);
+    syncStatusElement.classList.toggle("offline", !status.online);
+}
+
+// 지금 화면에 보이는 일정을 Google(서버)에서 다시 받아 온다. 캘린더 탭은 항상, 오늘 탭은 열려 있을 때만 새로고침한다
+function reloadVisibleEvents() {
+    calendar.refetchEvents();
+    if (document.getElementById("today").classList.contains("active")) {
+        loadTodayEvents().catch(function (error) {
+            console.error("일정을 불러오지 못했습니다:", error);
+        });
+    }
+}
+
+// 서버에 동기화 상태를 물어본다
+async function pollSyncStatus() {
+    try {
+        const response = await fetch("/api/sync-status");
+        if (!response.ok) {
+            return;
+        }
+        const status = await response.json();
+        showSyncStatus(status);
+        // 번호가 달라졌다 = 서버가 다른 곳에서 일정이 바뀐 것을 발견했다
+        if (lastSeenVersion !== null && status.version !== lastSeenVersion) {
+            reloadVisibleEvents();
+        }
+        lastSeenVersion = status.version;
+    } catch (error) {
+        // 서버(내 컴퓨터)에 잠깐 못 닿은 것이므로 조용히 넘어가고 다음 번에 다시 물어본다
+    }
+}
+
+setInterval(pollSyncStatus, 15000);
+pollSyncStatus();
+// 최소화했던 창을 다시 열었을 때 곧바로 확인한다
+document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) {
+        pollSyncStatus();
+    }
+});
+
+// 새로고침 버튼: Google에서 일정을 처음부터 다시 받아온다
+syncRefreshButton.addEventListener("click", async function () {
+    if (refreshing) {
+        return;
+    }
+    refreshing = true;
+    syncRefreshButton.disabled = true;
+    syncTextElement.textContent = "새로고침 중...";
+    try {
+        const response = await fetch("/api/refresh", { method: "POST" });
+        if (!response.ok) {
+            throw new Error(await errorMessageFrom(response));
+        }
+        const status = await response.json();
+        showSyncStatus(status);
+        lastSeenVersion = status.version;  // 이 새로고침이 일으킨 변화로 한 번 더 불러오지 않게 번호를 맞춰둔다
+        if (status.online) {
+            reloadVisibleEvents();
+        } else {
+            showToast("인터넷에 연결할 수 없어 새로 불러오지 못했습니다. 마지막으로 받은 일정을 보여줍니다.");
+        }
+    } catch (error) {
+        showToast("새로고침하지 못했습니다: " + error.message);
+        pollSyncStatus();
+    } finally {
+        refreshing = false;
+        syncRefreshButton.disabled = false;
+    }
+});

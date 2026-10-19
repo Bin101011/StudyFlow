@@ -2,10 +2,21 @@ import datetime
 import json
 import os.path
 
+import google_auth_httplib2
+import httplib2
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+
+# Google에 요청을 보내고 최대 몇 초까지 기다릴지. 인터넷이 불안정할 때 프로그램이 무한정 멈춰 있지 않게 한다
+REQUEST_TIMEOUT_SECONDS = 30
+
+
+class SyncTokenExpired(Exception):
+    """syncToken이 너무 오래되어 Google이 더는 인정하지 않을 때(410 오류)."""
 
 # 이 파일이 있는 폴더. 어디서 실행하든 credentials.json, token.json을 이 폴더에서 찾기 위함
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -42,10 +53,18 @@ def get_credentials():
 
     # 2) 없거나, 있어도 쓸 수 없는 상태라면 새로 준비한다
     if not creds or not creds.valid:
+        refreshed = False
         if creds and creds.expired and creds.refresh_token:
             # 입장권(access token)만 만료됐다면, 재발급용 열쇠(refresh token)로 조용히 갱신
-            creds.refresh(Request())
-        else:
+            try:
+                creds.refresh(Request())
+                refreshed = True
+            except RefreshError:
+                # 열쇠 자체가 만료되거나 취소된 경우(예: OAuth 동의 화면이 Testing이면 7일마다 만료).
+                # 인터넷이 끊긴 것(TransportError)과는 다른 오류이므로, 이때만 다시 로그인한다
+                print("[로그인 만료] Google 로그인을 다시 해야 합니다. 브라우저가 열립니다.")
+
+        if not refreshed:
             # 처음이거나 갱신도 불가능하면, 브라우저를 열어 사용자가 직접 로그인
             flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_PATH, SCOPES)
             creds = flow.run_local_server(port=0)
@@ -72,8 +91,10 @@ def get_week_range():
 
 def build_service(creds):
     """이미 있는 로그인 정보(creds)로 service 객체를 만든다. 파일을 읽지 않아 빠르다."""
+    # 로그인 정보(creds)를 붙여서 요청을 보내는 통로를 직접 만들고, 응답을 기다리는 시간에 제한(30초)을 둔다
+    http = google_auth_httplib2.AuthorizedHttp(creds, http=httplib2.Http(timeout=REQUEST_TIMEOUT_SECONDS))
     # "calendar" API의 "v3" 버전을 쓰겠다는 뜻
-    return build("calendar", "v3", credentials=creds)
+    return build("calendar", "v3", http=http)
 
 
 def get_service():
@@ -95,14 +116,50 @@ def get_events(service, calendar_id, start, end):
     time_min = datetime.datetime.combine(start, datetime.time.min).astimezone().isoformat()
     time_max = datetime.datetime.combine(end, datetime.time.min).astimezone().isoformat()
 
-    result = service.events().list(
-        calendarId=calendar_id,
-        timeMin=time_min,
-        timeMax=time_max,
-        singleEvents=True,  # 반복 일정을 하나씩 풀어서 가져옴 (아래 정렬에 필요)
-        orderBy="startTime",  # 시작 시각 순서로 정렬
-    ).execute()
-    return result.get("items", [])
+    events = []
+    page_token = None
+    while True:
+        result = service.events().list(
+            calendarId=calendar_id,
+            timeMin=time_min,
+            timeMax=time_max,
+            singleEvents=True,  # 반복 일정을 하나씩 풀어서 가져옴 (아래 정렬에 필요)
+            orderBy="startTime",  # 시작 시각 순서로 정렬
+            maxResults=2500,  # 한 번에 받을 수 있는 최대 개수. 기본값(250)이면 일정이 많은 달이 잘린다
+            pageToken=page_token,  # 결과가 한 번에 안 담기면 Google이 "다음 쪽 번호"를 주는데, 그걸 넘겨서 이어 받는다
+        ).execute()
+        events.extend(result.get("items", []))
+        page_token = result.get("nextPageToken")
+        if not page_token:
+            return events
+
+
+def list_changes(service, calendar_id, sync_token=None):
+    """"지난번에 확인한 뒤로 바뀐 일정이 있나?"를 Google에 묻는다. (바뀐 일정 개수, 새 syncToken)을 돌려준다.
+
+    syncToken은 "여기까지 확인했음"이라는 책갈피다. 이 책갈피를 내밀면 Google이 그 뒤에 추가, 수정, 삭제된
+    일정만 알려준다. 일정 내용은 필요 없고 "바뀌었는지"만 알면 되므로 id만 받아서 가볍게 확인한다.
+    sync_token이 None이면 "처음 동기화"다. 일정을 전부 훑어서(내용은 받지 않는다) 첫 책갈피만 받아온다.
+    책갈피가 너무 오래되면 Google이 410 오류를 내고, 이때는 SyncTokenExpired를 던진다."""
+    count = 0
+    page_token = None
+    while True:
+        try:
+            result = service.events().list(
+                calendarId=calendar_id,
+                syncToken=sync_token,
+                pageToken=page_token,
+                maxResults=2500,
+                fields="nextPageToken,nextSyncToken,items(id)",  # 필요한 항목만 받아서 응답을 작게 한다
+            ).execute()
+        except HttpError as error:
+            if error.resp.status == 410:
+                raise SyncTokenExpired() from error
+            raise
+        count += len(result.get("items", []))
+        page_token = result.get("nextPageToken")
+        if not page_token:
+            return count, result["nextSyncToken"]
 
 
 def to_local_datetime(text):

@@ -23,6 +23,23 @@ nav {
     border-bottom: 1px solid #cccccc;
 }
 
+/* 탭 줄 오른쪽 끝의 동기화 상태. margin-left: auto가 남는 공간을 왼쪽에 몰아줘서 오른쪽 끝에 붙는다 */
+#sync-status {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-right: 16px;
+    font-size: 13px;
+    color: #555555;
+}
+
+/* 인터넷이 끊겨 있을 때는 눈에 띄게 한다 */
+#sync-status.offline #sync-text {
+    color: #c92a2a;
+    font-weight: bold;
+}
+
 /* 탭 버튼 하나하나의 기본 모양 */
 .tab-button {
     padding: 12px 24px;

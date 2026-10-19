@@ -1,6 +1,9 @@
 # 날짜를 다루는 파이썬 기본 도구
 import datetime
 
+# 환경 변수(프로그램을 켤 때 전달된 값)를 읽는 도구
+import os
+
 # 글자가 정해진 모양인지 검사하는 도구(정규식). 색이 "#rrggbb" 모양인지 확인하는 데 쓴다
 import re
 
@@ -23,6 +26,9 @@ from flask import Flask, jsonify, render_template, request
 
 # google_calendar.py에서 만들어둔 함수들을 가져온다
 import google_calendar
+
+# 일정을 달 단위로 기억해두고, Google에서 바뀐 게 있는지 확인하는 도구 (event_cache.py)
+import event_cache
 
 # 화면 설정값을 settings.json에 읽고 쓰는 함수들
 import settings_store
@@ -56,12 +62,22 @@ _calendar_cache = {"data": None, "time": 0}
 _calendar_lock = threading.Lock()
 CALENDAR_CACHE_SECONDS = 600  # 10분이 지나면 목록을 다시 가져온다
 
+# 일정을 기억해두는 상자. 이미 본 달은 Google에 다시 묻지 않고, 바뀐 게 있을 때만 새로 받는다
+event_store = event_cache.EventCache()
+
+# 1분마다 Google에 "바뀐 게 있나?" 묻는다. 폰에서 바꾼 일정이 길어도 1~2분 안에 보이게 하는 주기다
+SYNC_INTERVAL_SECONDS = 60
+
 # "#" 다음에 16진수(0-9, a-f) 6글자. 예: #9fc6e7
 COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 # 일정을 가져오는 작업자(스레드) 8명을 미리 만들어 계속 살려둔다.
 # 요청 때마다 새로 만들면 그때마다 Google 연결도 새로 만들어야 해서 느리다
 _pool = ThreadPoolExecutor(max_workers=8)
+
+# 화면이 기다리지 않는 뒤쪽 일(바뀐 게 있는지 확인, 앞뒤 달 미리 받기)을 하는 작업자 2명.
+# 위의 8명과 따로 두어서, 뒤쪽 일 때문에 사용자가 누른 동작이 늦어지지 않게 한다
+_background_pool = ThreadPoolExecutor(max_workers=2)
 
 # 스레드마다 따로 보관하는 저장 공간. 각 작업자가 자기 Google 연결을 여기에 담아둔다
 _thread_data = threading.local()
@@ -74,22 +90,39 @@ def get_creds():
         return google_calendar.get_credentials()
 
 
-def get_calendar_list(creds):
-    """캘린더 목록을 돌려준다. 최근에 가져온 게 있으면 Google에 묻지 않고 그걸 쓴다."""
+def get_calendar_list():
+    """캘린더 목록을 돌려준다. 최근에 가져온 게 있으면 Google에 묻지 않고 그걸 쓴다.
+    인터넷이 끊겨서 못 가져오면, 파일에 저장해둔 지난번 목록을 대신 쓴다."""
     with _calendar_lock:
         age = time.time() - _calendar_cache["time"]  # 마지막으로 가져온 지 몇 초 지났는지
         if _calendar_cache["data"] is None or age > CALENDAR_CACHE_SECONDS:
-            service = google_calendar.build_service(creds)
-            _calendar_cache["data"] = google_calendar.get_calendars(service)
+            try:
+                service = google_calendar.build_service(get_creds())
+                calendars = google_calendar.get_calendars(service)
+            except Exception as error:
+                # 대신 쓸 지난번 목록이 있으면 그걸 쓰고, 1분 뒤에 다시 시도한다. 아무것도 없으면 오류를 그대로 올린다
+                saved = _calendar_cache["data"] or event_store.saved_calendars()
+                if saved is None:
+                    raise
+                print(f"[캘린더 목록] 새로 받지 못해 지난번 목록을 씁니다: {error}")
+                if not isinstance(error, HttpError):
+                    event_store.mark_offline()
+                _calendar_cache["data"] = saved
+                _calendar_cache["time"] = time.time() - CALENDAR_CACHE_SECONDS + 60
+                return saved
+            _calendar_cache["data"] = calendars
             _calendar_cache["time"] = time.time()
+            event_store.save_calendars(calendars)  # 인터넷이 끊겼을 때를 위해 파일에도 남겨둔다
+            event_store.mark_online()
         return _calendar_cache["data"]
 
 
-def get_thread_service(creds):
+def get_thread_service():
     """지금 실행 중인 스레드 전용 Google 연결을 돌려준다. 없으면 한 번 만들고, 이후엔 재사용한다."""
     service = getattr(_thread_data, "service", None)
     if service is None:
-        service = google_calendar.build_service(creds)
+        # 로그인 정보는 연결을 새로 만들 때만 꺼낸다. (일정이 이미 기억되어 있으면 로그인 정보 없이도 보여줄 수 있다)
+        service = google_calendar.build_service(get_creds())
         _thread_data.service = service
     return service
 
@@ -99,46 +132,54 @@ def can_edit(calendar):
     return calendar.get("accessRole") in ("owner", "writer")
 
 
-def fetch_calendar_events(creds, calendar, start, end):
+def fetch_calendar_events(calendar, start, end):
     """캘린더 하나의 일정을 가져와서 FullCalendar 형식의 리스트로 돌려준다."""
-    # Google 연결(service)은 여러 스레드가 함께 쓰면 SSL 오류가 난다.
-    # 그래서 스레드마다 자기만의 연결을 쓴다. 연결을 새로 만들 때 시간이 오래 걸리므로(약 1.5초),
-    # 한 번 만든 연결을 그 스레드가 계속 재사용한다
-    service = get_thread_service(creds)
-
     try:
-        events = google_calendar.get_events(service, calendar["id"], start, end)
+        # 기억해둔 일정이 있으면 그걸 쓰고, 없을 때만 Google에 묻는다 (event_cache.py).
+        # get_thread_service를 함수 그대로 넘기는 이유: Google 연결(service)은 여러 스레드가 함께 쓰면 SSL 오류가 나서,
+        # 실제로 Google에 묻는 순간에 "그 스레드 전용 연결"을 꺼내 쓰게 하려는 것이다
+        events = event_store.events_in_range(calendar["id"], start, end, get_thread_service)
     except HttpError as error:
         # 캘린더 하나가 오류(예: 404)를 내도 전체가 실패하지 않게, 그 캘린더만 건너뛴다
         print(f"[건너뜀] '{calendar['summary']}' 캘린더의 일정을 못 가져왔습니다: {error.resp.status}")
         return []
 
-    result = []
-    for event in events:
-        # 종일 일정은 "date", 시간 있는 일정은 "dateTime"에 시각이 들어 있다
-        # 둘 중 있는 쪽을 꺼내면 FullCalendar가 알아서 종일/시간 일정을 구분한다
-        event_start = event["start"].get("dateTime") or event["start"]["date"]
-        event_end = event["end"].get("dateTime") or event["end"]["date"]
+    color = calendar.get("backgroundColor", "#3788d8")  # 일정 색 = 캘린더 색
+    editable = can_edit(calendar)
+    # 기억해둔 일정에는 id, 제목, 시작, 끝만 있다. 캘린더에 따라 정해지는 값들을 보낼 때 붙인다
+    return [{
+        **event,
+        "color": color,
+        "calendarId": calendar["id"],  # 나중에 체크박스로 캘린더별 숨기기에 쓴다
+        "editable": editable,  # False면 FullCalendar가 드래그를 막아준다
+        "canEdit": editable,  # 클릭했을 때 수정 창을 열어도 되는지 app.js가 확인하는 용도
+    } for event in events]
 
-        result.append({
-            "id": event["id"],
-            "title": event.get("summary", "제목 없음"),
-            "start": event_start,
-            "end": event_end,
-            "color": calendar.get("backgroundColor", "#3788d8"),  # 일정 색 = 캘린더 색
-            "calendarId": calendar["id"],  # 나중에 체크박스로 캘린더별 숨기기에 쓴다
-            "editable": can_edit(calendar),  # False면 FullCalendar가 드래그를 막아준다
-            "canEdit": can_edit(calendar),  # 클릭했을 때 수정 창을 열어도 되는지 app.js가 확인하는 용도
-        })
-    return result
+
+def prefetch_one(calendar_id, months):
+    """일정을 미리 받아서 기억해둔다. 뒤에서 하는 일이라 실패해도 조용히 넘어간다."""
+    try:
+        event_store.load_months(calendar_id, months, get_thread_service)
+    except Exception:
+        pass
+
+
+def prefetch_neighbors(calendars, months):
+    """보고 있는 기간의 바로 앞 달과 뒤 달을 뒤에서 미리 받아둔다. 다음에 달을 넘길 때 바로 보이게 하려는 것이다."""
+    if not months or not event_store.online:
+        return
+    targets = [event_cache.previous_month(*months[0]), event_cache.next_month(*months[-1])]
+    for calendar in calendars:
+        for target in targets:
+            if not event_store.has_fresh(calendar["id"], target):
+                _background_pool.submit(prefetch_one, calendar["id"], [target])
 
 
 def warm_up():
     """프로그램을 켤 때 미리 로그인, 캘린더 목록, 작업자 8명의 Google 연결을 준비해둔다.
     이걸 안 하면 처음 달력을 열 때 이 준비 때문에 약 3초가 걸린다."""
     try:
-        creds = get_creds()
-        calendars = get_calendar_list(creds)
+        calendars = get_calendar_list()
         if not calendars:
             return
 
@@ -151,7 +192,7 @@ def warm_up():
         def prepare(i):
             barrier.wait()  # 8명이 모두 도착할 때까지 기다린다
             # 연결은 실제로 요청을 한 번 보내봐야 완성된다. 오늘 하루치 일정을 가볍게 조회한다
-            service = get_thread_service(creds)
+            service = get_thread_service()
             calendar = calendars[i % len(calendars)]
             google_calendar.get_events(service, calendar["id"], today, tomorrow)
 
@@ -160,6 +201,83 @@ def warm_up():
     except Exception as error:
         # 준비에 실패해도 프로그램은 계속 돈다. 그냥 첫 로딩이 느려질 뿐이다
         print(f"[준비 실패] 미리 연결하지 못했습니다: {error}")
+
+
+# ---------- 자동 동기화 ----------
+
+# 같은 오류 메시지를 1분마다 반복해서 찍지 않으려고, 이미 알린 (캘린더, 오류 번호)를 기억해둔다
+_reported_errors = set()
+
+
+def check_one(calendar):
+    """캘린더 하나에 "마지막으로 확인한 뒤 바뀐 게 있나?" 묻고 결과를 글자로 돌려준다.
+    "changed"(바뀜), "same"(그대로), "skipped"(바뀐 것을 확인할 수 없는 캘린더라 묻지 않음),
+    "offline"(인터넷 문제), "error"(Google이 거절)"""
+    try:
+        changed = event_store.check_calendar(calendar["id"], get_thread_service)
+        if changed is None:
+            return "skipped"
+        return "changed" if changed else "same"
+    except HttpError as error:
+        marker = (calendar["id"], error.resp.status)
+        if marker not in _reported_errors:
+            _reported_errors.add(marker)
+            print(f"[동기화 건너뜀] '{calendar['summary']}' 캘린더를 확인하지 못했습니다: {error.resp.status}")
+        return "error"
+    except Exception:
+        # HttpError가 아닌 오류는 대부분 인터넷 문제다. 상태 표시는 아래에서 한 번에 처리한다
+        return "offline"
+
+
+def run_sync_cycle():
+    """모든 캘린더를 한 번 확인한다. 다른 곳(폰 등)에서 바뀐 게 있으면 화면이 알아차리도록 알린다.
+    어떤 오류가 나도 예외를 던지지 않는다. (반복 작업이 중간에 멈추면 안 되므로)"""
+    try:
+        calendars = get_calendar_list()
+        # 작업자 2명이 캘린더들을 나눠서 확인한다
+        outcomes = list(_background_pool.map(check_one, calendars))
+    except Exception as error:
+        print(f"[동기화 실패] {error}")
+        event_store.mark_offline()
+        return
+
+    if "changed" in outcomes:
+        event_store.bump_version()
+    if "changed" in outcomes or "same" in outcomes:
+        event_store.mark_synced()
+    elif "offline" in outcomes:
+        event_store.mark_offline()
+    event_store.save(force=True)
+
+
+def prefetch_around_today():
+    """이번 달과 앞뒤 달의 일정을 미리 받아둔다. 프로그램을 켠 직후 달을 넘겨도 바로 보이게 하려는 것이다."""
+    today = datetime.date.today()
+    this_month = (today.year, today.month)
+    months = [event_cache.previous_month(*this_month), this_month, event_cache.next_month(*this_month)]
+    try:
+        for calendar in get_calendar_list():
+            _background_pool.submit(prefetch_one, calendar["id"], months)
+    except Exception as error:
+        print(f"[미리 받기 실패] {error}")
+
+
+def sync_loop():
+    """1분마다 run_sync_cycle을 되풀이한다. 프로그램이 켜져 있는 동안 계속 돈다."""
+    first = True
+    while True:
+        run_sync_cycle()
+        if first:
+            first = False
+            prefetch_around_today()
+        time.sleep(SYNC_INTERVAL_SECONDS)
+
+
+def start_background_tasks():
+    """프로그램을 켤 때 뒤에서 할 일 두 가지를 시작한다. 창이 뜨는 것을 막지 않는다.
+    daemon=True: 창을 닫으면 이 작업이 남아 있어도 프로그램이 같이 끝나게 한다"""
+    threading.Thread(target=warm_up, daemon=True).start()
+    threading.Thread(target=sync_loop, daemon=True).start()
 
 
 # 누군가 주소 "/"(맨 첫 페이지)로 접속하면 바로 아래 함수를 실행해라
@@ -172,7 +290,11 @@ def index():
 # 주소 "/api/calendars"로 요청이 오면 캘린더 목록을 JSON으로 돌려준다
 @app.route("/api/calendars")
 def api_calendars():
-    calendars = get_calendar_list(get_creds())
+    try:
+        calendars = get_calendar_list()
+    except Exception as error:
+        print(f"[캘린더 목록 실패] {error}")
+        return jsonify({"error": "캘린더 목록을 불러오지 못했습니다. 인터넷 연결을 확인하세요."}), 502
 
     # Google이 주는 정보는 너무 많으므로, 화면에 필요한 것만 골라서 새 리스트로 만든다
     result = []
@@ -197,21 +319,50 @@ def api_events():
     start = datetime.date.fromisoformat(request.args["start"][:10])
     end = datetime.date.fromisoformat(request.args["end"][:10])
 
-    # 로그인 정보와 캘린더 목록은 요청 하나당 한 번만 준비한다
-    creds = get_creds()
-    calendars = get_calendar_list(creds)
+    try:
+        # 캘린더 목록은 요청 하나당 한 번만 준비한다
+        calendars = get_calendar_list()
 
-    # 모든 캘린더를 작업자들에게 나눠줘서 동시에 조회한다.
-    # 하나씩 기다리면 (0.3초 × 8개) 걸리던 것이 가장 느린 하나만큼(약 0.3초)으로 줄어든다
-    # _pool.map: 캘린더마다 fetch_calendar_events를 실행하고, 결과를 캘린더 순서대로 모아준다
-    per_calendar = _pool.map(
-        lambda calendar: fetch_calendar_events(creds, calendar, start, end),
-        calendars,
-    )
+        # 모든 캘린더를 작업자들에게 나눠줘서 동시에 조회한다.
+        # 하나씩 기다리면 (0.3초 × 8개) 걸리던 것이 가장 느린 하나만큼(약 0.3초)으로 줄어든다
+        # _pool.map: 캘린더마다 fetch_calendar_events를 실행하고, 결과를 캘린더 순서대로 모아준다
+        # (기억해둔 일정이 있으면 Google에 묻지 않으므로 훨씬 빠르다)
+        per_calendar = list(_pool.map(
+            lambda calendar: fetch_calendar_events(calendar, start, end),
+            calendars,
+        ))
+    except Exception as error:
+        # 인터넷이 끊겼고 기억해둔 일정도 없는 경우 등. 화면이 이유를 보여줄 수 있게 알려준다
+        print(f"[일정 불러오기 실패] {error}")
+        return jsonify({"error": "Google Calendar에서 일정을 불러오지 못했습니다. 인터넷 연결을 확인하세요."}), 502
+
     # [[A의 일정들], [B의 일정들], ...] 형태를 [A의 일정, ..., B의 일정, ...]로 한 줄로 펼친다
     result = [event for events in per_calendar for event in events]
 
+    # 응답을 돌려준 뒤 쓸 수 있도록, 앞뒤 달은 뒤에서 미리 받아둔다
+    prefetch_neighbors(calendars, event_cache.months_between(start, end))
     return jsonify(result)
+
+
+# 동기화 상태: 화면이 15초마다 물어본다. version이 달라졌으면 다른 곳에서 일정이 바뀐 것이니 화면이 일정을 다시 불러온다.
+# lastSync는 마지막으로 동기화에 성공한 시각(초 단위 숫자), online이 False면 지금 Google에 연결할 수 없는 상태다
+@app.route("/api/sync-status")
+def api_sync_status():
+    return jsonify(event_store.status())
+
+
+# 새로고침 버튼: 기억해둔 일정을 모두 "오래된 일정"으로 만들어서, 화면이 일정을 Google에서 새로 받게 한다.
+# 인터넷이 끊겨 있으면 기억해둔 일정을 그대로 두고 상태만 알려준다 (지우면 보여줄 것이 사라지기 때문)
+@app.route("/api/refresh", methods=["POST"])
+def api_refresh():
+    _calendar_cache["time"] = 0  # 캘린더 목록(색, 새로 생긴 캘린더)도 다시 받게 한다
+    run_sync_cycle()  # 지금 연결이 되는지, 바뀐 게 있는지 확인한다
+    if event_store.online:
+        try:
+            event_store.invalidate_all([calendar["id"] for calendar in get_calendar_list()])
+        except Exception as error:
+            print(f"[새로고침 실패] {error}")
+    return jsonify(event_store.status())
 
 
 def missing_key(data, keys):
@@ -222,16 +373,16 @@ def missing_key(data, keys):
     return None
 
 
-def run_google_write(failure_message, operation):
+def run_google_write(failure_message, operation, calendar_id=None):
     """Google에 쓰는 일(추가/수정/삭제/캘린더 색 변경)을 작업자 스레드에서 실행한다.
-    성공하면 None, Google이 거절하면 화면에 보여줄 오류 응답을 돌려준다.
+    성공하면 None, 실패하면 화면에 보여줄 오류 응답을 돌려준다.
     failure_message: 실패했을 때 화면에 보여줄 문장 (예: "일정을 추가하지 못했습니다.")
-    operation: service를 받아서 Google 요청을 보내는 함수"""
-    creds = get_creds()
+    operation: service를 받아서 Google 요청을 보내는 함수
+    calendar_id: 일정이 바뀌는 캘린더. 성공하면 그 캘린더에 기억해둔 일정을 오래된 것으로 바꾼다 (색 변경은 필요 없다)"""
 
     def job():
         # 작업자 스레드 안에서 실행되므로, 그 스레드 전용 Google 연결을 쓴다
-        return operation(get_thread_service(creds))
+        return operation(get_thread_service())
 
     try:
         # _pool.submit(...).result(): 작업자 한 명에게 일을 시키고 끝날 때까지 기다린다
@@ -244,6 +395,16 @@ def run_google_write(failure_message, operation):
             # 403: 권한이 없다는 뜻. 읽기 전용 캘린더이거나, 로그인할 때 받은 권한이 모자란 경우다
             message += " (권한이 부족합니다. 프로그램을 껐다 켜서 Google 로그인을 다시 해보세요.)"
         return jsonify({"error": message}), 502
+    except Exception as error:
+        # HttpError가 아닌 오류는 대부분 인터넷 문제다 (연결 끊김, 시간 초과 등)
+        print(f"[Google 쓰기 실패] {failure_message} {error}")
+        return jsonify({"error": f"Google에 {failure_message} (인터넷 연결을 확인하세요.)"}), 502
+
+    if calendar_id is not None:
+        # 이 캘린더에 기억해둔 일정은 이제 틀린 내용이다. 화면이 곧바로 일정을 다시 불러오므로, 응답을 보내기 전에 먼저 표시해둔다
+        event_store.invalidate(calendar_id)
+        # 이 변화를 "다른 곳에서 바뀐 것"으로 오해하지 않도록, 뒤에서 책갈피(syncToken)를 앞으로 옮겨둔다
+        _background_pool.submit(event_store.absorb_own_write, calendar_id, get_thread_service)
     return None
 
 
@@ -259,7 +420,7 @@ def api_create_event():
 
     error_response = run_google_write("일정을 추가하지 못했습니다.", lambda service: google_calendar.create_event(
         service, data["calendarId"], data["title"], data["allDay"], data["start"], data["end"]
-    ))
+    ), data["calendarId"])
     if error_response:
         return error_response
 
@@ -280,7 +441,7 @@ def api_update_event(event_id):
     error_response = run_google_write("일정을 수정하지 못했습니다.", lambda service: google_calendar.update_event(
         service, data["calendarId"], event_id, data["allDay"], data["start"], data["end"],
         title=data.get("title"),
-    ))
+    ), data["calendarId"])
     if error_response:
         return error_response
 
@@ -296,7 +457,7 @@ def api_delete_event(event_id):
 
     error_response = run_google_write("일정을 삭제하지 못했습니다.", lambda service: google_calendar.delete_event(
         service, calendar_id, event_id
-    ))
+    ), calendar_id)
     if error_response:
         return error_response
 
@@ -613,5 +774,9 @@ def api_delete_project(project_id):
 
 # 이 파일을 직접 실행했을 때만 서버를 켠다
 if __name__ == "__main__":
+    # 브라우저에서 개발용으로 열 때도 자동 동기화가 돌게 한다. (창으로 실행하는 main.py도 같은 함수를 부른다)
+    # debug=True일 때 서버가 두 번 켜지는데(자동 재시작용), 그중 실제로 일하는 쪽에서만 시작한다
+    if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        start_background_tasks()
     # debug=True: 코드를 고치면 서버가 자동으로 다시 시작되고, 오류가 나면 자세히 보여준다
     app.run(debug=True)

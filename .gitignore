@@ -13,3 +13,8 @@ token.json
 studyflow.db
 settings.json
 settings.json.tmp
+
+# 기억해둔 일정(내 일정 내용이 들어 있다)과, 바로가기로 실행할 때 쌓이는 기록
+events_cache.json
+events_cache.json.tmp
+studyflow.log

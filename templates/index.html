@@ -15,6 +15,12 @@
         <button class="tab-button" data-tab="today">오늘</button>
         <button class="tab-button" data-tab="projects">프로젝트</button>
         <button class="tab-button" data-tab="settings">설정</button>
+
+        <!-- 오른쪽 끝: 마지막으로 Google과 동기화한 시각, 인터넷이 끊겼는지, 새로고침 버튼. 어느 탭에서나 보인다 -->
+        <div id="sync-status">
+            <span id="sync-text">동기화 확인 중...</span>
+            <button id="sync-refresh" title="일정을 Google에서 다시 불러옵니다">새로고침</button>
+        </div>
     </nav>
 
     <!-- 탭을 누르면 보여줄 내용들이 모이는 영역. active가 붙은 내용만 화면에 보인다 -->
