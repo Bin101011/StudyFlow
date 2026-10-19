@@ -135,6 +135,24 @@ input.color-dot::-webkit-color-swatch {
     border-radius: 50%;
 }
 
+/* 오늘 탭 맨 위: ◀ 날짜 제목 ▶ 버튼들을 한 줄에 놓는다 */
+.today-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin: 0 0 12px;
+}
+
+.today-header h1 {
+    margin: 0;
+    font-size: 1.6em;
+}
+
+.today-header button {
+    padding: 4px 10px;
+    cursor: pointer;
+}
+
 /* 오늘 탭: 왼쪽(일정)과 오른쪽(할 일)을 가로로 나란히 놓는다. 글자 크기는 설정 탭의 "글자 크기"를 따른다 */
 .today-layout {
     display: flex;
@@ -235,6 +253,11 @@ input.color-dot::-webkit-color-swatch {
 .task-date {
     color: #d93025;
     font-size: 0.9em;
+}
+
+/* 이미 끝낸 할 일의 날짜는 빨간색(밀림 표시) 대신 회색으로 */
+.task-content.done + .task-date {
+    color: #999999;
 }
 
 .task-row button {

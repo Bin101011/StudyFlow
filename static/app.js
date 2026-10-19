@@ -577,9 +577,16 @@ const overdueSection = document.getElementById("overdue-section");
 const overdueTasksList = document.getElementById("overdue-tasks");
 const taskInput = document.getElementById("task-input");
 const taskAddButton = document.getElementById("task-add-button");
+const eventsHeading = document.getElementById("events-heading");
+const tasksHeading = document.getElementById("tasks-heading");
+const dayPrevButton = document.getElementById("day-prev");
+const dayNextButton = document.getElementById("day-next");
+const dayTodayButton = document.getElementById("day-today");
 
-// 오늘 탭이 보여주는 날짜("2026-10-19"). 탭을 열 때마다 새로 구한다. 켜둔 채 자정을 넘길 수도 있기 때문이다
+// 진짜 오늘 날짜("2026-10-19"). 탭을 열 때마다 새로 구한다. 켜둔 채 자정을 넘길 수도 있기 때문이다
 let todayText = toDateText(new Date());
+// 지금 화면이 보여주는 날짜. 탭을 처음 열면 오늘이고, ◀ ▶로 바꿀 수 있다. 일정, 할 일, 새 할 일 추가가 모두 이 날짜를 따른다
+let viewedDate = todayText;
 
 // 목록(<ul>)에 "내용이 없을 때" 보여줄 회색 안내 문장 한 줄을 넣는다
 function showEmptyMessage(listElement, message) {
@@ -591,14 +598,19 @@ function showEmptyMessage(listElement, message) {
 
 // 오늘의 일정을 서버에서 받아와서 왼쪽 목록에 그린다
 async function loadTodayEvents() {
-    // 캘린더 탭이 쓰는 /api/events를 그대로 쓴다. 오늘 0시 ~ 내일 0시를 요청한다
+    // 요청을 보낸 시점의 날짜를 기억해둔다. 응답이 오기 전에 ◀ ▶로 다른 날로 넘어갔다면 이 응답은 버린다
+    const date = viewedDate;
+    // 캘린더 탭이 쓰는 /api/events를 그대로 쓴다. 그날 0시 ~ 다음 날 0시를 요청한다
     const response = await fetch(
-        "/api/events?start=" + todayText + "&end=" + addDaysToText(todayText, 1)
+        "/api/events?start=" + date + "&end=" + addDaysToText(date, 1)
     );
     if (!response.ok) {
         throw new Error("서버 오류: " + response.status);
     }
     const events = await response.json();
+    if (date !== viewedDate) {
+        return;
+    }
 
     // 캘린더 탭에서 체크를 꺼둔 캘린더의 일정은 여기서도 보이지 않게 한다
     const visible = events.filter(function (event) {
@@ -619,7 +631,7 @@ async function loadTodayEvents() {
 
     todayEventsList.innerHTML = "";
     if (visible.length === 0) {
-        showEmptyMessage(todayEventsList, "오늘 일정이 없습니다.");
+        showEmptyMessage(todayEventsList, "일정이 없습니다.");
         return;
     }
 
@@ -717,27 +729,37 @@ function makeTaskRow(task, moveLabel, moveDate, showDate) {
 
 // 서버에서 할 일 목록을 받아와서 오른쪽에 그린다
 async function loadTodayTasks() {
-    const response = await fetch("/api/tasks?date=" + todayText);
+    const date = viewedDate;  // loadTodayEvents와 같은 이유로, 요청 시점의 날짜를 기억해둔다
+    const response = await fetch("/api/tasks?date=" + date);
     if (!response.ok) {
         throw new Error("서버 오류: " + response.status);
     }
     const data = await response.json();
+    if (date !== viewedDate) {
+        return;
+    }
+    const isToday = date === todayText;
 
-    // 오늘 할 일: "내일로" 버튼은 날짜를 내일로 바꾼다
+    // 그날의 할 일: 버튼은 날짜를 다음 날로 바꾼다. 날짜가 보고 있는 날과 다른 항목
+    // (예: 17일에 적고 19일에 끝낸 일)은 원래 날짜를 같이 보여준다
     todayTasksList.innerHTML = "";
     if (data.tasks.length === 0) {
-        showEmptyMessage(todayTasksList, "오늘 할 일이 없습니다.");
+        showEmptyMessage(todayTasksList, isToday ? "오늘 할 일이 없습니다." : "할 일이 없습니다.");
     }
     data.tasks.forEach(function (task) {
-        todayTasksList.appendChild(makeTaskRow(task, "내일로", addDaysToText(todayText, 1), false));
+        todayTasksList.appendChild(makeTaskRow(
+            task, isToday ? "내일로" : "다음 날로", addDaysToText(date, 1), task.date !== date
+        ));
     });
 
-    // 밀린 할 일: 있을 때만 구역을 보인다. "오늘로" 버튼은 날짜를 오늘로 바꾼다
+    // 밀린 할 일은 "오늘 기준"의 개념이라서 오늘을 볼 때만 보인다. 있을 때만 구역을 보이고, "오늘로" 버튼은 날짜를 오늘로 바꾼다
     overdueTasksList.innerHTML = "";
-    overdueSection.hidden = data.overdue.length === 0;
-    data.overdue.forEach(function (task) {
-        overdueTasksList.appendChild(makeTaskRow(task, "오늘로", todayText, true));
-    });
+    overdueSection.hidden = !isToday || data.overdue.length === 0;
+    if (isToday) {
+        data.overdue.forEach(function (task) {
+            overdueTasksList.appendChild(makeTaskRow(task, "오늘로", todayText, true));
+        });
+    }
 }
 
 // 할 일의 일부(완료 여부, 날짜)를 바꾸고 목록을 다시 불러온다
@@ -751,14 +773,14 @@ async function updateTask(taskId, changes) {
     await loadTodayTasks();
 }
 
-// 입력 칸의 글자를 오늘 할 일로 추가한다
+// 입력 칸의 글자를 지금 보고 있는 날의 할 일로 추가한다 (▶로 내일을 열고 적으면 내일 계획이 된다)
 async function addTask() {
     const content = taskInput.value.trim();
     if (!content) {
         return;
     }
     try {
-        await sendRequest("/api/tasks", "POST", { content: content, date: todayText });
+        await sendRequest("/api/tasks", "POST", { content: content, date: viewedDate });
         taskInput.value = "";
         await loadTodayTasks();
     } catch (error) {
@@ -775,15 +797,24 @@ taskInput.addEventListener("keydown", function (e) {
     }
 });
 
-// 오늘 탭을 새로 채운다. 탭을 열 때마다 실행된다
-async function loadToday() {
-    todayText = toDateText(new Date());
-    todayTitle.textContent = new Date().toLocaleDateString("ko-KR", {
+// 보여줄 날짜를 dateText("2026-10-19")로 바꾸고, 제목과 버튼을 맞춘 뒤 그날의 일정과 할 일을 불러온다
+function showDay(dateText) {
+    viewedDate = dateText;
+    const isToday = dateText === todayText;
+
+    // "2026-10-19" → 이 컴퓨터 시간대의 Date. (new Date("2026-10-19")는 UTC 0시로 해석되어 하루 어긋날 수 있어서 직접 만든다)
+    const [year, month, day] = dateText.split("-").map(Number);
+    todayTitle.textContent = new Date(year, month - 1, day).toLocaleDateString("ko-KR", {
         year: "numeric", month: "long", day: "numeric", weekday: "long",
     });
+    eventsHeading.textContent = isToday ? "오늘의 일정" : "일정";
+    tasksHeading.textContent = isToday ? "오늘 할 일" : "할 일";
+    dayTodayButton.hidden = isToday;
 
-    // 숨길 캘린더 목록(hiddenCalendarIds)이 설정에서 불러와진 뒤에 일정을 걸러야 한다
-    await settingsReady;
+    // 그날의 일정과 할 일은 내용이 바뀌기 전의 것이 남아 보이지 않게 먼저 비운다
+    todayEventsList.innerHTML = "";
+    todayTasksList.innerHTML = "";
+    overdueSection.hidden = true;
 
     // 할 일은 내 컴퓨터에서 바로 오고, 일정은 Google을 거쳐 느릴 수 있다. 서로 기다리지 않게 따로 불러온다
     // (인터넷이 끊겨 일정이 실패해도 할 일은 보인다)
@@ -791,11 +822,35 @@ async function loadToday() {
         showToast("할 일을 불러오지 못했습니다: " + error.message);
     });
     loadTodayEvents().catch(function (error) {
-        todayEventsList.innerHTML = "";
-        showEmptyMessage(todayEventsList, "일정을 불러오지 못했습니다.");
-        console.error("오늘 일정을 불러오지 못했습니다:", error);
+        console.error("일정을 불러오지 못했습니다:", error);
+        // 그 사이 다른 날로 넘어갔다면 이 오류는 지금 화면과 상관없으므로 건드리지 않는다
+        if (dateText === viewedDate) {
+            todayEventsList.innerHTML = "";
+            showEmptyMessage(todayEventsList, "일정을 불러오지 못했습니다.");
+        }
     });
 }
+
+// 오늘 탭을 처음 열 때 실행된다 (탭을 누를 때마다). 항상 "진짜 오늘"로 시작한다
+async function loadToday() {
+    todayText = toDateText(new Date());
+
+    // 숨길 캘린더 목록(hiddenCalendarIds)이 설정에서 불러와진 뒤에 일정을 걸러야 한다
+    await settingsReady;
+
+    showDay(todayText);
+}
+
+// ◀ ▶ 버튼: 보고 있는 날에서 하루 전/후로 넘긴다. "오늘로 돌아가기"는 진짜 오늘로 간다
+dayPrevButton.addEventListener("click", function () {
+    showDay(addDaysToText(viewedDate, -1));
+});
+dayNextButton.addEventListener("click", function () {
+    showDay(addDaysToText(viewedDate, 1));
+});
+dayTodayButton.addEventListener("click", function () {
+    showDay(todayText);
+});
 
 // ---------- 설정 탭 ----------
 
