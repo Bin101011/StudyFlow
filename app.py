@@ -378,18 +378,39 @@ def api_get_tasks():
 @app.route("/api/tasks", methods=["POST"])
 def api_create_task():
     data = request.get_json()
-    error_response = missing_key(data, ("content", "date"))
+    error_response = missing_key(data, ("content",))
     if error_response:
         return error_response
 
     content = str(data["content"]).strip()
     if not content:
         return jsonify({"error": "할 일 내용을 입력하세요."}), 400
-    if not valid_date(data["date"]):
+
+    # date(날짜), projectId(연결할 프로젝트), parentId(상위 단계)는 없어도 된다
+    date = data.get("date")
+    project_id = data.get("projectId")
+    parent_id = data.get("parentId")
+    if date is not None and not valid_date(date):
         return jsonify({"error": "'date'는 2026-10-19 같은 날짜여야 합니다."}), 400
 
+    if parent_id is not None:
+        # 하위 단계로 만들 때: 상위 단계는 "프로젝트에 연결된 단계"여야 하고, 그 자신이 하위 단계이면 안 된다
+        # (하위 단계의 하위 단계는 만들지 않는다. 한 겹까지만 지원한다)
+        parent = database.get_task(parent_id) if isinstance(parent_id, int) else None
+        if not parent or parent["project_id"] is None:
+            return jsonify({"error": "그 상위 단계를 찾을 수 없습니다."}), 400
+        if parent["parent_id"] is not None:
+            return jsonify({"error": "하위 단계 아래에는 더 만들 수 없습니다."}), 400
+        project_id = parent["project_id"]  # 하위 단계는 상위 단계와 같은 프로젝트에 속한다
+    elif project_id is not None and (not isinstance(project_id, int) or not database.get_project(project_id)):
+        return jsonify({"error": "그 프로젝트를 찾을 수 없습니다."}), 400
+
+    # 날짜도 프로젝트도 없으면 어디에도 보이지 않는 할 일이 되므로 막는다
+    if date is None and project_id is None:
+        return jsonify({"error": "날짜가 없는 할 일은 프로젝트에 연결해야 합니다."}), 400
+
     # 만들어진 할 일(번호 포함)을 돌려준다. 201: "새로 만들어졌다"
-    return jsonify(database.add_task(content, data["date"])), 201
+    return jsonify(database.add_task(content, date, project_id, parent_id)), 201
 
 
 # 할 일 일부 수정 (PATCH): 체크 표시(done), 날짜 이동(date), 내용 고치기(content). 보낸 것만 바꾼다
@@ -401,9 +422,24 @@ def api_update_task(task_id):
     if "done" in data:
         changes["done"] = 1 if data["done"] else 0  # true/false를 SQLite에 저장하는 1/0으로 바꾼다
     if "date" in data:
-        if not valid_date(data["date"]):
+        if data["date"] is None:
+            # 날짜를 빼는 것("오늘에서 빼기"). 프로젝트에 연결된 할 일만 가능하다.
+            # 프로젝트에도 연결되지 않은 할 일의 날짜를 빼면 어디에서도 보이지 않게 되기 때문이다
+            task = database.get_task(task_id)
+            if not task:
+                return jsonify({"error": "그 할 일을 찾을 수 없습니다."}), 404
+            if task["project_id"] is None:
+                return jsonify({"error": "프로젝트에 연결되지 않은 할 일은 날짜를 뺄 수 없습니다."}), 400
+            changes["date"] = None
+        elif not valid_date(data["date"]):
             return jsonify({"error": "'date'는 2026-10-19 같은 날짜여야 합니다."}), 400
-        changes["date"] = data["date"]
+        else:
+            changes["date"] = data["date"]
+    if "deadline" in data:
+        deadline = data["deadline"] or None  # 빈 값은 "마감일 없음"
+        if deadline is not None and not valid_date(deadline):
+            return jsonify({"error": "마감일은 2026-12-31 같은 날짜여야 합니다."}), 400
+        changes["deadline"] = deadline
     if "content" in data:
         content = str(data["content"]).strip()
         if not content:
@@ -422,6 +458,156 @@ def api_update_task(task_id):
 def api_delete_task(task_id):
     if not database.delete_task(task_id):
         return jsonify({"error": "그 할 일을 찾을 수 없습니다."}), 404
+    return jsonify({"ok": True})
+
+
+# ---------- 프로젝트 ----------
+
+# 새 프로젝트에 색을 따로 고르지 않았을 때 차례대로 쓰는 색들
+PROJECT_COLORS = ["#4a7cff", "#e8590c", "#2f9e44", "#ae3ec9", "#d6336c", "#1098ad", "#f08c00"]
+
+
+def build_step_tree(tasks):
+    """프로젝트의 할 일들(평평한 리스트)을 "단계 → 하위 단계" 모양으로 묶는다.
+    위쪽 단계들만 리스트로 돌려주고, 각 단계의 children에 그 하위 단계들이 들어 있다.
+    하위 단계가 있는 단계는 제목 역할이라서, 자기 체크 상태 대신 "하위 단계를 모두 끝냈는가"를 done으로 알려준다.
+    (이 값은 계산한 것이고 DB에 저장하지 않는다. 하위 단계를 체크하면 상위 단계는 저절로 따라 바뀐다)"""
+    children_of = {}
+    top_steps = []
+    for task in tasks:
+        if task["parent_id"] is None:
+            top_steps.append(task)
+        else:
+            children_of.setdefault(task["parent_id"], []).append(task)
+
+    for step in top_steps:
+        step["children"] = children_of.get(step["id"], [])
+        if step["children"]:
+            step["done"] = 1 if all(child["done"] for child in step["children"]) else 0
+    # 상위 단계의 done이 계산으로 바뀌었을 수 있으므로, 안 끝낸 것이 위로 오게 다시 정렬한다
+    top_steps.sort(key=lambda step: (step["done"], step["id"]))
+    return top_steps
+
+
+def project_json(project, tasks):
+    """DB에서 꺼낸 프로젝트 한 줄과 그 프로젝트의 단계들(build_step_tree가 묶은 것)을, 화면에 보낼 모양으로 바꾼다.
+    진행률(percent)은 여기서 계산한다:
+    - 직접(manual): 저장해둔 값을 그대로
+    - 자동(auto): 끝낸 할 일 ÷ 전체 할 일. 할 일이 하나도 없으면 0%"""
+    if project["progress_mode"] == "manual":
+        percent = project["manual_percent"]
+    elif project["total"] > 0:
+        # 반올림한 퍼센트. (끝낸 수 × 100 ÷ 전체)를 정수로 반올림하는 식이다
+        percent = (project["done_count"] * 200 + project["total"]) // (2 * project["total"])
+    else:
+        percent = 0
+
+    return {
+        "id": project["id"],
+        "name": project["name"],
+        "deadline": project["deadline"],
+        "color": project["color"],
+        "progressMode": project["progress_mode"],
+        "manualPercent": project["manual_percent"],
+        "total": project["total"],
+        "doneCount": project["done_count"],
+        "percent": percent,
+        "tasks": tasks,
+    }
+
+
+def parse_project_fields(data):
+    """화면이 보낸 프로젝트 값을 검사해서, DB 칸 이름 → 값 딕셔너리로 바꿔 돌려준다. 보낸 값만 담는다.
+    잘못된 값이 있으면 (None, 오류 응답)을 돌려준다."""
+    fields = {}
+
+    if "name" in data:
+        name = str(data["name"]).strip()
+        if not name:
+            return None, (jsonify({"error": "프로젝트 이름을 입력하세요."}), 400)
+        fields["name"] = name
+
+    if "deadline" in data:
+        deadline = data["deadline"] or None  # 빈 글자("")는 "마감일 없음"으로 본다
+        if deadline is not None and not valid_date(deadline):
+            return None, (jsonify({"error": "마감일은 2026-12-31 같은 날짜여야 합니다."}), 400)
+        fields["deadline"] = deadline
+
+    if "color" in data:
+        color = data["color"]
+        if not isinstance(color, str) or not COLOR_PATTERN.match(color):
+            return None, (jsonify({"error": "색은 #rrggbb 형식이어야 합니다."}), 400)
+        fields["color"] = color.lower()
+
+    if "progressMode" in data:
+        if data["progressMode"] not in ("auto", "manual"):
+            return None, (jsonify({"error": "진행률 방식은 auto 또는 manual이어야 합니다."}), 400)
+        fields["progress_mode"] = data["progressMode"]
+
+    if "manualPercent" in data:
+        try:
+            # 0~100 밖의 값은 안쪽으로 맞춘다
+            fields["manual_percent"] = max(0, min(100, int(data["manualPercent"])))
+        except (TypeError, ValueError):
+            return None, (jsonify({"error": "진행률은 숫자여야 합니다."}), 400)
+
+    return fields, None
+
+
+# 프로젝트 목록: 마감일이 가까운 순서. 각 프로젝트에 진행률과 연결된 할 일(단계)들이 함께 들어 있다
+@app.route("/api/projects")
+def api_get_projects():
+    # 할 일을 프로젝트 번호별로 묶어둔다. 예: {1: [할 일, 할 일], 2: [할 일]}
+    tasks_by_project = {}
+    for task in database.list_project_tasks():
+        tasks_by_project.setdefault(task["project_id"], []).append(task)
+
+    return jsonify([
+        project_json(project, build_step_tree(tasks_by_project.get(project["id"], [])))
+        for project in database.list_projects()
+    ])
+
+
+# 프로젝트 추가 (POST)
+@app.route("/api/projects", methods=["POST"])
+def api_create_project():
+    data = request.get_json()
+    fields, error_response = parse_project_fields(data)
+    if error_response:
+        return error_response
+    if "name" not in fields:
+        return jsonify({"error": "'name' 값이 없습니다."}), 400
+
+    # 안 보낸 값은 기본값을 쓴다. 색은 이미 있는 프로젝트 수를 이용해 팔레트에서 차례로 고른다
+    color = fields.get("color") or PROJECT_COLORS[len(database.list_projects()) % len(PROJECT_COLORS)]
+    project = database.add_project(
+        fields["name"],
+        fields.get("deadline"),
+        color,
+        fields.get("progress_mode", "auto"),
+        fields.get("manual_percent", 0),
+    )
+    return jsonify(project), 201
+
+
+# 프로젝트 일부 수정 (PATCH): 이름, 마감일, 색, 진행률 방식, 직접 입력한 %. 보낸 것만 바꾼다
+@app.route("/api/projects/<int:project_id>", methods=["PATCH"])
+def api_update_project(project_id):
+    fields, error_response = parse_project_fields(request.get_json())
+    if error_response:
+        return error_response
+    if not fields:
+        return jsonify({"error": "바꿀 값이 없습니다."}), 400
+    if not database.update_project(project_id, fields):
+        return jsonify({"error": "그 프로젝트를 찾을 수 없습니다."}), 404
+    return jsonify({"ok": True})
+
+
+# 프로젝트 삭제 (DELETE): 날짜 없는 단계는 함께 지워지고, 날짜 있는 할 일은 연결만 끊긴다
+@app.route("/api/projects/<int:project_id>", methods=["DELETE"])
+def api_delete_project(project_id):
+    if not database.delete_project(project_id):
+        return jsonify({"error": "그 프로젝트를 찾을 수 없습니다."}), 404
     return jsonify({"ok": True})
 
 

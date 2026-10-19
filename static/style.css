@@ -270,6 +270,196 @@ input.color-dot::-webkit-color-swatch {
     color: #d93025;
 }
 
+/* 오늘 탭의 할 일 입력줄에 프로젝트 선택 칸이 들어간다 */
+.task-add select {
+    max-width: 140px;
+    font-size: inherit;
+}
+
+/* 할 일 줄에 붙는 프로젝트 이름표 (색 동그라미 + 이름) */
+.project-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 1px 8px;
+    border-radius: 10px;
+    background-color: #f1f3f5;
+    color: #555555;
+    font-size: 0.85em;
+    white-space: nowrap;
+}
+
+/* 프로젝트 탭 */
+.projects-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 12px;
+}
+
+.projects-header h1 {
+    margin: 0;
+}
+
+button.primary {
+    padding: 6px 14px;
+    background-color: #4a7cff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+/* 프로젝트 카드: 왼쪽 굵은 줄이 프로젝트 색이다. 글자 크기는 설정 탭의 "글자 크기"를 따른다 */
+#project-list {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    max-width: 760px;
+    font-size: var(--cal-font-size);
+}
+
+.project-card {
+    padding: 12px 16px;
+    border: 1px solid #dddddd;
+    border-left: 6px solid #4a7cff;  /* 색은 app.js가 프로젝트 색으로 덮어쓴다 */
+    border-radius: 6px;
+}
+
+.project-card-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.project-name {
+    flex: 1;
+    min-width: 0;
+    font-size: 1.2em;
+    font-weight: bold;
+    overflow-wrap: anywhere;
+}
+
+.project-deadline {
+    color: #555555;
+}
+
+/* 마감이 7일 이내이거나 지난 프로젝트 */
+.project-deadline.urgent {
+    color: #d93025;
+    font-weight: bold;
+}
+
+.project-card-head button {
+    padding: 2px 10px;
+    cursor: pointer;
+}
+
+/* progress bar: 회색 바탕(.progress-bar) 안에 색 채움(.progress-fill)을 두고, 채움의 너비(%)로 진행률을 나타낸다 */
+.progress-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.progress-bar {
+    flex: 1;
+    height: 14px;
+    background-color: #e9ecef;
+    border-radius: 7px;
+    overflow: hidden;  /* 채움이 둥근 모서리 밖으로 삐져나오지 않게 한다 */
+}
+
+.progress-fill {
+    height: 100%;
+    transition: width 0.2s;
+}
+
+.progress-text {
+    width: 3.2em;
+    text-align: right;
+    font-weight: bold;
+}
+
+.progress-detail {
+    margin: 6px 0 8px;
+    color: #666666;
+    font-size: 0.9em;
+}
+
+.progress-detail input[type="range"] {
+    vertical-align: middle;
+    width: 220px;
+}
+
+/* 프로젝트 카드 안의 단계 줄과 추가 줄 */
+.project-card .task-date {
+    color: #666666;  /* 카드 안에서는 날짜가 "밀림"이 아니므로 빨간색을 쓰지 않는다 */
+}
+
+.project-card .task-add {
+    margin: 10px 0 0;
+}
+
+/* 하위 단계 묶음: 상위 단계 아래에서 오른쪽으로 들여쓴다 */
+.sub-wrapper {
+    margin-left: 28px;
+}
+
+.sub-wrapper .task-add {
+    margin: 6px 0 8px;
+}
+
+/* 하위 단계가 있는 단계 줄에 붙는 "2/3" */
+.task-count {
+    color: #666666;
+    font-size: 0.9em;
+    white-space: nowrap;
+}
+
+/* 오늘 탭 등에서 글자로만 보이는 마감일 */
+.task-deadline {
+    color: #b35c00;
+    font-size: 0.9em;
+    white-space: nowrap;
+}
+
+.task-deadline.urgent,
+.task-row button.urgent {
+    color: #d93025;
+    font-weight: bold;
+}
+
+/* 마감일 버튼 + 눌렀을 때 열리는 날짜 선택 창.
+   날짜 칸(<input type="date">)은 버튼 위에 투명하게 겹쳐두고, 버튼을 누르면 showPicker()로 선택 창만 연다.
+   (선택 창이 버튼 근처에 뜨도록 버튼과 같은 자리에 둔다) */
+.deadline-control {
+    position: relative;
+    display: inline-flex;
+    gap: 2px;
+}
+
+.deadline-input {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    pointer-events: none;
+    border: none;
+    padding: 0;
+}
+
+/* showPicker를 쓸 수 없을 때 app.js가 붙이는 클래스: 날짜 칸을 그대로 보여준다 */
+.deadline-input.visible {
+    position: static;
+    opacity: 1;
+    pointer-events: auto;
+    width: auto;
+}
+
 /* 설정 탭 */
 .settings-section {
     max-width: 520px;
@@ -316,8 +506,9 @@ input.color-dot::-webkit-color-swatch {
     cursor: pointer;
 }
 
-/* 일정 추가/수정 창 */
-#event-dialog {
+/* 일정 추가/수정 창과 프로젝트 추가/수정 창 (같은 모양을 쓴다) */
+#event-dialog,
+#project-dialog {
     width: 360px;
     border: 1px solid #cccccc;
     border-radius: 8px;
@@ -325,13 +516,22 @@ input.color-dot::-webkit-color-swatch {
 }
 
 /* showModal()로 열었을 때 창 뒤를 어둡게 덮는 막 */
-#event-dialog::backdrop {
+#event-dialog::backdrop,
+#project-dialog::backdrop {
     background-color: rgba(0, 0, 0, 0.3);
 }
 
-#event-dialog h2 {
+#event-dialog h2,
+#project-dialog h2 {
     margin: 0 0 16px;
     font-size: 18px;
+}
+
+/* 이름 글자 아래로 선택지들을 세로로 쌓는 줄 (프로젝트 창의 진행률 방식) */
+.dialog-row.column {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
 }
 
 /* 창 안의 한 줄: 이름 글자 + 입력 칸을 가로로 놓는다 */

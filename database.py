@@ -36,61 +36,105 @@ def run(sql, params=()):
 
 
 def init_db():
-    """프로그램을 켤 때 한 번 실행한다. tasks 테이블이 없으면 만든다 (있으면 아무것도 하지 않는다)."""
+    """프로그램을 켤 때 한 번 실행한다. tasks, projects 테이블이 없으면 만든다 (있으면 아무것도 하지 않는다)."""
+    run("""
+        CREATE TABLE IF NOT EXISTS projects (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            name           TEXT NOT NULL,                      -- 프로젝트 이름
+            deadline       TEXT,                               -- 마감일 "2026-12-31". 없어도 된다(NULL)
+            color          TEXT NOT NULL,                      -- 카드와 할 일에 붙는 색 "#4a7cff"
+            progress_mode  TEXT NOT NULL DEFAULT 'auto',       -- 진행률 방식. 'auto'(할 일 완료 비율) 또는 'manual'(직접 입력)
+            manual_percent INTEGER NOT NULL DEFAULT 0          -- 직접 입력한 %. 'manual'일 때만 쓴다
+        )
+    """)
     run("""
         CREATE TABLE IF NOT EXISTS tasks (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,  -- 할 일마다 자동으로 붙는 고유 번호
             content    TEXT NOT NULL,                      -- 할 일 내용
             date       TEXT,                               -- 하려는 날짜 "2026-10-19". 없어도 된다(NULL)
             done       INTEGER NOT NULL DEFAULT 0,         -- 완료 여부. 0이면 안 함, 1이면 함
-            project_id INTEGER,                            -- 연결된 프로젝트 번호. 7단계에서 쓴다. 없어도 된다
-            done_at    TEXT                                -- 체크한 시각 "2026-10-19T14:30:05". 안 끝냈으면 NULL
+            project_id INTEGER,                            -- 연결된 프로젝트(projects.id). 없어도 된다
+            done_at    TEXT,                               -- 체크한 시각 "2026-10-19T14:30:05". 안 끝냈으면 NULL
+            deadline   TEXT,                               -- 마감일 "2026-11-10". 언제까지 끝내야 하는지. 없어도 된다
+            parent_id  INTEGER                             -- 상위 단계(tasks.id). 하위 단계일 때만 값이 있다
         )
     """)
 
-    # 마이그레이션: 6단계 처음 버전으로 이미 만들어진 studyflow.db에는 done_at 칸이 없다.
-    # CREATE TABLE IF NOT EXISTS는 테이블이 이미 있으면 아무것도 안 하므로, 칸이 없을 때만 따로 덧붙인다.
+    # 마이그레이션: 이미 만들어진 studyflow.db의 tasks 테이블에는 나중에 추가한 칸이 없을 수 있다.
+    # CREATE TABLE IF NOT EXISTS는 테이블이 이미 있으면 아무것도 안 하므로, 없는 칸만 따로 덧붙인다.
     # PRAGMA table_info: 테이블에 어떤 칸들이 있는지 알려주는 SQLite 명령
     columns, _ = run("PRAGMA table_info(tasks)")
-    if "done_at" not in [column["name"] for column in columns]:
-        run("ALTER TABLE tasks ADD COLUMN done_at TEXT")
+    existing = [column["name"] for column in columns]
+    for name, column_type in (("done_at", "TEXT"), ("deadline", "TEXT"), ("parent_id", "INTEGER")):
+        if name not in existing:
+            run(f"ALTER TABLE tasks ADD COLUMN {name} {column_type}")
+
+
+# "하위 단계가 하나도 없는 할 일"만 고르는 조건. t는 tasks 표의 별명이다.
+# 하위 단계가 있는 단계는 제목 역할만 하고, 실제로 하고 체크하는 것은 그 아래 하위 단계들이다.
+# 그래서 오늘 탭 목록과 프로젝트 진행률 계산에서는 하위 단계가 없는 것만 센다.
+# NOT EXISTS (SELECT ...): "이 조건에 맞는 줄이 하나도 없다"는 뜻. 여기서는 t를 부모로 삼는 줄이 없다는 뜻이다
+NO_CHILDREN = "NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = t.id)"
 
 
 def list_tasks(date):
     """그 날짜의 할 일을 돌려준다. 안 끝낸 것이 위, 끝낸 것이 아래이고 그 안에서는 만든 순서다.
     그 날짜에 잡혀 있던 할 일에 더해, 다른 날짜로 잡혀 있었지만 그날 끝낸 할 일도 포함한다.
     (예: 17일에 적은 할 일을 19일에 체크했다면, 19일을 볼 때도 "19일에 끝낸 일"로 나온다)
-    substr(done_at, 1, 10): 체크한 시각 글자의 앞 10글자, 즉 날짜 부분"""
+    substr(done_at, 1, 10): 체크한 시각 글자의 앞 10글자, 즉 날짜 부분
+
+    LEFT JOIN: tasks 옆에 projects 표를 붙여서, 각 할 일이 어느 프로젝트(이름, 색)인지 한 번에 가져온다.
+    "t.project_id = p.id"가 맞는 줄끼리 이어 붙이고, 프로젝트가 없는 할 일(LEFT)은 그 칸이 비어(NULL) 있는 채로 남는다.
+    t, p는 표 이름 tasks, projects의 짧은 별명이다.
+    같은 방식으로 상위 단계(pt)의 내용도 붙여서, 하위 단계가 "어느 단계 아래의 일인지" 화면에 보여줄 수 있게 한다.
+    하위 단계를 가진 단계(제목 역할)는 목록에서 뺀다."""
     rows, _ = run(
-        "SELECT * FROM tasks "
-        "WHERE date = ? OR (done = 1 AND substr(done_at, 1, 10) = ?) "
-        "ORDER BY done, id",
+        "SELECT t.*, p.name AS project_name, p.color AS project_color, pt.content AS parent_content "
+        "FROM tasks t LEFT JOIN projects p ON p.id = t.project_id "
+        "LEFT JOIN tasks pt ON pt.id = t.parent_id "
+        f"WHERE (t.date = ? OR (t.done = 1 AND substr(t.done_at, 1, 10) = ?)) AND {NO_CHILDREN} "
+        "ORDER BY t.done, t.id",
         (date, date),
     )
     return rows
 
 
 def list_overdue_tasks(today):
-    """오늘 이전 날짜에 잡혀 있는데 끝내지 못한 할 일을 돌려준다. 날짜 순서대로."""
-    rows, _ = run("SELECT * FROM tasks WHERE date < ? AND done = 0 ORDER BY date, id", (today,))
+    """오늘 이전 날짜에 잡혀 있는데 끝내지 못한 할 일을 돌려준다. 날짜 순서대로.
+    날짜가 없는(NULL) 프로젝트 단계는 "날짜 < 오늘"이 성립하지 않으므로 여기에 나오지 않는다."""
+    rows, _ = run(
+        "SELECT t.*, p.name AS project_name, p.color AS project_color, pt.content AS parent_content "
+        "FROM tasks t LEFT JOIN projects p ON p.id = t.project_id "
+        "LEFT JOIN tasks pt ON pt.id = t.parent_id "
+        f"WHERE t.date < ? AND t.done = 0 AND {NO_CHILDREN} ORDER BY t.date, t.id",
+        (today,),
+    )
     return rows
 
 
-def add_task(content, date):
-    """할 일을 하나 추가하고, 만들어진 할 일(번호 포함)을 돌려준다."""
+def get_task(task_id):
+    """할 일 하나를 돌려준다. 없으면 None."""
+    rows, _ = run("SELECT * FROM tasks WHERE id = ?", (task_id,))
+    return rows[0] if rows else None
+
+
+def add_task(content, date, project_id=None, parent_id=None):
+    """할 일을 하나 추가하고, 만들어진 할 일(번호 포함)을 돌려준다. date, project_id, parent_id는 없어도(None) 된다.
+    parent_id가 있으면 그 단계 아래의 하위 단계가 된다."""
     with contextlib.closing(connect()) as connection:
         with connection:
             cursor = connection.execute(
-                "INSERT INTO tasks (content, date) VALUES (?, ?)", (content, date)
+                "INSERT INTO tasks (content, date, project_id, parent_id) VALUES (?, ?, ?, ?)",
+                (content, date, project_id, parent_id),
             )
             # lastrowid: 방금 추가한 줄에 자동으로 붙은 번호
             row = connection.execute("SELECT * FROM tasks WHERE id = ?", (cursor.lastrowid,)).fetchone()
             return dict(row)
 
 
-# 수정할 수 있는 칸의 이름들. 아래 update_task가 SQL 문장에 칸 이름을 직접 넣는데,
+# 수정할 수 있는 칸의 이름들. 아래 update_row가 SQL 문장에 칸 이름을 직접 넣는데,
 # 칸 이름은 ?로 안전하게 넘길 수 없다. 그래서 화면이 보낸 이름을 그대로 쓰지 않고, 이 목록에 있는 것만 쓴다
-EDITABLE_COLUMNS = ("content", "date", "done", "done_at")
+EDITABLE_COLUMNS = ("content", "date", "done", "done_at", "deadline")
 
 
 def update_task(task_id, changes):
@@ -102,17 +146,95 @@ def update_task(task_id, changes):
         done_at = datetime.datetime.now().isoformat(timespec="seconds") if changes["done"] else None
         changes = {**changes, "done_at": done_at}
 
-    columns = [column for column in EDITABLE_COLUMNS if column in changes]
+    return update_row("tasks", EDITABLE_COLUMNS, task_id, changes)
+
+
+def update_row(table, allowed_columns, row_id, changes):
+    """table의 row_id번 줄에서 changes에 들어 있는 칸만 고친다. 그 번호의 줄이 없으면 False.
+    table과 allowed_columns는 이 파일 안의 고정된 값만 넘긴다. (SQL 문장에 직접 들어가므로 화면이 보낸 값을 쓰면 안 된다)"""
+    columns = [column for column in allowed_columns if column in changes]
     if not columns:
         return False
     # 예: "content = ?, done = ?"
     assignments = ", ".join(f"{column} = ?" for column in columns)
     values = [changes[column] for column in columns]
-    _, changed = run(f"UPDATE tasks SET {assignments} WHERE id = ?", (*values, task_id))
+    _, changed = run(f"UPDATE {table} SET {assignments} WHERE id = ?", (*values, row_id))
     return changed > 0
 
 
 def delete_task(task_id):
-    """할 일을 지운다. 그 번호의 할 일이 없으면 False."""
-    _, changed = run("DELETE FROM tasks WHERE id = ?", (task_id,))
+    """할 일을 지운다. 그 번호의 할 일이 없으면 False.
+    하위 단계가 있는 단계를 지우면 그 아래 하위 단계들도 함께 지운다. (상위가 없는 채로 남으면 어디에서도 안 보이기 때문이다)"""
+    _, changed = run("DELETE FROM tasks WHERE id = ? OR parent_id = ?", (task_id, task_id))
     return changed > 0
+
+
+# ---------- 프로젝트 ----------
+
+def list_projects():
+    """모든 프로젝트를 마감일이 가까운 순으로 돌려준다. 마감일이 없는 것은 맨 뒤.
+    각 프로젝트에 연결된 할 일의 전체 개수(total)와 끝낸 개수(done_count)도 함께 센다.
+    하위 단계가 있는 단계는 제목 역할이라 세지 않고 그 아래 하위 단계들을 센다. (LEFT JOIN의 ON 조건에 NO_CHILDREN을 넣어서,
+    조건에 안 맞는 할 일은 "없는 셈"이 되고 프로젝트 줄 자체는 그대로 남는다)
+
+    GROUP BY p.id: 프로젝트 하나당 한 줄로 묶는다. COUNT(t.id)는 묶인 할 일의 개수, SUM(t.done)은 done 값(0 또는 1)의 합,
+    즉 끝낸 개수다. 할 일이 하나도 없는 프로젝트는 SUM이 NULL이 되어서 COALESCE(…, 0)으로 0을 대신 쓴다.
+    ORDER BY p.deadline IS NULL: 마감일이 없는 줄이 뒤로 가게 한다 (IS NULL이 참이면 1이라서 0인 것들 다음에 온다)"""
+    rows, _ = run(
+        "SELECT p.*, COUNT(t.id) AS total, COALESCE(SUM(t.done), 0) AS done_count "
+        f"FROM projects p LEFT JOIN tasks t ON t.project_id = p.id AND {NO_CHILDREN} "
+        "GROUP BY p.id "
+        "ORDER BY p.deadline IS NULL, p.deadline, p.id"
+    )
+    return rows
+
+
+def list_project_tasks():
+    """프로젝트에 연결된 모든 할 일을 돌려준다. 안 끝낸 것이 위, 끝낸 것이 아래이고 그 안에서는 만든 순서다."""
+    rows, _ = run("SELECT * FROM tasks WHERE project_id IS NOT NULL ORDER BY done, id")
+    return rows
+
+
+def get_project(project_id):
+    """프로젝트 하나를 돌려준다. 없으면 None."""
+    rows, _ = run("SELECT * FROM projects WHERE id = ?", (project_id,))
+    return rows[0] if rows else None
+
+
+def add_project(name, deadline, color, progress_mode, manual_percent):
+    """프로젝트를 하나 추가하고, 만들어진 프로젝트(번호 포함)를 돌려준다."""
+    with contextlib.closing(connect()) as connection:
+        with connection:
+            cursor = connection.execute(
+                "INSERT INTO projects (name, deadline, color, progress_mode, manual_percent) VALUES (?, ?, ?, ?, ?)",
+                (name, deadline, color, progress_mode, manual_percent),
+            )
+            row = connection.execute("SELECT * FROM projects WHERE id = ?", (cursor.lastrowid,)).fetchone()
+            return dict(row)
+
+
+# 프로젝트에서 고칠 수 있는 칸들 (EDITABLE_COLUMNS와 같은 이유로 고정된 목록)
+EDITABLE_PROJECT_COLUMNS = ("name", "deadline", "color", "progress_mode", "manual_percent")
+
+
+def update_project(project_id, changes):
+    """프로젝트의 changes에 든 칸만 고친다. 그 번호의 프로젝트가 없으면 False."""
+    return update_row("projects", EDITABLE_PROJECT_COLUMNS, project_id, changes)
+
+
+def delete_project(project_id):
+    """프로젝트를 지운다. 없으면 False.
+    연결된 할 일은 이렇게 처리한다:
+    - 날짜가 있는 할 일은 지우지 않고 프로젝트 연결만 끊는다. 이미 그날의 기록(오늘 탭)에 들어 있는 것이라서다.
+    - 날짜가 없는 할 일은 프로젝트 카드 안에서만 보이던 단계라서, 프로젝트와 함께 지운다.
+      (연결만 끊으면 어디에서도 보이지 않는 채로 남기 때문이다)
+    - 연결만 끊고 남기는 할 일은 상위 단계와의 관계(parent_id)도 끊는다. 상위 단계가 지워졌을 수 있기 때문이다.
+    세 문장이 모두 성공하거나 모두 취소되도록 한 번의 거래(transaction)로 묶는다."""
+    with contextlib.closing(connect()) as connection:
+        with connection:
+            connection.execute("DELETE FROM tasks WHERE project_id = ? AND date IS NULL", (project_id,))
+            connection.execute(
+                "UPDATE tasks SET project_id = NULL, parent_id = NULL WHERE project_id = ?", (project_id,)
+            )
+            cursor = connection.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+            return cursor.rowcount > 0

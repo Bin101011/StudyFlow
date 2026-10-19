@@ -54,6 +54,10 @@
                     <!-- 할 일 입력 줄: 글자를 쓰고 Enter를 누르거나 추가 버튼을 누른다 -->
                     <div class="task-add">
                         <input type="text" id="task-input" placeholder="할 일을 입력하고 Enter">
+                        <!-- 새 할 일을 어느 프로젝트에 연결할지. 선택지는 app.js가 프로젝트 목록으로 채운다 -->
+                        <select id="task-project">
+                            <option value="">프로젝트 없음</option>
+                        </select>
                         <button id="task-add-button">추가</button>
                     </div>
 
@@ -68,8 +72,12 @@
             </div>
         </div>
         <div class="tab-content" id="projects">
-            <h1>프로젝트</h1>
-            <p>여기는 프로젝트 탭입니다.</p>
+            <div class="projects-header">
+                <h1>프로젝트</h1>
+                <button id="project-add-button" class="primary">+ 새 프로젝트</button>
+            </div>
+            <!-- 프로젝트 카드들은 app.js가 /api/projects에서 받아 여기에 만든다 (마감일이 가까운 순) -->
+            <div id="project-list"></div>
         </div>
         <div class="tab-content" id="settings">
             <h1>설정</h1>
@@ -129,6 +137,39 @@
             <span class="spacer"></span>
             <button id="event-cancel">취소</button>
             <button id="event-save" class="primary">저장</button>
+        </div>
+    </dialog>
+
+    <!-- 프로젝트 추가/수정 창. 일정 창과 같은 방식으로 추가와 수정에 같이 쓴다 -->
+    <dialog id="project-dialog">
+        <h2 id="project-dialog-title">새 프로젝트</h2>
+
+        <label class="dialog-row">이름
+            <input type="text" id="project-name">
+        </label>
+        <div class="dialog-row">마감일
+            <input type="date" id="project-deadline">
+            <button type="button" id="project-deadline-clear">지우기</button>
+        </div>
+        <label class="dialog-row">색
+            <!-- <input type="color">: 브라우저가 주는 색 선택 도구 -->
+            <input type="color" id="project-color">
+        </label>
+        <!-- radio: 여러 개 중 하나만 고르는 동그란 선택 칸. name이 같은 것끼리 한 묶음이다 -->
+        <div class="dialog-row column">
+            <span>진행률</span>
+            <label><input type="radio" name="project-mode" value="auto" checked> 자동 (연결된 할 일 중 끝낸 비율)</label>
+            <label><input type="radio" name="project-mode" value="manual"> 직접 입력 (카드의 슬라이더로 정함)</label>
+        </div>
+
+        <p id="project-error" class="dialog-error"></p>
+
+        <div class="dialog-buttons">
+            <!-- 삭제 버튼은 프로젝트를 수정할 때만 보인다 -->
+            <button id="project-delete" class="danger" hidden>삭제</button>
+            <span class="spacer"></span>
+            <button id="project-cancel">취소</button>
+            <button id="project-save" class="primary">저장</button>
         </div>
     </dialog>
 

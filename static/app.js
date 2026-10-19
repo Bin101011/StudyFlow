@@ -40,6 +40,13 @@ tabButtons.forEach(function (button) {
         if (tabName === "today") {
             loadToday();
         }
+
+        // 6. 프로젝트 탭도 열 때마다 새로 불러온다. (오늘 탭에서 프로젝트에 연결해 추가한 할 일이 진행률에 반영되어야 한다)
+        if (tabName === "projects") {
+            loadProjects().catch(function (error) {
+                showToast("프로젝트를 불러오지 못했습니다: " + error.message);
+            });
+        }
     });
 });
 
@@ -577,6 +584,7 @@ const overdueSection = document.getElementById("overdue-section");
 const overdueTasksList = document.getElementById("overdue-tasks");
 const taskInput = document.getElementById("task-input");
 const taskAddButton = document.getElementById("task-add-button");
+const taskProjectSelect = document.getElementById("task-project");
 const eventsHeading = document.getElementById("events-heading");
 const tasksHeading = document.getElementById("tasks-heading");
 const dayPrevButton = document.getElementById("day-prev");
@@ -661,9 +669,17 @@ async function loadTodayEvents() {
     });
 }
 
-// 할 일 한 줄(<li>)을 만든다.
-// moveLabel/moveDate: "내일로" 버튼의 글자와, 누르면 옮겨 갈 날짜. showDate: 줄에 날짜를 같이 보일지(밀린 할 일)
-function makeTaskRow(task, moveLabel, moveDate, showDate) {
+// 할 일 한 줄(<li>)을 만든다. 오늘 탭과 프로젝트 카드가 같이 쓴다. options는 이런 값들을 담은 묶음이다:
+//   reload: 할 일을 바꾸거나 지운 뒤 목록을 다시 불러오는 함수 (오늘 탭이면 loadTodayTasks, 프로젝트 탭이면 loadProjects)
+//   moveLabel/moveDate: 날짜를 옮기는 버튼("내일로" 등)의 글자와 옮겨 갈 날짜. moveLabel이 없으면 버튼을 안 만든다
+//   showDate: 줄에 날짜를 같이 보일지 (밀린 할 일, 프로젝트의 날짜 잡힌 단계)
+//   showProject: 줄에 프로젝트 이름표를 같이 보일지 (오늘 탭)
+//   editDeadline: 마감일을 바꾸는 버튼을 둘지 (프로젝트 카드). false면 마감일이 있을 때 글자로만 보여준다
+//   derived: 하위 단계가 있는 단계인지. true면 체크박스를 잠그고(하위 단계를 다 끝내면 저절로 체크됨) 날짜 옮기기를 막는다
+//   countText: 줄에 붙일 "2/3" 같은 하위 단계 진행 글자
+//   extraButtons: 삭제 버튼 앞에 더 넣을 버튼들의 리스트 (프로젝트 카드의 "+ 하위")
+//   unscheduleOnly: 오늘 탭에서 쓴다. 프로젝트에 연결된 할 일은 지우는 대신 "오늘에서만 빼기"(날짜 제거)로 바꾼다
+function makeTaskRow(task, options) {
     const item = document.createElement("li");
     item.className = "task-row";
 
@@ -671,8 +687,9 @@ function makeTaskRow(task, moveLabel, moveDate, showDate) {
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.checked = task.done === 1;
+    checkbox.disabled = !!options.derived;  // 하위 단계가 있는 단계는 직접 체크하지 않는다
     checkbox.addEventListener("change", function () {
-        updateTask(task.id, { done: checkbox.checked });
+        updateTask(task.id, { done: checkbox.checked }, options.reload);
     });
 
     const content = document.createElement("span");
@@ -681,7 +698,30 @@ function makeTaskRow(task, moveLabel, moveDate, showDate) {
 
     item.append(checkbox, content);
 
-    if (showDate) {
+    if (options.countText) {
+        const count = document.createElement("span");
+        count.className = "task-count";
+        count.textContent = options.countText;
+        item.appendChild(count);
+    }
+
+    // 프로젝트에 연결된 할 일이면 프로젝트 색 동그라미와 이름을 붙인다. 하위 단계면 상위 단계 이름도 같이 붙는다
+    if (options.showProject && task.project_name) {
+        item.appendChild(makeProjectChip(task.project_name, task.project_color, task.parent_content));
+    }
+
+    // 마감일: 프로젝트 카드에서는 눌러서 바꿀 수 있는 버튼, 그 밖에서는 글자로만 보여준다
+    if (options.editDeadline) {
+        item.appendChild(makeDeadlineControl(task, options.reload));
+    } else if (task.deadline) {
+        const deadline = describeDeadline(task.deadline);
+        const deadlineText = document.createElement("span");
+        deadlineText.className = "task-deadline" + (deadline.urgent && task.done !== 1 ? " urgent" : "");
+        deadlineText.textContent = "마감 " + deadline.short;
+        item.appendChild(deadlineText);
+    }
+
+    if (options.showDate && task.date) {
         const date = document.createElement("span");
         date.className = "task-date";
         date.textContent = task.date.slice(5).replace("-", "/");  // "2026-10-17" → "10/17"
@@ -689,13 +729,33 @@ function makeTaskRow(task, moveLabel, moveDate, showDate) {
     }
 
     // 끝낸 할 일은 옮길 필요가 없으므로 버튼을 만들지 않는다
-    if (task.done !== 1) {
+    if (task.done !== 1 && options.moveLabel) {
         const moveButton = document.createElement("button");
-        moveButton.textContent = moveLabel;
+        moveButton.textContent = options.moveLabel;
         moveButton.addEventListener("click", function () {
-            updateTask(task.id, { date: moveDate });
+            updateTask(task.id, { date: options.moveDate }, options.reload);
         });
         item.appendChild(moveButton);
+    }
+
+    (options.extraButtons || []).forEach(function (button) {
+        item.appendChild(button);
+    });
+
+    // 오늘 탭의 프로젝트 할 일: 지우면 프로젝트의 단계까지 사라지므로, 지우는 대신 오늘 목록에서만 뺀다.
+    // 날짜(date)만 비우면 단계는 프로젝트 카드에 그대로 남는다. 끝낸 할 일은 "오늘 한 일의 기록"이라서 빼기 버튼을 두지 않는다
+    // (지우고 싶으면 프로젝트 카드에서 지운다)
+    if (options.unscheduleOnly && task.project_id) {
+        if (task.done !== 1 && task.date) {
+            const removeButton = document.createElement("button");
+            removeButton.textContent = "빼기";
+            removeButton.title = "오늘 할 일에서만 빼고, 프로젝트에는 그대로 남겨둡니다";
+            removeButton.addEventListener("click", function () {
+                updateTask(task.id, { date: null }, options.reload);
+            });
+            item.appendChild(removeButton);
+        }
+        return item;
     }
 
     // 삭제 버튼: 일정 삭제와 같이 두 번 눌러야 지워진다. 한 번 누르고 3초 동안 안 누르면 원래대로 돌아간다
@@ -717,7 +777,7 @@ function makeTaskRow(task, moveLabel, moveDate, showDate) {
         clearTimeout(armTimer);
         try {
             await sendRequest("/api/tasks/" + task.id, "DELETE");
-            await loadTodayTasks();
+            await options.reload();
         } catch (error) {
             showToast("할 일을 지우지 못했습니다: " + error.message);
         }
@@ -747,9 +807,14 @@ async function loadTodayTasks() {
         showEmptyMessage(todayTasksList, isToday ? "오늘 할 일이 없습니다." : "할 일이 없습니다.");
     }
     data.tasks.forEach(function (task) {
-        todayTasksList.appendChild(makeTaskRow(
-            task, isToday ? "내일로" : "다음 날로", addDaysToText(date, 1), task.date !== date
-        ));
+        todayTasksList.appendChild(makeTaskRow(task, {
+            reload: loadTodayTasks,
+            moveLabel: isToday ? "내일로" : "다음 날로",
+            moveDate: addDaysToText(date, 1),
+            showDate: task.date !== date,
+            showProject: true,
+            unscheduleOnly: true,
+        }));
     });
 
     // 밀린 할 일은 "오늘 기준"의 개념이라서 오늘을 볼 때만 보인다. 있을 때만 구역을 보이고, "오늘로" 버튼은 날짜를 오늘로 바꾼다
@@ -757,20 +822,92 @@ async function loadTodayTasks() {
     overdueSection.hidden = !isToday || data.overdue.length === 0;
     if (isToday) {
         data.overdue.forEach(function (task) {
-            overdueTasksList.appendChild(makeTaskRow(task, "오늘로", todayText, true));
+            overdueTasksList.appendChild(makeTaskRow(task, {
+                reload: loadTodayTasks,
+                moveLabel: "오늘로",
+                moveDate: todayText,
+                showDate: true,
+                showProject: true,
+                unscheduleOnly: true,
+            }));
         });
     }
 }
 
-// 할 일의 일부(완료 여부, 날짜)를 바꾸고 목록을 다시 불러온다
-async function updateTask(taskId, changes) {
+// 할 일의 일부(완료 여부, 날짜)를 바꾸고 reload()로 목록을 다시 불러온다
+async function updateTask(taskId, changes, reload) {
     try {
         await sendRequest("/api/tasks/" + taskId, "PATCH", changes);
     } catch (error) {
         showToast("할 일을 바꾸지 못했습니다: " + error.message);
     }
     // 성공이든 실패든 서버에 있는 실제 모습으로 화면을 맞춘다
-    await loadTodayTasks();
+    await reload();
+}
+
+// 프로젝트 이름표: 프로젝트 색 동그라미 + 이름. 오늘 탭의 할 일 줄에 쓴다.
+// parentContent(상위 단계 이름)가 있으면 "프로젝트 › 상위 단계"로 보여줘서, 하위 단계가 어느 일의 일부인지 알 수 있게 한다
+function makeProjectChip(name, color, parentContent) {
+    const chip = document.createElement("span");
+    chip.className = "project-chip";
+
+    const dot = document.createElement("span");
+    dot.className = "event-dot";
+    dot.style.backgroundColor = color;
+
+    chip.append(dot, parentContent ? name + " › " + parentContent : name);  // 글자는 append로 넣으면 HTML이 아니라 그냥 글자로 들어간다
+    return chip;
+}
+
+// 마감일을 바꾸는 버튼을 만든다 (프로젝트 카드의 단계 줄). 마감일이 없으면 "마감일", 있으면 "마감 11/18 (D-30)"이 적혀 있다.
+// 누르면 날짜 고르는 창이 열린다. <input type="date">를 투명하게 버튼 위에 겹쳐두고 showPicker()로 그 창을 연다.
+// 마감일이 있을 때는 옆에 지우는 ✕ 버튼도 붙는다
+function makeDeadlineControl(task, reload) {
+    const wrapper = document.createElement("span");
+    wrapper.className = "deadline-control";
+
+    const input = document.createElement("input");
+    input.type = "date";
+    input.className = "deadline-input";
+    input.value = task.deadline || "";
+
+    const button = document.createElement("button");
+    if (task.deadline) {
+        const deadline = describeDeadline(task.deadline);
+        button.textContent = "마감 " + deadline.short;
+        // 마감이 임박했거나 지났는데 아직 안 끝낸 단계만 빨갛게 강조한다
+        if (deadline.urgent && task.done !== 1) {
+            button.className = "urgent";
+        }
+    } else {
+        button.textContent = "마감일";
+    }
+    button.title = "마감일 정하기";
+    button.addEventListener("click", function () {
+        try {
+            input.showPicker();  // 날짜 고르는 창을 연다
+        } catch (error) {
+            // showPicker를 쓸 수 없는 환경이면, 날짜 칸을 그대로 보여줘서 직접 입력할 수 있게 한다
+            input.classList.add("visible");
+            input.focus();
+        }
+    });
+    // 날짜를 고르면(change) 서버에 저장하고 목록을 다시 불러온다
+    input.addEventListener("change", function () {
+        updateTask(task.id, { deadline: input.value || null }, reload);
+    });
+    wrapper.append(input, button);
+
+    if (task.deadline) {
+        const clear = document.createElement("button");
+        clear.textContent = "✕";
+        clear.title = "마감일 지우기";
+        clear.addEventListener("click", function () {
+            updateTask(task.id, { deadline: null }, reload);
+        });
+        wrapper.appendChild(clear);
+    }
+    return wrapper;
 }
 
 // 입력 칸의 글자를 지금 보고 있는 날의 할 일로 추가한다 (▶로 내일을 열고 적으면 내일 계획이 된다)
@@ -780,7 +917,12 @@ async function addTask() {
         return;
     }
     try {
-        await sendRequest("/api/tasks", "POST", { content: content, date: viewedDate });
+        await sendRequest("/api/tasks", "POST", {
+            content: content,
+            date: viewedDate,
+            // 고른 프로젝트가 있으면 그 번호를 보내서 연결한다. "프로젝트 없음"(빈 글자)이면 null
+            projectId: taskProjectSelect.value ? Number(taskProjectSelect.value) : null,
+        });
         taskInput.value = "";
         await loadTodayTasks();
     } catch (error) {
@@ -839,6 +981,11 @@ async function loadToday() {
     await settingsReady;
 
     showDay(todayText);
+
+    // 할 일 입력줄의 프로젝트 선택 칸도 최신 프로젝트 목록으로 채운다
+    loadProjects().catch(function (error) {
+        console.error("프로젝트 목록을 불러오지 못했습니다:", error);
+    });
 }
 
 // ◀ ▶ 버튼: 보고 있는 날에서 하루 전/후로 넘긴다. "오늘로 돌아가기"는 진짜 오늘로 간다
@@ -850,6 +997,401 @@ dayNextButton.addEventListener("click", function () {
 });
 dayTodayButton.addEventListener("click", function () {
     showDay(todayText);
+});
+
+// ---------- 프로젝트 탭 ----------
+
+const projectListElement = document.getElementById("project-list");
+const projectAddButton = document.getElementById("project-add-button");
+const projectDialog = document.getElementById("project-dialog");
+const projectDialogTitle = document.getElementById("project-dialog-title");
+const projectNameInput = document.getElementById("project-name");
+const projectDeadlineInput = document.getElementById("project-deadline");
+const projectColorInput = document.getElementById("project-color");
+const projectError = document.getElementById("project-error");
+const projectDeleteButton = document.getElementById("project-delete");
+
+// 새 프로젝트 창에 미리 골라둘 색들 (서버의 PROJECT_COLORS와 같은 목록). 프로젝트 수에 따라 차례로 쓴다
+const PROJECT_COLORS = ["#4a7cff", "#e8590c", "#2f9e44", "#ae3ec9", "#d6336c", "#1098ad", "#f08c00"];
+
+// 마지막으로 서버에서 받은 프로젝트 목록 (마감일 순). 화면을 다시 그리거나 선택 칸을 채울 때 쓴다
+let projectsCache = [];
+// 수정 중인 프로젝트. null이면 "새 프로젝트" 모드다
+let editingProject = null;
+// 삭제 버튼을 한 번 눌러서 "정말 삭제?" 확인을 기다리는 중인지
+let projectDeleteArmed = false;
+// 단계를 추가한 직후 다시 그린 카드에서, 입력 칸에 커서를 되돌려둘 프로젝트 번호. 단계를 연달아 입력하기 편하게 하려는 것이다
+let projectToFocus = null;
+// "+ 하위"로 하위 단계 입력 칸을 열어둔 단계의 번호들. 하위 단계를 연달아 적을 수 있게, 다시 그려도 열린 채로 둔다
+const openSubAdd = new Set();
+// 하위 단계를 추가한 직후, 다시 그린 입력 칸에 커서를 되돌려둘 단계 번호
+let subToFocus = null;
+
+// 서버에서 프로젝트 목록(진행률과 단계 포함)을 받아와서 화면을 다시 그린다.
+// 오늘 탭의 할 일 줄이나 프로젝트 카드에서 할 일을 바꾼 뒤에도 이 함수로 새로고침한다
+async function loadProjects() {
+    const response = await fetch("/api/projects");
+    if (!response.ok) {
+        throw new Error("서버 오류: " + response.status);
+    }
+    projectsCache = await response.json();
+    renderProjects();
+    fillProjectSelect();
+}
+
+// 오늘 탭 입력줄의 프로젝트 선택 칸을 프로젝트 목록으로 채운다. 고르고 있던 프로젝트는 그대로 유지한다
+function fillProjectSelect() {
+    const previous = taskProjectSelect.value;
+    taskProjectSelect.innerHTML = "";
+    taskProjectSelect.add(new Option("프로젝트 없음", ""));
+    projectsCache.forEach(function (project) {
+        taskProjectSelect.add(new Option(project.name, project.id));
+    });
+    taskProjectSelect.value = previous;
+    // 그 사이 지워진 프로젝트였다면 아무것도 선택되지 않은 상태가 되므로 "프로젝트 없음"으로 돌린다
+    if (taskProjectSelect.value !== previous) {
+        taskProjectSelect.value = "";
+    }
+}
+
+// 마감일 글자와 급한지 여부를 만든다. 예: { text: "2026-12-31 (D-73)", urgent: false }
+function describeDeadline(deadline) {
+    const [year, month, day] = deadline.split("-").map(Number);
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    // 날짜끼리 빼면 밀리초가 나온다. 하루(86400000밀리초)로 나눠서 며칠 남았는지 센다
+    const days = Math.round((new Date(year, month - 1, day) - todayStart) / 86400000);
+
+    let remaining;
+    if (days > 0) {
+        remaining = "D-" + days;
+    } else if (days === 0) {
+        remaining = "오늘 마감";
+    } else {
+        remaining = (-days) + "일 지남";
+    }
+    // 마감이 7일 이내이거나 이미 지났으면 빨간색으로 강조한다.
+    // short는 할 일 줄에 쓰는 짧은 글자다. 예: "11/18 (D-30)"
+    return {
+        text: deadline + " (" + remaining + ")",
+        short: deadline.slice(5).replace("-", "/") + " (" + remaining + ")",
+        urgent: days <= 7,
+    };
+}
+
+// 프로젝트 카드 하나를 만든다
+function makeProjectCard(project) {
+    const card = document.createElement("div");
+    card.className = "project-card";
+    card.style.borderLeftColor = project.color;
+
+    // 맨 윗줄: 이름, 마감일, 수정 버튼
+    const head = document.createElement("div");
+    head.className = "project-card-head";
+
+    const name = document.createElement("span");
+    name.className = "project-name";
+    name.textContent = project.name;
+    head.appendChild(name);
+
+    if (project.deadline) {
+        const deadline = describeDeadline(project.deadline);
+        const deadlineText = document.createElement("span");
+        deadlineText.className = "project-deadline" + (deadline.urgent ? " urgent" : "");
+        deadlineText.textContent = deadline.text;
+        head.appendChild(deadlineText);
+    }
+
+    const editButton = document.createElement("button");
+    editButton.textContent = "수정";
+    editButton.addEventListener("click", function () {
+        openProjectDialog(project);
+    });
+    head.appendChild(editButton);
+    card.appendChild(head);
+
+    // 진행률 줄: progress bar와 퍼센트 글자.
+    // progress bar는 바깥 상자(회색 바탕) 안에 안쪽 상자(색 채움)를 두고, 안쪽 상자의 width를 %로 정하면 된다
+    const progressRow = document.createElement("div");
+    progressRow.className = "progress-row";
+    const bar = document.createElement("div");
+    bar.className = "progress-bar";
+    const fill = document.createElement("div");
+    fill.className = "progress-fill";
+    fill.style.width = project.percent + "%";
+    fill.style.backgroundColor = project.color;
+    bar.appendChild(fill);
+    const percentText = document.createElement("span");
+    percentText.className = "progress-text";
+    percentText.textContent = project.percent + "%";
+    progressRow.append(bar, percentText);
+    card.appendChild(progressRow);
+
+    // 진행률 설명 줄: 자동이면 "끝낸 단계 / 전체", 직접 입력이면 슬라이더
+    const detail = document.createElement("div");
+    detail.className = "progress-detail";
+    if (project.progressMode === "manual") {
+        const slider = document.createElement("input");
+        slider.type = "range";
+        slider.min = 0;
+        slider.max = 100;
+        slider.step = 5;
+        slider.value = project.manualPercent;
+        // input: 끄는 동안 막대와 글자를 바로 바꾼다
+        slider.addEventListener("input", function () {
+            fill.style.width = slider.value + "%";
+            percentText.textContent = slider.value + "%";
+        });
+        // change: 놓았을 때 한 번 저장한다
+        slider.addEventListener("change", async function () {
+            try {
+                await sendRequest("/api/projects/" + project.id, "PATCH", { manualPercent: Number(slider.value) });
+                project.manualPercent = Number(slider.value);
+                project.percent = Number(slider.value);
+            } catch (error) {
+                showToast("진행률을 저장하지 못했습니다: " + error.message);
+                await loadProjects();  // 저장에 실패했으면 서버에 있는 값으로 되돌린다
+            }
+        });
+        detail.append("직접 입력 ", slider);
+    } else {
+        detail.textContent = "단계 " + project.doneCount + " / " + project.total + " 완료 (연결된 할 일 기준)";
+    }
+    card.appendChild(detail);
+
+    // 단계 목록: 이 프로젝트에 연결된 단계들과, 각 단계 아래의 하위 단계들. 오늘 탭에서 연결한 할 일도 여기에 같이 나온다.
+    // project.tasks는 위쪽 단계들의 리스트이고, 각 단계의 children에 하위 단계들이 들어 있다
+    const today = toDateText(new Date());
+    const stepList = document.createElement("ul");
+    stepList.className = "today-list";
+
+    // 단계 하나(또는 하위 단계 하나)의 줄 옵션. 오늘 하기 / 마감일 버튼은 단계와 하위 단계가 똑같이 쓴다
+    function stepOptions(step, extra) {
+        return Object.assign({
+            reload: loadProjects,
+            // 오늘 할 일이 아닌 단계에는 "오늘 하기" 버튼을 둔다. 누르면 날짜가 오늘이 되어 오늘 탭에 나타난다
+            moveLabel: step.date === today ? null : "오늘 하기",
+            moveDate: today,
+            showDate: true,
+            showProject: false,  // 카드 안이라서 프로젝트 이름표는 필요 없다
+            editDeadline: true,
+        }, extra);
+    }
+
+    project.tasks.forEach(function (step) {
+        const children = step.children;
+        const hasChildren = children.length > 0;
+        const subAddOpen = openSubAdd.has(step.id);
+
+        // "+ 하위" 버튼: 이 단계 아래에 하위 단계를 적는 입력 칸을 열고 닫는다
+        const subToggle = document.createElement("button");
+        subToggle.textContent = "+ 하위";
+        subToggle.title = "이 단계 아래에 하위 단계 추가";
+        subToggle.addEventListener("click", function () {
+            if (subAddOpen) {
+                openSubAdd.delete(step.id);
+            } else {
+                openSubAdd.add(step.id);
+                subToFocus = step.id;
+            }
+            renderProjects();  // 서버에 다시 묻지 않고, 이미 받아둔 목록으로 화면만 다시 그린다
+        });
+
+        stepList.appendChild(makeTaskRow(step, stepOptions(step, {
+            // 하위 단계가 있는 단계는 제목 역할이다. 체크와 오늘 하기는 그 아래 하위 단계들이 한다
+            derived: hasChildren,
+            moveLabel: hasChildren || step.date === today ? null : "오늘 하기",
+            showDate: !hasChildren,
+            countText: hasChildren
+                ? children.filter(function (child) { return child.done === 1; }).length + "/" + children.length
+                : null,
+            extraButtons: [subToggle],
+        })));
+
+        if (hasChildren || subAddOpen) {
+            // 하위 단계 묶음: 오른쪽으로 들여써서 상위 단계 아래에 놓는다
+            const wrapper = document.createElement("li");
+            wrapper.className = "sub-wrapper";
+            const subList = document.createElement("ul");
+            subList.className = "today-list";
+            children.forEach(function (child) {
+                subList.appendChild(makeTaskRow(child, stepOptions(child, {})));
+            });
+            wrapper.appendChild(subList);
+
+            if (subAddOpen) {
+                const sub = makeAddRow("하위 단계 추가하고 Enter", async function (content) {
+                    // parentId를 보내면 서버가 같은 프로젝트의 하위 단계로 만든다
+                    await sendRequest("/api/tasks", "POST", { content: content, parentId: step.id });
+                    subToFocus = step.id;
+                    await loadProjects();
+                });
+                wrapper.appendChild(sub.row);
+                if (subToFocus === step.id) {
+                    subToFocus = null;
+                    setTimeout(function () {
+                        sub.input.focus();
+                    }, 0);
+                }
+            }
+            stepList.appendChild(wrapper);
+        }
+    });
+    card.appendChild(stepList);
+
+    // 단계 추가 줄: 날짜 없는 할 일로 만들어진다. date는 보내지 않고, projectId로 이 프로젝트에 연결한다
+    const stepAdd = makeAddRow("단계 추가하고 Enter", async function (content) {
+        await sendRequest("/api/tasks", "POST", { content: content, projectId: project.id });
+        projectToFocus = project.id;
+        await loadProjects();
+    });
+    card.appendChild(stepAdd.row);
+    if (projectToFocus === project.id) {
+        projectToFocus = null;
+        // 카드가 화면에 붙은 뒤에야 커서를 둘 수 있어서 한 박자 늦춘다
+        setTimeout(function () {
+            stepAdd.input.focus();
+        }, 0);
+    }
+
+    return card;
+}
+
+// 입력 칸 + 추가 버튼이 있는 줄을 만든다. 글자를 쓰고 Enter(또는 버튼)를 누르면 onAdd(글자)를 실행한다.
+// 단계 추가와 하위 단계 추가가 같이 쓴다. { row: 줄 전체, input: 입력 칸 }을 돌려준다
+function makeAddRow(placeholder, onAdd) {
+    const row = document.createElement("div");
+    row.className = "task-add";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = placeholder;
+    const button = document.createElement("button");
+    button.textContent = "추가";
+    row.append(input, button);
+
+    async function submit() {
+        const content = input.value.trim();
+        if (!content) {
+            return;
+        }
+        try {
+            await onAdd(content);
+        } catch (error) {
+            showToast("단계를 추가하지 못했습니다: " + error.message);
+        }
+    }
+    button.addEventListener("click", submit);
+    input.addEventListener("keydown", function (e) {
+        // 한글 조합 중의 Enter는 무시한다 (오늘 탭 입력칸과 같은 이유)
+        if (e.key === "Enter" && !e.isComposing) {
+            submit();
+        }
+    });
+    return { row: row, input: input };
+}
+
+// 프로젝트 카드들을 모두 다시 그린다
+function renderProjects() {
+    projectListElement.innerHTML = "";
+    if (projectsCache.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "today-empty";
+        empty.textContent = "아직 프로젝트가 없습니다. 위의 '+ 새 프로젝트'로 만들어 보세요.";
+        projectListElement.appendChild(empty);
+        return;
+    }
+    projectsCache.forEach(function (project) {
+        projectListElement.appendChild(makeProjectCard(project));
+    });
+}
+
+// 프로젝트 추가/수정 창을 연다. project가 없으면 새 프로젝트
+function openProjectDialog(project) {
+    editingProject = project || null;
+    projectDeleteArmed = false;
+    projectDeleteButton.textContent = "삭제";
+    projectDeleteButton.hidden = !editingProject;
+    projectDialogTitle.textContent = editingProject ? "프로젝트 수정" : "새 프로젝트";
+
+    projectNameInput.value = editingProject ? editingProject.name : "";
+    projectDeadlineInput.value = editingProject && editingProject.deadline ? editingProject.deadline : "";
+    projectColorInput.value = editingProject
+        ? editingProject.color
+        : PROJECT_COLORS[projectsCache.length % PROJECT_COLORS.length];
+    // radio 칸 중 지금 방식에 해당하는 것을 체크한다. [value=...]는 value가 그 값인 요소를 찾는 선택자다
+    const mode = editingProject ? editingProject.progressMode : "auto";
+    document.querySelector('input[name="project-mode"][value="' + mode + '"]').checked = true;
+    projectError.textContent = "";
+
+    projectDialog.showModal();
+    projectNameInput.focus();
+}
+
+// 프로젝트 창의 저장 버튼: 새 프로젝트면 POST, 수정이면 PATCH
+async function saveProject() {
+    const name = projectNameInput.value.trim();
+    if (!name) {
+        projectError.textContent = "이름을 입력하세요.";
+        return;
+    }
+
+    const mode = document.querySelector('input[name="project-mode"]:checked').value;
+    const body = {
+        name: name,
+        deadline: projectDeadlineInput.value,  // 비어 있으면 서버가 "마감일 없음"으로 저장한다
+        color: projectColorInput.value,
+        progressMode: mode,
+    };
+    // 자동 → 직접으로 바꾸면 슬라이더가 0%에서 시작하지 않고, 지금 보이던 진행률에서 시작하게 한다
+    if (editingProject && mode === "manual" && editingProject.progressMode !== "manual") {
+        body.manualPercent = editingProject.percent;
+    }
+
+    try {
+        projectError.textContent = "저장하는 중...";
+        if (editingProject) {
+            await sendRequest("/api/projects/" + editingProject.id, "PATCH", body);
+        } else {
+            await sendRequest("/api/projects", "POST", body);
+        }
+        projectDialog.close();
+        await loadProjects();
+    } catch (error) {
+        projectError.textContent = error.message;
+    }
+}
+
+// 프로젝트 삭제: 일정, 할 일 삭제와 같이 두 번 눌러야 지워진다
+async function deleteProject() {
+    if (!projectDeleteArmed) {
+        projectDeleteArmed = true;
+        projectDeleteButton.textContent = "정말 삭제? (날짜 없는 단계도 함께 지워짐)";
+        return;
+    }
+    try {
+        await sendRequest("/api/projects/" + editingProject.id, "DELETE");
+        projectDialog.close();
+        await loadProjects();
+    } catch (error) {
+        projectError.textContent = error.message;
+    }
+}
+
+projectAddButton.addEventListener("click", function () {
+    openProjectDialog(null);
+});
+document.getElementById("project-save").addEventListener("click", saveProject);
+document.getElementById("project-cancel").addEventListener("click", function () {
+    projectDialog.close();
+});
+projectDeleteButton.addEventListener("click", deleteProject);
+document.getElementById("project-deadline-clear").addEventListener("click", function () {
+    projectDeadlineInput.value = "";
+});
+projectNameInput.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.isComposing) {
+        saveProject();
+    }
 });
 
 // ---------- 설정 탭 ----------
