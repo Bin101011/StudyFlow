@@ -1077,6 +1077,11 @@ async function loadToday() {
     loadProjects().catch(function (error) {
         console.error("프로젝트 목록을 불러오지 못했습니다:", error);
     });
+
+    // D-day 줄도 새로 그린다. 날짜가 바뀌었을 수 있어서 D-숫자가 달라질 수 있다
+    loadDdays().catch(function (error) {
+        console.error("D-day를 불러오지 못했습니다:", error);
+    });
 }
 
 // ◀ ▶ 버튼: 보고 있는 날에서 하루 전/후로 넘긴다. "오늘로 돌아가기"는 진짜 오늘로 간다
@@ -1088,6 +1093,196 @@ dayNextButton.addEventListener("click", function () {
 });
 dayTodayButton.addEventListener("click", function () {
     showDay(todayText);
+});
+
+// ---------- D-day ----------
+// 오늘 탭 맨 위의 "기말고사 D-50" 줄. D-day는 이름과 날짜만 있는 작은 데이터이고, 프로젝트의 마감일과는 별개다.
+
+const ddayStrip = document.getElementById("dday-strip");
+const ddayDialog = document.getElementById("dday-dialog");
+const ddayDialogTitle = document.getElementById("dday-dialog-title");
+const ddayNameInput = document.getElementById("dday-name");
+const ddayDateInput = document.getElementById("dday-date");
+const ddayColorInput = document.getElementById("dday-color");
+const ddayError = document.getElementById("dday-error");
+const ddayDeleteButton = document.getElementById("dday-delete");
+
+// 마지막으로 서버에서 받은 D-day 목록 (날짜 순)
+let ddaysCache = [];
+// 수정 중인 D-day. null이면 "새 D-day" 모드다
+let editingDday = null;
+// 삭제 버튼을 한 번 눌러서 "정말 삭제?" 확인을 기다리는 중인지
+let ddayDeleteArmed = false;
+// 이미 지난 D-day도 같이 보여줄지. 지난 것은 평소에 숨기고, 이 스위치로만 볼 수 있다
+let showPastDdays = false;
+
+// 오늘부터 그날까지 며칠 남았는지. 오늘이면 0, 내일이면 1, 어제면 -1
+function daysUntil(dateText) {
+    const [year, month, day] = dateText.split("-").map(Number);
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    // 날짜끼리 빼면 밀리초가 나온다. 하루(86400000밀리초)로 나눠서 며칠인지 센다. (써머타임 때문에 생기는 1시간 오차는 반올림이 지워준다)
+    return Math.round((new Date(year, month - 1, day) - todayStart) / 86400000);
+}
+
+// 남은 날 글자: 50일 남음 "D-50", 오늘 "D-DAY", 3일 지남 "D+3"
+function ddayLabel(days) {
+    if (days > 0) {
+        return "D-" + days;
+    }
+    return days === 0 ? "D-DAY" : "D+" + (-days);
+}
+
+// 서버에서 D-day 목록을 받아와서 줄을 다시 그린다
+async function loadDdays() {
+    const response = await fetch("/api/ddays");
+    if (!response.ok) {
+        throw new Error(await errorMessageFrom(response));
+    }
+    ddaysCache = await response.json();
+    renderDdays();
+}
+
+// D-day 줄을 그린다: 남은 날이 적은 순서의 알약들, (지난 것이 있으면) 토글, 추가 버튼
+function renderDdays() {
+    ddayStrip.innerHTML = "";
+
+    const upcoming = [];
+    const past = [];
+    ddaysCache.forEach(function (dday) {
+        (daysUntil(dday.date) >= 0 ? upcoming : past).push(dday);
+    });
+    // 지난 것은 가장 최근에 지난 것이 먼저 오게 뒤집는다. (서버는 날짜가 빠른 순으로 준다)
+    past.reverse();
+
+    upcoming.forEach(function (dday) {
+        ddayStrip.appendChild(makeDdayChip(dday, false));
+    });
+
+    if (showPastDdays) {
+        past.forEach(function (dday) {
+            ddayStrip.appendChild(makeDdayChip(dday, true));
+        });
+    }
+
+    // 지난 D-day는 평소에 숨겨두는데, 숨기면 날짜를 고쳐서 되살릴 방법이 없어진다. 그래서 있을 때만 보이는 토글을 둔다
+    if (past.length > 0) {
+        const toggle = document.createElement("button");
+        toggle.className = "dday-toggle";
+        toggle.textContent = showPastDdays ? "지난 D-day 숨기기" : "지난 D-day " + past.length + "개 보기";
+        toggle.addEventListener("click", function () {
+            showPastDdays = !showPastDdays;
+            renderDdays();
+        });
+        ddayStrip.appendChild(toggle);
+    }
+
+    const addButton = document.createElement("button");
+    addButton.className = "dday-add";
+    addButton.textContent = "+ D-day";
+    addButton.title = "D-day 추가 (예: 기말고사)";
+    addButton.addEventListener("click", function () {
+        openDdayDialog(null);
+    });
+    ddayStrip.appendChild(addButton);
+}
+
+// D-day 알약 하나. 누르면 수정 창이 열린다
+function makeDdayChip(dday, isPast) {
+    const days = daysUntil(dday.date);
+    const chip = document.createElement("button");
+    chip.className = "dday-chip" + (isPast ? " past" : "") + (!isPast && days <= 7 ? " urgent" : "");
+    chip.title = dday.name + " · " + dday.date + " (눌러서 수정)";
+
+    const dot = document.createElement("span");
+    dot.className = "dday-dot";
+    dot.style.backgroundColor = dday.color;
+
+    const name = document.createElement("span");
+    name.className = "dday-name";
+    name.textContent = dday.name;
+
+    const label = document.createElement("span");
+    label.className = "dday-days";
+    label.textContent = ddayLabel(days);
+
+    chip.append(dot, name, label);
+    chip.addEventListener("click", function () {
+        openDdayDialog(dday);
+    });
+    return chip;
+}
+
+// D-day 추가/수정 창을 연다. dday가 없으면 새 D-day
+function openDdayDialog(dday) {
+    editingDday = dday || null;
+    ddayDeleteArmed = false;
+    ddayDeleteButton.textContent = "삭제";
+    ddayDeleteButton.hidden = !editingDday;
+    ddayDialogTitle.textContent = editingDday ? "D-day 수정" : "새 D-day";
+
+    ddayNameInput.value = editingDday ? editingDday.name : "";
+    ddayDateInput.value = editingDday ? editingDday.date : "";
+    ddayColorInput.value = editingDday ? editingDday.color : PROJECT_COLORS[ddaysCache.length % PROJECT_COLORS.length];
+    ddayError.textContent = "";
+
+    ddayDialog.showModal();
+    ddayNameInput.focus();
+}
+
+// 저장 버튼: 새 D-day면 POST, 수정이면 PATCH
+async function saveDday() {
+    const name = ddayNameInput.value.trim();
+    if (!name) {
+        ddayError.textContent = "이름을 입력하세요.";
+        return;
+    }
+    if (!ddayDateInput.value) {
+        ddayError.textContent = "날짜를 고르세요.";
+        return;
+    }
+
+    const body = { name: name, date: ddayDateInput.value, color: ddayColorInput.value };
+    try {
+        ddayError.textContent = "저장하는 중...";
+        if (editingDday) {
+            await sendRequest("/api/ddays/" + editingDday.id, "PATCH", body);
+        } else {
+            await sendRequest("/api/ddays", "POST", body);
+        }
+        ddayDialog.close();
+        await loadDdays();
+    } catch (error) {
+        ddayError.textContent = error.message;
+    }
+}
+
+// 삭제 버튼: 일정, 할 일, 프로젝트와 같이 두 번 눌러야 지워진다
+async function deleteDday() {
+    if (!ddayDeleteArmed) {
+        ddayDeleteArmed = true;
+        ddayDeleteButton.textContent = "정말 삭제? (한 번 더)";
+        return;
+    }
+    try {
+        await sendRequest("/api/ddays/" + editingDday.id, "DELETE");
+        ddayDialog.close();
+        await loadDdays();
+    } catch (error) {
+        ddayError.textContent = error.message;
+    }
+}
+
+document.getElementById("dday-save").addEventListener("click", saveDday);
+document.getElementById("dday-cancel").addEventListener("click", function () {
+    ddayDialog.close();
+});
+ddayDeleteButton.addEventListener("click", deleteDday);
+ddayNameInput.addEventListener("keydown", function (e) {
+    // 한글 조합 중의 Enter는 무시한다 (다른 입력 칸과 같은 이유)
+    if (e.key === "Enter" && !e.isComposing) {
+        saveDday();
+    }
 });
 
 // ---------- 프로젝트 탭 ----------

@@ -60,6 +60,16 @@ def init_db():
         )
     """)
 
+    # D-day: "기말고사까지 D-50"처럼 이름과 날짜만 있는 작은 표. 프로젝트의 마감일과는 별개다 (시험은 프로젝트가 아니므로)
+    run("""
+        CREATE TABLE IF NOT EXISTS ddays (
+            id    INTEGER PRIMARY KEY AUTOINCREMENT,
+            name  TEXT NOT NULL,   -- 이름 "기말고사"
+            date  TEXT NOT NULL,   -- 그날 "2026-12-10"
+            color TEXT NOT NULL    -- 알약 앞의 색 동그라미 "#e8590c"
+        )
+    """)
+
     # 마이그레이션: 이미 만들어진 studyflow.db의 tasks 테이블에는 나중에 추가한 칸이 없을 수 있다.
     # CREATE TABLE IF NOT EXISTS는 테이블이 이미 있으면 아무것도 안 하므로, 없는 칸만 따로 덧붙인다.
     # PRAGMA table_info: 테이블에 어떤 칸들이 있는지 알려주는 SQLite 명령
@@ -238,3 +248,43 @@ def delete_project(project_id):
             )
             cursor = connection.execute("DELETE FROM projects WHERE id = ?", (project_id,))
             return cursor.rowcount > 0
+
+
+# ---------- D-day ----------
+
+def list_ddays():
+    """모든 D-day를 날짜가 빠른 순서로 돌려준다. (오늘 이후/이전을 나누는 것은 화면이 한다. 서버는 화면의 "오늘"을 모르기 때문이다)"""
+    rows, _ = run("SELECT * FROM ddays ORDER BY date, id")
+    return rows
+
+
+def get_dday(dday_id):
+    """D-day 하나를 돌려준다. 없으면 None."""
+    rows, _ = run("SELECT * FROM ddays WHERE id = ?", (dday_id,))
+    return rows[0] if rows else None
+
+
+def add_dday(name, date, color):
+    """D-day를 하나 추가하고, 만들어진 D-day(번호 포함)를 돌려준다."""
+    with contextlib.closing(connect()) as connection:
+        with connection:
+            cursor = connection.execute(
+                "INSERT INTO ddays (name, date, color) VALUES (?, ?, ?)", (name, date, color)
+            )
+            row = connection.execute("SELECT * FROM ddays WHERE id = ?", (cursor.lastrowid,)).fetchone()
+            return dict(row)
+
+
+# D-day에서 고칠 수 있는 칸들 (EDITABLE_COLUMNS와 같은 이유로 고정된 목록)
+EDITABLE_DDAY_COLUMNS = ("name", "date", "color")
+
+
+def update_dday(dday_id, changes):
+    """D-day의 changes에 든 칸만 고친다. 그 번호의 D-day가 없으면 False."""
+    return update_row("ddays", EDITABLE_DDAY_COLUMNS, dday_id, changes)
+
+
+def delete_dday(dday_id):
+    """D-day를 지운다. 없으면 False."""
+    _, changed = run("DELETE FROM ddays WHERE id = ?", (dday_id,))
+    return changed > 0

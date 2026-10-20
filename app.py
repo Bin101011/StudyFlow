@@ -772,6 +772,80 @@ def api_delete_project(project_id):
     return jsonify({"ok": True})
 
 
+# ---------- D-day ----------
+
+MAX_DDAY_NAME_LENGTH = 100
+
+
+def parse_dday_fields(data):
+    """화면이 보낸 D-day 값을 검사해서, DB 칸 이름 → 값 딕셔너리로 바꿔 돌려준다. 보낸 값만 담는다.
+    잘못된 값이 있으면 (None, 오류 응답)을 돌려준다."""
+    fields = {}
+
+    if "name" in data:
+        name = str(data["name"]).strip()
+        if not name:
+            return None, (jsonify({"error": "D-day 이름을 입력하세요."}), 400)
+        if len(name) > MAX_DDAY_NAME_LENGTH:
+            return None, (jsonify({"error": f"이름은 {MAX_DDAY_NAME_LENGTH}자 이내로 적어주세요."}), 400)
+        fields["name"] = name
+
+    if "date" in data:
+        if not valid_date(data["date"]):
+            return None, (jsonify({"error": "날짜는 2026-12-10 같은 모양이어야 합니다."}), 400)
+        fields["date"] = data["date"]
+
+    if "color" in data:
+        color = data["color"]
+        if not isinstance(color, str) or not COLOR_PATTERN.match(color):
+            return None, (jsonify({"error": "색은 #rrggbb 형식이어야 합니다."}), 400)
+        fields["color"] = color.lower()
+
+    return fields, None
+
+
+# D-day 목록: 날짜가 빠른 순서. 화면이 오늘 기준으로 "남은 날", "지난 날"로 나눠 보여준다
+@app.route("/api/ddays")
+def api_get_ddays():
+    return jsonify(database.list_ddays())
+
+
+# D-day 추가 (POST): 이름과 날짜는 꼭 있어야 한다. 색을 안 보내면 이미 있는 개수에 맞춰 팔레트에서 차례로 고른다
+@app.route("/api/ddays", methods=["POST"])
+def api_create_dday():
+    data = request.get_json()
+    error_response = missing_key(data, ("name", "date"))
+    if error_response:
+        return error_response
+    fields, error_response = parse_dday_fields(data)
+    if error_response:
+        return error_response
+
+    color = fields.get("color") or PROJECT_COLORS[len(database.list_ddays()) % len(PROJECT_COLORS)]
+    return jsonify(database.add_dday(fields["name"], fields["date"], color)), 201
+
+
+# D-day 일부 수정 (PATCH): 이름, 날짜, 색. 보낸 것만 바꾼다
+@app.route("/api/ddays/<int:dday_id>", methods=["PATCH"])
+def api_update_dday(dday_id):
+    fields, error_response = parse_dday_fields(request.get_json())
+    if error_response:
+        return error_response
+    if not fields:
+        return jsonify({"error": "바꿀 값이 없습니다."}), 400
+    if not database.update_dday(dday_id, fields):
+        return jsonify({"error": "그 D-day를 찾을 수 없습니다."}), 404
+    return jsonify({"ok": True})
+
+
+# D-day 삭제 (DELETE)
+@app.route("/api/ddays/<int:dday_id>", methods=["DELETE"])
+def api_delete_dday(dday_id):
+    if not database.delete_dday(dday_id):
+        return jsonify({"error": "그 D-day를 찾을 수 없습니다."}), 404
+    return jsonify({"ok": True})
+
+
 # 이 파일을 직접 실행했을 때만 서버를 켠다
 if __name__ == "__main__":
     # 브라우저에서 개발용으로 열 때도 자동 동기화가 돌게 한다. (창으로 실행하는 main.py도 같은 함수를 부른다)

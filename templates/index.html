@@ -54,6 +54,9 @@
                 <button id="day-today" hidden>오늘로 돌아가기</button>
             </div>
 
+            <!-- D-day 줄: "기말고사 D-50" 같은 알약들과 추가 버튼. 알약은 app.js가 /api/ddays에서 받아 여기에 만든다 -->
+            <div id="dday-strip" class="dday-strip"></div>
+
             <!-- 탭 전체를 왼쪽(일정)과 오른쪽(할 일)으로 나누는 상자 -->
             <div class="today-layout">
                 <section class="today-column">
@@ -192,6 +195,31 @@
             <span class="spacer"></span>
             <button id="project-cancel">취소</button>
             <button id="project-save" class="primary">저장</button>
+        </div>
+    </dialog>
+
+    <!-- D-day 추가/수정 창. 프로젝트 창과 같은 방식으로 추가와 수정에 같이 쓴다 -->
+    <dialog id="dday-dialog">
+        <h2 id="dday-dialog-title">새 D-day</h2>
+
+        <label class="dialog-row"><span class="dialog-label">이름</span>
+            <input type="text" id="dday-name" placeholder="예: 기말고사">
+        </label>
+        <label class="dialog-row"><span class="dialog-label">날짜</span>
+            <input type="date" id="dday-date">
+        </label>
+        <label class="dialog-row"><span class="dialog-label">색</span>
+            <input type="color" id="dday-color">
+        </label>
+
+        <p id="dday-error" class="dialog-error"></p>
+
+        <div class="dialog-buttons">
+            <!-- 삭제 버튼은 D-day를 수정할 때만 보인다 -->
+            <button id="dday-delete" class="danger" hidden>삭제</button>
+            <span class="spacer"></span>
+            <button id="dday-cancel">취소</button>
+            <button id="dday-save" class="primary">저장</button>
         </div>
     </dialog>
 
