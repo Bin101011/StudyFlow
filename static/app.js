@@ -77,14 +77,18 @@ const calendar = new FullCalendar.Calendar(calendarElement, {
     // 버튼 글자 중 일부는 한국어 기본값 대신 직접 정한다
     buttonText: { today: "오늘", month: "월간", week: "주간", day: "일간" },
 
+    // 이전/다음 버튼에 마우스를 올리면 뜨는 설명. $0은 FullCalendar가 지금 보기에 맞춰 "달", "주", "일"로 바꿔 넣는다.
+    // 키보드 ←/→로도 이동할 수 있다는 것을 알려준다 (아래 "키보드 화살표" 참고)
+    buttonHints: { prev: "이전 $0 (←)", next: "다음 $0 (→)" },
+
     // 일정 앞에 붙는 시간 표기: 24시간제, 두 자리 맞춤 (예: 07:45, 19:45)
     eventTimeFormat: { hour: "2-digit", minute: "2-digit", hour12: false },
 
     // 주간/일간 보기 왼쪽의 시간 눈금도 같은 형식으로 맞춘다
     slotLabelFormat: { hour: "2-digit", minute: "2-digit", hour12: false },
 
-    // 달력 높이: 창 높이에서 위쪽 탭 영역만큼 뺀 만큼 쓴다
-    height: "calc(100vh - 110px)",
+    // 달력 높이: 창 높이에서 위쪽 탭 영역과 여백만큼 뺀 만큼 쓴다 (--chrome-height는 style.css에 정해둔 값)
+    height: "calc(100vh - var(--chrome-height))",
 
     // 일정을 드래그로 옮기거나 끝을 늘리는 걸 허용한다. (쓸 수 없는 캘린더의 일정은 서버가 editable: false로 막아준다)
     editable: true,
@@ -95,6 +99,12 @@ const calendar = new FullCalendar.Calendar(calendarElement, {
     eventClick: openEditDialog,      // 일정을 클릭
     eventDrop: saveEventTime,        // 일정을 다른 날짜/시간으로 드래그
     eventResize: saveEventTime,      // 일정의 끝을 잡아 길이를 바꿈
+
+    // 일정이 화면에 그려질 때마다 마우스를 올렸을 때 뜨는 설명(툴팁)을 단다. 제목이 잘려 보여도 전체를 읽을 수 있다.
+    // 시간 있는 일정은 "17:50–19:00  제목", 여러 날에 걸친 종일 일정은 "10/29 – 10/31  제목"
+    eventDidMount: function (info) {
+        info.el.title = describeEvent(info.event);
+    },
 
     // 마우스가 일정 위에 올라가면 그 일정을 기억하고, 벗어나면 잊는다. Ctrl+C가 "어떤 일정을 복사할지" 알기 위해서다
     eventMouseEnter: function (info) {
@@ -199,6 +209,21 @@ function addDays(date, days) {
 function addDaysToText(text, days) {
     const [year, month, day] = text.split("-").map(Number);
     return toDateText(new Date(year, month - 1, day + days));
+}
+
+// 일정 하나를 툴팁용 글자로 만든다
+function describeEvent(event) {
+    let when = "";
+    if (!event.allDay && event.start) {
+        when = toTimeText(event.start) + (event.end ? "–" + toTimeText(event.end) : "");
+    } else if (event.allDay && event.start && event.end) {
+        // 종일 일정의 end는 "포함하지 않는 날짜"라서 하루를 빼야 마지막 날이 된다
+        const last = addDays(event.end, -1);
+        if (last > event.start) {
+            when = (event.start.getMonth() + 1) + "/" + event.start.getDate() + " – " + (last.getMonth() + 1) + "/" + last.getDate();
+        }
+    }
+    return when ? when + "  " + event.title : event.title;
 }
 
 // 화면 아래에 알림을 4초 동안 띄운다
@@ -581,6 +606,54 @@ document.addEventListener("keydown", function (e) {
     }
 });
 
+// ---------- 키보드 화살표로 이동 ----------
+
+// 화살표 키를 "이동"으로 쓰면 안 되는 상황인가? 글자를 쓰는 칸, 선택 칸, 슬라이더 등은 화살표를 자기 용도로 쓰므로 건드리지 않는다.
+// 체크박스와 버튼은 화살표를 쓰지 않으니, 방금 클릭해서 포커스가 남아 있어도 이동할 수 있게 허용한다
+function arrowKeysBelongToElement() {
+    // 일정 창, 프로젝트 창처럼 모달 창이 열려 있으면 화면 뒤의 달력은 움직이지 않는다
+    if (document.querySelector("dialog[open]")) {
+        return true;
+    }
+    const element = document.activeElement;
+    if (!element || element === document.body) {
+        return false;
+    }
+    if (element.tagName === "INPUT") {
+        return element.type !== "checkbox";
+    }
+    return element.tagName === "SELECT" || element.tagName === "TEXTAREA" || element.isContentEditable;
+}
+
+// ←/→: 캘린더 탭에서는 이전/다음 달(주간 보기면 주, 일간 보기면 일), 오늘 탭에서는 전날/다음 날
+document.addEventListener("keydown", function (e) {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") {
+        return;
+    }
+    // Ctrl, Alt, Shift, Win과 함께 누른 조합은 다른 용도(글자 단위 이동, 윈도우 단축키 등)이므로 건드리지 않는다
+    if (e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) {
+        return;
+    }
+    if (arrowKeysBelongToElement()) {
+        return;
+    }
+
+    const goingBack = e.key === "ArrowLeft";
+    if (document.getElementById("calendar").classList.contains("active")) {
+        // prev()/next()는 FullCalendar가 지금 보기(월간/주간/일간)에 맞는 만큼 움직여준다
+        if (goingBack) {
+            calendar.prev();
+        } else {
+            calendar.next();
+        }
+    } else if (document.getElementById("today").classList.contains("active")) {
+        (goingBack ? dayPrevButton : dayNextButton).click();
+    } else {
+        return;  // 프로젝트, 설정 탭에서는 아무것도 하지 않는다
+    }
+    e.preventDefault();  // 화면이 가로로 스크롤되는 등 브라우저의 기본 동작을 막는다
+});
+
 // ---------- 오늘 탭 ----------
 
 const todayTitle = document.getElementById("today-title");
@@ -716,9 +789,16 @@ function makeTaskRow(task, options) {
         item.appendChild(makeProjectChip(task.project_name, task.project_color, task.parent_content));
     }
 
-    // 마감일: 프로젝트 카드에서는 눌러서 바꿀 수 있는 버튼, 그 밖에서는 글자로만 보여준다
+    // 마우스를 올렸을 때만 줄 오른쪽에 뜨는 버튼들을 모아두는 묶음 (모양은 style.css의 .task-actions).
+    // 버튼이 줄마다 항상 늘어서 있으면 화면이 복잡해서, 평소에는 숨겨두고 필요할 때만 보이게 한다
+    const actions = document.createElement("span");
+    actions.className = "task-actions";
+
+    // 마감일: 프로젝트 카드에서는 눌러서 바꿀 수 있는 버튼, 그 밖에서는 글자로만 보여준다.
+    // 마감일이 정해져 있으면 줄에 항상 보이고, 아직 없으면 "마감일" 버튼이 마우스를 올렸을 때만 뜬다
     if (options.editDeadline) {
-        item.appendChild(makeDeadlineControl(task, options.reload));
+        const deadlineControl = makeDeadlineControl(task, options.reload);
+        (task.deadline ? item : actions).appendChild(deadlineControl);
     } else if (task.deadline) {
         const deadline = describeDeadline(task.deadline);
         const deadlineText = document.createElement("span");
@@ -741,11 +821,11 @@ function makeTaskRow(task, options) {
         moveButton.addEventListener("click", function () {
             updateTask(task.id, { date: options.moveDate }, options.reload);
         });
-        item.appendChild(moveButton);
+        actions.appendChild(moveButton);
     }
 
     (options.extraButtons || []).forEach(function (button) {
-        item.appendChild(button);
+        actions.appendChild(button);
     });
 
     // 오늘 탭의 프로젝트 할 일: 지우면 프로젝트의 단계까지 사라지므로, 지우는 대신 오늘 목록에서만 뺀다.
@@ -759,7 +839,10 @@ function makeTaskRow(task, options) {
             removeButton.addEventListener("click", function () {
                 updateTask(task.id, { date: null }, options.reload);
             });
-            item.appendChild(removeButton);
+            actions.appendChild(removeButton);
+        }
+        if (actions.children.length > 0) {
+            item.appendChild(actions);
         }
         return item;
     }
@@ -788,7 +871,8 @@ function makeTaskRow(task, options) {
             showToast("할 일을 지우지 못했습니다: " + error.message);
         }
     });
-    item.appendChild(deleteButton);
+    actions.appendChild(deleteButton);
+    item.appendChild(actions);
 
     return item;
 }
@@ -906,6 +990,7 @@ function makeDeadlineControl(task, reload) {
 
     if (task.deadline) {
         const clear = document.createElement("button");
+        clear.className = "clear";  // 줄에 마우스를 올렸을 때만 보이게 하려고 style.css가 찾는 이름
         clear.textContent = "✕";
         clear.title = "마감일 지우기";
         clear.addEventListener("click", function () {
@@ -1409,6 +1494,7 @@ const editableCalendars = [];
 
 const sliderListElement = document.getElementById("slider-list");
 const defaultCalendarSelect = document.getElementById("default-calendar-select");
+const wrapAllDayCheckbox = document.getElementById("wrap-all-day-checkbox");
 
 // 설정 이름 → 그 값을 담는 CSS 변수 이름. 슬라이더 값이 바뀌면 이 CSS 변수를 바꾼다
 const SETTING_CSS_VARS = {
@@ -1418,16 +1504,22 @@ const SETTING_CSS_VARS = {
     cellMaxWidth: "--cell-max-width",
     eventGap: "--event-gap",
     sidebarWidth: "--sidebar-width",
+    letterSpacing: "--letter-spacing",
 };
+
+// 설정 이름 → 단위("px", "em" 등). 서버가 알려준 슬라이더 정의에서 loadSettings가 채운다
+const settingUnits = {};
 
 // 설정값을 CSS 변수에 넣어서 화면에 반영한다
 function applySettings() {
     for (const key in SETTING_CSS_VARS) {
         if (settings[key] !== undefined) {
             // documentElement = <html>. :root에 정의한 CSS 변수는 여기서 바꾼다
-            document.documentElement.style.setProperty(SETTING_CSS_VARS[key], settings[key] + "px");
+            document.documentElement.style.setProperty(SETTING_CSS_VARS[key], settings[key] + (settingUnits[key] || "px"));
         }
     }
+    // 종일 일정 제목 줄바꿈: 값이 없으면(false가 아니면) 켜진 상태가 기본이다
+    calendarElement.classList.toggle("wrap-all-day", settings.wrapAllDay !== false);
     // 칸 크기가 바뀌었으니 FullCalendar가 레이아웃을 다시 계산하게 한다
     calendar.updateSize();
 }
@@ -1450,6 +1542,7 @@ async function loadSettings() {
         }
         const data = await response.json();
         settings = data.values;
+        wrapAllDayCheckbox.checked = settings.wrapAllDay !== false;
 
         // 저장되어 있던 "숨기기로 한 캘린더"를 숨김 목록(Set)에 옮겨 담는다
         hiddenCalendarIds.clear();
@@ -1459,6 +1552,8 @@ async function loadSettings() {
 
         sliderListElement.innerHTML = "";  // 혹시 이미 있던 슬라이더를 비운다
         data.sliders.forEach(function (def) {
+            settingUnits[def.key] = def.unit;
+
             // 한 줄: 이름 글자 + 슬라이더 + 현재 값 글자
             const row = document.createElement("label");
             row.className = "settings-row";
@@ -1528,6 +1623,13 @@ function updateDefaultCalendar() {
     // 설정 탭의 선택 칸도 현재 설정에 맞춘다. 지정한 게 없으면 맨 위 "자동" 항목
     defaultCalendarSelect.value = chosen ? chosen.id : "";
 }
+
+// 설정 탭에서 종일 일정 줄바꿈 스위치를 눌렀을 때: 바로 반영하고 저장한다
+wrapAllDayCheckbox.addEventListener("change", function () {
+    settings.wrapAllDay = wrapAllDayCheckbox.checked;
+    applySettings();
+    saveSettings();
+});
 
 // 설정 탭에서 기본 캘린더를 바꿨을 때
 defaultCalendarSelect.addEventListener("change", function () {

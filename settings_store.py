@@ -15,6 +15,8 @@ SLIDER_DEFINITIONS = [
     {"key": "cellMaxWidth", "label": "칸 최대 너비", "min": 100, "max": 200, "step": 5, "default": 200, "unit": "px"},
     {"key": "eventGap", "label": "일정 블록 간격", "min": 0, "max": 5, "step": 0.5, "default": 1, "unit": "px"},
     {"key": "sidebarWidth", "label": "내 캘린더 목록 너비", "min": 120, "max": 300, "step": 5, "default": 200, "unit": "px"},
+    # 글자 간격(자간). em은 "글자 크기의 몇 배"라서 글자 크기를 바꿔도 같은 비율로 유지된다. 0은 글꼴 기본, 음수는 좁게, 양수는 넓게 (기본값 0.015는 사용자가 정했다)
+    {"key": "letterSpacing", "label": "글자 간격", "min": -0.05, "max": 0.1, "step": 0.005, "default": 0.015, "unit": "em"},
 ]
 
 # 슬라이더가 아닌 설정 두 가지
@@ -22,6 +24,9 @@ SLIDER_DEFINITIONS = [
 DEFAULT_CALENDAR_KEY = "defaultCalendarId"
 # 2) "내 캘린더" 목록에서 체크를 꺼서 숨기기로 한 캘린더들의 id 리스트
 HIDDEN_CALENDARS_KEY = "hiddenCalendarIds"
+
+# 3) 종일 일정의 긴 제목을 줄바꿈해서 다 보여줄지 (True/False). 끄면 한 줄로 두고 길면 "…"로 줄인다
+WRAP_ALL_DAY_KEY = "wrapAllDay"
 
 # 저장 파일을 읽고 쓰는 동안 다른 요청이 끼어들지 못하게 하는 열쇠
 _lock = threading.Lock()
@@ -32,6 +37,7 @@ def default_settings():
     settings = {d["key"]: d["default"] for d in SLIDER_DEFINITIONS}
     settings[DEFAULT_CALENDAR_KEY] = ""
     settings[HIDDEN_CALENDARS_KEY] = []
+    settings[WRAP_ALL_DAY_KEY] = True
     return settings
 
 
@@ -56,6 +62,10 @@ def clean_settings(raw):
     if isinstance(hidden, list):
         # 글자로 된 id만 남긴다
         settings[HIDDEN_CALENDARS_KEY] = [item for item in hidden if isinstance(item, str)]
+
+    wrap = raw.get(WRAP_ALL_DAY_KEY)
+    if isinstance(wrap, bool):  # 켜기/끄기 값은 true/false만 인정한다
+        settings[WRAP_ALL_DAY_KEY] = wrap
     return settings
 
 

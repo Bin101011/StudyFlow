@@ -1,84 +1,300 @@
-/* CSS 변수: 이름 앞에 --를 붙여 값을 한 번 정해두고, 아래에서 var(--이름)으로 가져다 쓴다.
-   설정 탭의 슬라이더를 움직이면 app.js가 이 값들을 바꾸고, 그걸 쓰는 모든 곳이 한꺼번에 바뀐다.
-   여기 적힌 값은 설정을 불러오기 전의 기본값이다 (settings_store.py의 기본값과 같다) */
+/* ===== 디자인 규칙 (디자인 토큰) =====
+   CSS 변수: 이름 앞에 --를 붙여 값을 한 번 정해두고, 아래에서 var(--이름)으로 가져다 쓴다.
+   색, 모서리, 그림자를 여기서만 정하면 모든 화면이 같은 규칙을 따르고, 나중에 분위기를 바꿀 때도 여기만 고치면 된다. */
 :root {
+    /* 색: 흰 바탕 + 선명한 파랑 하나 + 부드러운 회색 */
+    --bg: #ffffff;
+    --surface: #f6f8fb;          /* 바탕보다 살짝 어두운 면 (마우스를 올렸을 때, 칩 배경 등) */
+    --surface-strong: #eaeef4;
+    --border: #e4e8ee;
+    --border-strong: #cdd4de;
+    --text: #1f2933;             /* 순수한 검정 대신 살짝 푸른 어두운 회색이 눈에 편하다 */
+    --text-muted: #5f6b7a;
+    --text-faint: #98a2b3;
+    --accent: #1a73e8;           /* 포인트 색 (Google 파랑). 버튼, 선택, 오늘 표시에만 쓴다 */
+    --accent-hover: #1765cc;
+    --accent-soft: #e8f0fe;
+    --danger: #d93025;
+    --danger-soft: #fce8e6;
+    --warn: #b06000;             /* 마감일 글자 */
+    --warn-soft: #fef3e0;
+    --ok: #1e8e3e;
+
+    /* 모서리와 그림자 */
+    --radius-sm: 6px;
+    --radius: 10px;
+    --radius-lg: 14px;
+    --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+    --shadow-md: 0 4px 14px rgba(16, 24, 40, 0.10);
+    --shadow-lg: 0 12px 36px rgba(16, 24, 40, 0.18);
+
+    /* 글자체와 화면 뼈대 크기 */
+    /* 글꼴은 앞에 적은 것부터 차례로 시도하고, 그 글꼴에 없는 글자만 다음 글꼴이 맡는다.
+       Google Sans Flex에는 한글이 없어서 한글은 Noto Sans KR이 그리고, 둘 다 못 불러오면 윈도우 기본 글꼴로 보인다 */
+    --font: "Google Sans Flex Variable", "Noto Sans KR Variable", "Malgun Gothic", system-ui, sans-serif;
+    --nav-height: 56px;
+    --chrome-height: 100px;      /* 상단 바 + 위아래 여백. 달력 높이(100vh - 이 값)를 정할 때 쓴다 */
+
+    /* 아래는 설정 탭의 슬라이더를 움직이면 app.js가 바꾸는 값들이다.
+       여기 적힌 값은 설정을 불러오기 전의 기본값이다 (settings_store.py의 기본값과 같다) */
     --cal-font-size: 16px;
     --month-cell-height: 100px;
     --time-slot-height: 24px;
     --cell-max-width: 200px;
     --event-gap: 1px;
     --sidebar-width: 200px;
+    --all-day-weight: 550;  /* 종일 일정 제목의 굵기 (400 보통, 700 굵게. 가변 글꼴이라 550 같은 중간 값도 된다) */
+    --letter-spacing: 0.015em;  /* 설정을 불러오기 전의 기본값 (settings_store.py의 기본값과 같다) */
 }
 
-/* 모든 요소의 기본 바깥 여백을 없애서 화면이 가장자리까지 쓰이게 한다 */
+/* ===== 기본 ===== */
+* {
+    box-sizing: border-box;
+}
+
+/* 글자 간격(설정 탭의 슬라이더). body에만 적으면 em이 body의 글자 크기(14px) 기준으로 한 번 계산된 값이 그대로 상속되어,
+   제목처럼 큰 글자에는 비율이 맞지 않는다. 그래서 모든 요소에 직접 적어서 각 요소가 자기 글자 크기를 기준으로 계산하게 한다 */
+*,
+*::before,
+*::after {
+    letter-spacing: var(--letter-spacing);
+}
+
 body {
     margin: 0;
-    font-family: "Malgun Gothic", sans-serif;
+    font-family: var(--font);
+    font-size: 14px;
+    color: var(--text);
+    background-color: var(--bg);
+    -webkit-font-smoothing: antialiased;
 }
 
-/* 탭 버튼 영역: 버튼들을 가로로 나란히 놓는다 */
+h1, h2, h3 {
+    margin: 0;
+}
+
+h1 {
+    font-size: 22px;
+    font-weight: 600;
+}
+
+/* 키보드로 이동할 때 지금 어디인지 보이게 하는 파란 테두리 */
+:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+/* 스크롤바를 얇고 부드럽게 */
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+    background-color: var(--border-strong);
+    border-radius: 6px;
+    border: 2px solid var(--bg);
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+/* hidden 속성이 붙은 요소는 숨긴다 (아래의 display 설정이 hidden을 덮어쓰지 않게 한다) */
+[hidden] {
+    display: none !important;
+}
+
+/* ===== 버튼, 입력 칸 (모든 탭이 같이 쓰는 모양) ===== */
+button {
+    font-family: inherit;
+    font-size: 13px;
+    padding: 6px 12px;
+    color: var(--text);
+    background-color: var(--bg);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background-color 0.12s, border-color 0.12s, color 0.12s;
+}
+
+button:hover:not(:disabled) {
+    background-color: var(--surface);
+    border-color: var(--text-faint);
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+/* 가장 중요한 버튼: 파란색으로 채운다 */
+button.primary {
+    color: #ffffff;
+    background-color: var(--accent);
+    border-color: var(--accent);
+    font-weight: 500;
+}
+
+button.primary:hover:not(:disabled) {
+    background-color: var(--accent-hover);
+    border-color: var(--accent-hover);
+}
+
+/* 지우는 버튼: 평소엔 빨간 글자, 마우스를 올리면 연한 빨간 바탕 */
+button.danger {
+    color: var(--danger);
+}
+
+button.danger:hover:not(:disabled) {
+    background-color: var(--danger-soft);
+    border-color: var(--danger);
+}
+
+input[type="text"],
+input[type="date"],
+input[type="time"],
+select {
+    font-family: inherit;
+    font-size: inherit;
+    padding: 7px 10px;
+    color: var(--text);
+    background-color: var(--bg);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+}
+
+input::placeholder {
+    color: var(--text-faint);
+}
+
+input[type="text"]:focus,
+input[type="date"]:focus,
+input[type="time"]:focus,
+select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* 슬라이더와 기본 체크박스, 라디오 버튼의 색을 포인트 색으로 */
+input[type="range"],
+input[type="checkbox"],
+input[type="radio"] {
+    accent-color: var(--accent);
+}
+
+/* ===== 상단 바 ===== */
 nav {
     display: flex;
-    background-color: #f0f0f0;
-    border-bottom: 1px solid #cccccc;
+    align-items: center;
+    gap: 4px;
+    height: var(--nav-height);
+    padding: 0 20px;
+    background-color: var(--bg);
+    border-bottom: 1px solid var(--border);
 }
 
-/* 탭 줄 오른쪽 끝의 동기화 상태. margin-left: auto가 남는 공간을 왼쪽에 몰아줘서 오른쪽 끝에 붙는다 */
+/* 맨 왼쪽의 프로그램 이름 */
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-right: 20px;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: calc(var(--letter-spacing) - 0.01em);  /* 로고는 설정 값보다 조금 더 좁게 */
+}
+
+.brand-mark {
+    display: grid;
+    place-content: center;
+    width: 24px;
+    height: 24px;
+    color: #ffffff;
+    background-color: var(--accent);
+    border-radius: 7px;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+/* 탭 버튼: 평소엔 글자만, 마우스를 올리면 연한 회색, 선택되면 연한 파랑 바탕에 파란 글자.
+   선택돼도 글자 굵기는 그대로라서 탭이 흔들리지 않는다 */
+.tab-button {
+    padding: 8px 14px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: none;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+.tab-button:hover:not(:disabled) {
+    background-color: var(--surface-strong);
+    color: var(--text);
+}
+
+.tab-button.active,
+.tab-button.active:hover:not(:disabled) {
+    background-color: var(--accent-soft);
+    color: var(--accent);
+}
+
+/* 오른쪽 끝의 동기화 상태. margin-left: auto가 남는 공간을 왼쪽에 몰아줘서 오른쪽 끝에 붙는다 */
 #sync-status {
     margin-left: auto;
     display: flex;
     align-items: center;
     gap: 10px;
-    padding-right: 16px;
-    font-size: 13px;
-    color: #555555;
+    font-size: 12.5px;
+    color: var(--text-muted);
 }
 
-/* 인터넷이 끊겨 있을 때는 눈에 띄게 한다 */
+/* 글자 앞의 작은 동그라미: 연결되어 있으면 초록, 끊겼으면 빨강 */
+#sync-text::before {
+    content: "";
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    margin-right: 7px;
+    border-radius: 50%;
+    background-color: var(--ok);
+    vertical-align: 1px;
+}
+
 #sync-status.offline #sync-text {
-    color: #c92a2a;
-    font-weight: bold;
+    color: var(--danger);
+    font-weight: 600;
 }
 
-/* 탭 버튼 하나하나의 기본 모양 */
-.tab-button {
-    padding: 12px 24px;
-    border: none;
-    background: none;
-    font-size: 16px;
-    cursor: pointer;
+#sync-status.offline #sync-text::before {
+    background-color: var(--danger);
 }
 
-/* 마우스를 올렸을 때 */
-.tab-button:hover {
-    background-color: #e0e0e0;
+#sync-refresh {
+    padding: 4px 10px;
+    font-size: 12.5px;
 }
 
-/* 지금 선택된 탭 버튼: 아래에 파란 줄을 긋고 글자를 굵게 한다 */
-.tab-button.active {
-    border-bottom: 3px solid #4a7cff;
-    font-weight: bold;
-}
-
-/* 탭 내용 영역 안쪽 여백 */
+/* ===== 탭 내용 영역 ===== */
 main {
-    padding: 20px;
+    padding: 20px 24px;
 }
 
-/* 탭 내용은 기본적으로 숨긴다 */
 .tab-content {
     display: none;
 }
 
-/* active가 붙은 내용만 보여준다 */
 .tab-content.active {
     display: block;
 }
 
-/* 캘린더 탭: 왼쪽 목록과 오른쪽 달력을 가로로 나란히 놓는다 */
+/* ===== 캘린더 탭 ===== */
+/* 왼쪽 목록과 오른쪽 달력을 가로로 나란히 놓는다 */
 .calendar-layout {
     display: flex;
-    gap: 20px;
+    gap: 24px;
 }
 
 /* 왼쪽 캘린더 목록의 폭. 설정 탭의 슬라이더로 바꾼다 */
@@ -87,12 +303,165 @@ main {
     flex-shrink: 0;  /* 달력이 넓어져도 목록이 줄어들지 않게 한다 */
 }
 
+#calendar-list h2 {
+    margin: 4px 8px 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+}
+
+/* 캘린더 목록의 체크박스 한 줄 */
+#calendar-list label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 8px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    /* 한글은 기본으로 글자 사이 어디서든 줄이 바뀌어서 "프로|젝트"처럼 단어가 잘린다. keep-all은 띄어쓰기에서만 줄을 바꾸게 하고,
+       띄어쓰기 없이 너무 긴 이름만 칸 끝에서 끊는다(overflow-wrap) */
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+}
+
+#calendar-list label:hover {
+    background-color: var(--surface);
+}
+
+/* 캘린더 이름 앞에 붙는 색깔 동그라미. 사실은 색 선택 도구(<input type="color">)인데,
+   기본의 네모난 모양을 없애고 동그라미로 보이게 꾸민 것이다. 누르면 색 선택 창이 열린다 */
+input.color-dot {
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    border: none;
+    background: none;
+    margin: 0 6px;
+    cursor: pointer;
+    flex-shrink: 0;  /* 캘린더 이름이 길어 두 줄로 꺾여도 동그라미가 찌그러지지 않게, 폭을 줄이지 못하게 한다 */
+}
+
+/* 이름 앞의 체크박스도 같은 이유로 폭을 고정한다 */
+#calendar-list input[type="checkbox"] {
+    flex-shrink: 0;
+}
+
+/* 색 도구 안쪽 여백을 없애고, 색이 칠해지는 부분(swatch)을 동그랗게 깎는다 */
+input.color-dot::-webkit-color-swatch-wrapper {
+    padding: 0;
+}
+
+input.color-dot::-webkit-color-swatch {
+    border: none;
+    border-radius: 50%;
+}
+
 /* 오른쪽 달력은 남은 폭을 전부 차지한다. 단, 칸 하나가 설정한 최대 너비를 넘지 않게 달력 전체 폭을 제한한다 (7칸 × 최대 너비).
    글자 크기도 여기서 정하면 달력 안의 글자가 모두 따라 바뀐다 */
 #calendar-view {
     flex: 1;
+    min-width: 0;
     max-width: calc(7 * var(--cell-max-width));
     font-size: var(--cal-font-size);
+}
+
+/* --- FullCalendar 꾸미기: 달력이 쓰는 색 변수를 우리 디자인 규칙의 색으로 바꾼다 --- */
+.fc {
+    --fc-border-color: var(--border);
+    --fc-page-bg-color: var(--bg);
+    --fc-neutral-bg-color: var(--surface);
+    --fc-neutral-text-color: var(--text-muted);
+    --fc-today-bg-color: rgba(26, 115, 232, 0.05);
+    --fc-now-indicator-color: var(--danger);
+    --fc-event-border-color: transparent;
+    --fc-button-text-color: var(--text);
+    --fc-button-bg-color: var(--bg);
+    --fc-button-border-color: var(--border-strong);
+    --fc-button-hover-bg-color: var(--surface);
+    --fc-button-hover-border-color: var(--text-faint);
+    --fc-button-active-bg-color: var(--accent-soft);
+    --fc-button-active-border-color: var(--accent-soft);
+    font-family: var(--font);
+}
+
+/* 달력 위쪽 줄(이전/다음/오늘, 제목, 월/주/일) */
+.fc .fc-toolbar.fc-header-toolbar {
+    margin-bottom: 14px;
+}
+
+.fc .fc-toolbar-title {
+    font-size: 1.35em;
+    font-weight: 600;
+}
+
+.fc .fc-button {
+    padding: 6px 12px;
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: var(--radius-sm);
+    box-shadow: none;
+}
+
+.fc .fc-button:focus {
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* 지금 선택된 보기(월간/주간/일간)는 연한 파랑 바탕에 파란 글자 */
+.fc .fc-button-primary:not(:disabled).fc-button-active {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+/* 이미 오늘을 보고 있어서 눌러도 소용없는 "오늘" 버튼 */
+.fc .fc-button-primary:disabled {
+    background-color: var(--surface);
+    border-color: var(--border);
+    color: var(--text-faint);
+    opacity: 1;
+}
+
+/* 바깥 테두리를 없애고 칸 사이의 가는 선만 남긴다 */
+.fc .fc-scrollgrid {
+    border-color: var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+
+/* 요일 칸: 작고 흐리게. 일요일은 빨강, 토요일은 파랑 (한국 달력의 관례) */
+.fc .fc-col-header-cell-cushion {
+    padding: 8px 4px;
+    font-size: 0.85em;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+.fc .fc-day-sun .fc-col-header-cell-cushion {
+    color: var(--danger);
+}
+
+.fc .fc-day-sat .fc-col-header-cell-cushion {
+    color: var(--accent);
+}
+
+/* 날짜 숫자: 오늘만 파란 동그라미 안에 흰 글씨로 */
+.fc .fc-daygrid-day-number {
+    margin: 4px 4px 0;
+    padding: 0 6px;
+    min-width: 1.9em;
+    height: 1.9em;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.85em;
+    color: var(--text);
+    border-radius: 999px;
+}
+
+.fc .fc-day-today .fc-daygrid-day-number {
+    background-color: var(--accent);
+    color: #ffffff;
+    font-weight: 600;
 }
 
 /* 월간 보기: 날짜 칸 하나의 최소 높이. FullCalendar가 직접 넣는 값을 덮어쓰려고 !important를 쓴다 */
@@ -111,16 +480,51 @@ main {
    FullCalendar가 글자색으로 쓰는 변수를 이 일정에서만 바꾼다 */
 .fc .fc-daygrid-block-event {
     --fc-event-text-color: #000000;
+    border-radius: 5px;
 }
 
-/* 종일 일정의 제목은 굵게 */
+/* 종일 일정의 제목은 굵게. 글꼴이 가변 글꼴이라 100~900 사이의 어떤 숫자든 쓸 수 있다 (400 보통, 700 굵게).
+   색 직사각형의 왼쪽 변과 글자 사이에 여백을 둬서 읽기 편하게 한다 */
 .fc .fc-daygrid-block-event .fc-event-title {
-    font-weight: bold;
+    font-weight: var(--all-day-weight);
+    padding: 1px 5px;
 }
 
-/* 주간/일간 보기: 시간 칸 하나(30분)의 높이 */
-.fc .fc-timegrid-slot {
-    height: var(--time-slot-height);
+/* 시간 있는 일정(색 점 + 시간 + 제목): 제목은 중간 굵기 */
+.fc .fc-daygrid-dot-event {
+    border-radius: 5px;
+    /* 시간(Google Sans Flex)과 한글 제목(Noto Sans KR)은 글꼴마다 위아래 여백 계산이 달라서, 상자를 가운데 맞춤(center)하면
+       한글이 섞인 제목이 1.5px쯤 아래로 처져 보인다. 글자의 밑줄(기준선)을 맞추면(baseline) 글꼴이 달라도 같은 줄에 가지런히 놓인다 */
+    align-items: baseline;
+}
+
+/* 색 점은 글자가 아니라 도형이라 기준선에 맞추면 아래로 치우친다. 이것만 줄의 가운데에 둔다 */
+.fc .fc-daygrid-dot-event .fc-daygrid-event-dot {
+    align-self: center;
+}
+
+.fc .fc-daygrid-dot-event .fc-event-title {
+    font-weight: 500;
+}
+
+.fc .fc-daygrid-dot-event:hover {
+    background-color: var(--surface-strong);
+}
+
+/* 종일 일정 제목 줄바꿈 (설정 탭의 스위치가 #calendar-view에 wrap-all-day 클래스를 붙였다 뗀다).
+   FullCalendar는 일정 블록과 제목에 "줄바꿈 금지(nowrap) + 넘치면 숨김"을 걸어두는데, 이걸 풀어서 제목이 두 줄 이상으로 다 보이게 한다.
+   칸 높이는 이미 "일정이 차지하는 높이"에 맞춰 자라도록 만들어 두었다 */
+.wrap-all-day .fc-daygrid-block-event,
+.wrap-all-day .fc-daygrid-block-event .fc-event-main {
+    white-space: normal;
+}
+
+.wrap-all-day .fc-daygrid-block-event .fc-event-title {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    word-break: keep-all;     /* 한글은 단어 중간이 아니라 띄어쓰기에서 줄바꿈 */
+    overflow-wrap: anywhere;  /* 띄어쓰기 없이 너무 긴 제목만 칸 끝에서 끊는다 */
 }
 
 /* 월간 보기: 일정 블록 위쪽 간격 */
@@ -128,52 +532,68 @@ main {
     margin-top: var(--event-gap);
 }
 
-/* 캘린더 이름 앞에 붙는 색깔 동그라미. 사실은 색 선택 도구(<input type="color">)인데,
-   기본의 네모난 모양을 없애고 동그라미로 보이게 꾸민 것이다. 누르면 색 선택 창이 열린다 */
-input.color-dot {
-    appearance: none;
-    width: 16px;
-    height: 16px;
-    padding: 0;
-    border: none;
-    background: none;
-    margin: 0 6px;
-    vertical-align: middle;
-    cursor: pointer;
+/* 주간/일간 보기 왼쪽 위의 "종일" 글자 */
+.fc .fc-timegrid-axis-cushion {
+    font-size: 0.8em;
+    color: var(--text-faint);
 }
 
-/* 색 도구 안쪽 여백을 없애고, 색이 칠해지는 부분(swatch)을 동그랗게 깎는다 */
-input.color-dot::-webkit-color-swatch-wrapper {
-    padding: 0;
+/* 주간/일간 보기: 시간 칸 하나(30분)의 높이 */
+.fc .fc-timegrid-slot {
+    height: var(--time-slot-height);
 }
 
-input.color-dot::-webkit-color-swatch {
-    border: none;
-    border-radius: 50%;
+.fc .fc-timegrid-slot-label-cushion {
+    font-size: 0.8em;
+    color: var(--text-faint);
 }
 
-/* 오늘 탭 맨 위: ◀ 날짜 제목 ▶ 버튼들을 한 줄에 놓는다 */
+/* ===== 오늘 탭 ===== */
+/* 맨 위: ‹ 날짜 제목 › 버튼들을 한 줄에 놓는다 */
 .today-header {
     display: flex;
     align-items: center;
-    gap: 14px;
-    margin: 0 0 12px;
+    gap: 8px;
+    margin: 0 0 20px;
 }
 
 .today-header h1 {
-    margin: 0;
-    font-size: 1.6em;
+    margin: 0 8px;
 }
 
-.today-header button {
-    padding: 4px 10px;
-    cursor: pointer;
+/* ‹ › 버튼은 동그란 아이콘 버튼으로 */
+#day-prev,
+#day-next {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border-radius: 50%;
+    border-color: transparent;
+    font-size: 24px;
+    line-height: 1;
+    padding-bottom: 3px;  /* ‹ › 글자가 글자 칸의 아래쪽에 치우쳐 있어서 살짝 끌어올린다 */
+    color: var(--text);
 }
 
-/* 오늘 탭: 왼쪽(일정)과 오른쪽(할 일)을 가로로 나란히 놓는다. 글자 크기는 설정 탭의 "글자 크기"를 따른다 */
+#day-prev:hover:not(:disabled),
+#day-next:hover:not(:disabled) {
+    border-color: transparent;
+    background-color: var(--surface-strong);
+}
+
+#day-today {
+    margin-left: 4px;
+    color: var(--accent);
+    border-color: var(--accent-soft);
+    background-color: var(--accent-soft);
+    font-weight: 500;
+}
+
+/* 왼쪽(일정)과 오른쪽(할 일)을 가로로 나란히 놓는다. 글자 크기는 설정 탭의 "글자 크기"를 따른다 */
 .today-layout {
     display: flex;
-    gap: 40px;
+    gap: 48px;
+    max-width: 1240px;
     font-size: var(--cal-font-size);
 }
 
@@ -183,15 +603,20 @@ input.color-dot::-webkit-color-swatch {
     min-width: 0;
 }
 
+/* 구역 제목: 작고 진한 회색 */
 .today-column h2 {
-    margin: 0 0 12px;
-    font-size: 1.2em;
+    margin: 0 0 10px;
+    font-size: 0.82em;
+    font-weight: 600;
+    color: var(--text-muted);
 }
 
+/* "밀린 할 일" 제목은 빨간색으로 눈에 띄게 */
 .today-column h3 {
-    margin: 16px 0 6px;
-    font-size: 1em;
-    color: #d93025;
+    margin: 20px 0 6px;
+    font-size: 0.82em;
+    font-weight: 600;
+    color: var(--danger);
 }
 
 /* 일정과 할 일 목록: <ul>의 기본 점과 들여쓰기를 없앤다 */
@@ -202,207 +627,300 @@ input.color-dot::-webkit-color-swatch {
 }
 
 .today-empty {
-    color: #888888;
-    padding: 6px 0;
+    color: var(--text-faint);
+    padding: 10px 8px;
 }
 
 /* 일정 한 줄: 색 동그라미 + 시간 + 제목 */
 .today-event {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 5px 0;
-    border-bottom: 1px solid #eeeeee;
+    align-items: baseline;  /* 시간과 제목의 글꼴이 달라도 글자 밑줄이 맞도록. 달력의 dot-event와 같은 이유 */
+    gap: 10px;
+    padding: 9px 10px;
+    border-radius: var(--radius-sm);
+}
+
+.today-event:hover {
+    background-color: var(--surface);
 }
 
 .event-dot {
-    width: 10px;
-    height: 10px;
+    width: 9px;
+    height: 9px;
     border-radius: 50%;
     flex-shrink: 0;
+    align-self: center;  /* 줄이 기준선 맞춤이어도 점만은 가운데에 */
 }
 
 .event-time {
-    width: 6.5em;
+    min-width: 7.5em;  /* 시간 칸 폭을 맞춰서 제목이 세로로 가지런히 정렬되게 하되, 글자가 더 길어지면(글자 간격을 넓힌 경우 등) 칸도 늘어난다 */
+    white-space: nowrap;  /* "09:00–10:00"이 가운데 대시에서 두 줄로 꺾이지 않게 한다 */
     flex-shrink: 0;
-    color: #555555;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;  /* 숫자 폭을 같게 해서 시간이 세로로 가지런히 정렬된다 */
 }
 
-/* 할 일 입력 줄 */
+/* 할 일 입력 줄: 하나의 둥근 상자 안에 입력 칸, 프로젝트 선택, 추가 버튼이 들어간다 */
 .task-add {
     display: flex;
-    gap: 8px;
-    margin-bottom: 12px;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 14px;
+    padding: 4px;
+    background-color: var(--bg);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    transition: border-color 0.12s, box-shadow 0.12s;
 }
 
-.task-add input {
+.task-add:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* 상자 안의 칸들은 자기 테두리를 없앤다 (상자가 테두리를 대신한다) */
+.task-add input[type="text"] {
     flex: 1;
-    padding: 6px 8px;
-    font-size: inherit;
+    min-width: 0;
+    border: none;
+    box-shadow: none;
+    background: transparent;
+}
+
+.task-add select {
+    max-width: 140px;
+    border: none;
+    box-shadow: none;
+    background-color: var(--surface);
+    color: var(--text-muted);
+    font-size: 0.9em;
 }
 
 .task-add button {
     padding: 6px 14px;
-    cursor: pointer;
+    color: #ffffff;
+    background-color: var(--accent);
+    border-color: var(--accent);
+    font-weight: 500;
 }
 
-/* 할 일 한 줄: 체크박스 + 내용 + (날짜) + 버튼들 */
+.task-add button:hover:not(:disabled) {
+    background-color: var(--accent-hover);
+    border-color: var(--accent-hover);
+}
+
+/* 할 일 한 줄: 동그란 체크 + 내용 + (마감, 날짜) + 마우스를 올리면 나타나는 버튼들 */
 .task-row {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 5px 0;
-    border-bottom: 1px solid #eeeeee;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+}
+
+.task-row:hover {
+    background-color: var(--surface);
+}
+
+/* 체크박스를 동그란 모양으로 다시 그린다 (appearance: none은 브라우저 기본 모양을 지우는 것).
+   체크하면 파란색으로 채워지고 안에 흰 체크 표시가 나타난다 */
+.task-row > input[type="checkbox"] {
+    appearance: none;
+    flex-shrink: 0;
+    display: grid;
+    place-content: center;
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    border: 2px solid var(--border-strong);
+    border-radius: 50%;
+    background-color: var(--bg);
+    cursor: pointer;
+    transition: background-color 0.12s, border-color 0.12s;
+}
+
+.task-row > input[type="checkbox"]:hover:not(:disabled) {
+    border-color: var(--accent);
+    background-color: var(--accent-soft);
+}
+
+.task-row > input[type="checkbox"]:checked {
+    border-color: var(--accent);
+    background-color: var(--accent);
+}
+
+/* 체크 표시: 네모의 오른쪽과 아래 테두리만 그려서 45도 돌리면 ✓ 모양이 된다 */
+.task-row > input[type="checkbox"]:checked::after {
+    content: "";
+    width: 4px;
+    height: 8px;
+    margin-top: -1px;
+    border: solid #ffffff;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
+
+/* 하위 단계가 있는 단계의 체크박스는 직접 누르지 못하게 잠겨 있다 */
+.task-row > input[type="checkbox"]:disabled {
+    cursor: default;
+    opacity: 0.6;
 }
 
 .task-content {
     flex: 1;
     min-width: 0;
+    word-break: keep-all;  /* 한글을 단어 중간이 아니라 띄어쓰기에서 줄바꿈한다 */
     overflow-wrap: anywhere;  /* 띄어쓰기 없는 긴 글자도 칸 안에서 줄바꿈된다 */
 }
 
-/* 끝낸 할 일은 회색에 취소선 */
+/* 끝낸 할 일은 연한 회색에 취소선 */
 .task-content.done {
-    color: #999999;
+    color: var(--text-faint);
     text-decoration: line-through;
 }
 
 .task-date {
-    color: #d93025;
-    font-size: 0.9em;
+    color: var(--danger);
+    font-size: 0.85em;
 }
 
 /* 이미 끝낸 할 일의 날짜는 빨간색(밀림 표시) 대신 회색으로 */
 .task-content.done + .task-date {
-    color: #999999;
+    color: var(--text-faint);
 }
 
-.task-row button {
-    padding: 2px 8px;
-    font-size: 0.85em;
-    cursor: pointer;
+/* 마우스를 올렸을 때만 줄 오른쪽에 나타나는 버튼 묶음. 평소에는 숨겨져 있어서(display: none) 줄 폭을 차지하지 않고,
+   그만큼 글자가 넓게 쓰인다. 나타날 때는 마감일 같은 다른 정보를 가리지 않고 왼쪽으로 조금 밀어낸다 */
+.task-actions {
+    display: none;
+    align-items: center;
+    gap: 4px;
 }
 
-.task-row button.danger {
-    color: #d93025;
+.task-row:hover .task-actions,
+.task-row:focus-within .task-actions {
+    display: flex;
 }
 
-/* 오늘 탭의 할 일 입력줄에 프로젝트 선택 칸이 들어간다 */
-.task-add select {
-    max-width: 140px;
-    font-size: inherit;
+.task-actions button {
+    padding: 3px 9px;
+    font-size: 12px;
 }
 
-/* 할 일 줄에 붙는 프로젝트 이름표 (색 동그라미 + 이름) */
+/* 프로젝트 이름표: 색 동그라미 + 이름이 들어간 연한 회색 알약 */
 .project-chip {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    padding: 1px 8px;
-    border-radius: 10px;
-    background-color: #f1f3f5;
-    color: #555555;
-    font-size: 0.85em;
+    gap: 6px;
+    padding: 2px 10px;
+    border-radius: 999px;
+    background-color: var(--surface-strong);
+    color: var(--text-muted);
+    font-size: 0.82em;
     white-space: nowrap;
 }
 
-/* 프로젝트 탭 */
+/* ===== 프로젝트 탭 ===== */
 .projects-header {
     display: flex;
     align-items: center;
     gap: 16px;
-    margin-bottom: 12px;
+    margin-bottom: 20px;
+    max-width: 760px;
 }
 
 .projects-header h1 {
-    margin: 0;
+    flex: 1;
 }
 
-button.primary {
-    padding: 6px 14px;
-    background-color: #4a7cff;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-}
-
-/* 프로젝트 카드: 왼쪽 굵은 줄이 프로젝트 색이다. 글자 크기는 설정 탭의 "글자 크기"를 따른다 */
+/* 프로젝트 카드: 왼쪽의 굵은 줄이 프로젝트 색이다. 글자 크기는 설정 탭의 "글자 크기"를 따른다 */
 #project-list {
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 16px;
     max-width: 760px;
     font-size: var(--cal-font-size);
 }
 
 .project-card {
-    padding: 12px 16px;
-    border: 1px solid #dddddd;
-    border-left: 6px solid #4a7cff;  /* 색은 app.js가 프로젝트 색으로 덮어쓴다 */
-    border-radius: 6px;
+    padding: 16px 18px 14px;
+    background-color: var(--bg);
+    border: 1px solid var(--border);
+    border-left: 5px solid var(--accent);  /* 색은 app.js가 프로젝트 색으로 덮어쓴다 */
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
 }
 
 .project-card-head {
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-bottom: 8px;
+    margin-bottom: 12px;
 }
 
 .project-name {
     flex: 1;
     min-width: 0;
-    font-size: 1.2em;
-    font-weight: bold;
+    font-size: 1.15em;
+    font-weight: 600;
+    word-break: keep-all;
     overflow-wrap: anywhere;
 }
 
+/* 마감일: 연한 회색 알약 */
 .project-deadline {
-    color: #555555;
+    padding: 2px 10px;
+    border-radius: 999px;
+    background-color: var(--surface-strong);
+    color: var(--text-muted);
+    font-size: 0.82em;
+    white-space: nowrap;
 }
 
-/* 마감이 7일 이내이거나 지난 프로젝트 */
+/* 마감이 7일 이내이거나 지난 프로젝트: 연한 빨간 알약 */
 .project-deadline.urgent {
-    color: #d93025;
-    font-weight: bold;
+    background-color: var(--danger-soft);
+    color: var(--danger);
+    font-weight: 600;
 }
 
 .project-card-head button {
-    padding: 2px 10px;
-    cursor: pointer;
+    padding: 3px 10px;
+    font-size: 12px;
 }
 
 /* progress bar: 회색 바탕(.progress-bar) 안에 색 채움(.progress-fill)을 두고, 채움의 너비(%)로 진행률을 나타낸다 */
 .progress-row {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 12px;
 }
 
 .progress-bar {
     flex: 1;
-    height: 14px;
-    background-color: #e9ecef;
-    border-radius: 7px;
+    height: 8px;
+    background-color: var(--surface-strong);
+    border-radius: 4px;
     overflow: hidden;  /* 채움이 둥근 모서리 밖으로 삐져나오지 않게 한다 */
 }
 
 .progress-fill {
     height: 100%;
-    transition: width 0.2s;
+    border-radius: 4px;
+    transition: width 0.25s ease;
 }
 
 .progress-text {
     width: 3.2em;
     text-align: right;
-    font-weight: bold;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
 }
 
 .progress-detail {
-    margin: 6px 0 8px;
-    color: #666666;
-    font-size: 0.9em;
+    margin: 8px 0 10px;
+    color: var(--text-muted);
+    font-size: 0.85em;
 }
 
 .progress-detail input[type="range"] {
@@ -412,16 +930,18 @@ button.primary {
 
 /* 프로젝트 카드 안의 단계 줄과 추가 줄 */
 .project-card .task-date {
-    color: #666666;  /* 카드 안에서는 날짜가 "밀림"이 아니므로 빨간색을 쓰지 않는다 */
+    color: var(--text-muted);  /* 카드 안에서는 날짜가 "밀림"이 아니므로 빨간색을 쓰지 않는다 */
 }
 
 .project-card .task-add {
     margin: 10px 0 0;
 }
 
-/* 하위 단계 묶음: 상위 단계 아래에서 오른쪽으로 들여쓴다 */
+/* 하위 단계 묶음: 상위 단계 아래에서 오른쪽으로 들여쓴다. 왼쪽에 가는 선을 그어 "이 단계의 일부"임을 보여준다 */
 .sub-wrapper {
-    margin-left: 28px;
+    margin-left: 18px;
+    padding-left: 10px;
+    border-left: 2px solid var(--surface-strong);
 }
 
 .sub-wrapper .task-add {
@@ -430,22 +950,26 @@ button.primary {
 
 /* 하위 단계가 있는 단계 줄에 붙는 "2/3" */
 .task-count {
-    color: #666666;
-    font-size: 0.9em;
+    color: var(--text-muted);
+    font-size: 0.85em;
     white-space: nowrap;
+    font-variant-numeric: tabular-nums;
 }
 
-/* 오늘 탭 등에서 글자로만 보이는 마감일 */
+/* 마감일 글자 (오늘 탭 등에서 글자로만 보이는 것): 연한 주황 알약 */
 .task-deadline {
-    color: #b35c00;
-    font-size: 0.9em;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background-color: var(--warn-soft);
+    color: var(--warn);
+    font-size: 0.82em;
     white-space: nowrap;
 }
 
-.task-deadline.urgent,
-.task-row button.urgent {
-    color: #d93025;
-    font-weight: bold;
+.task-deadline.urgent {
+    background-color: var(--danger-soft);
+    color: var(--danger);
+    font-weight: 600;
 }
 
 /* 마감일 버튼 + 눌렀을 때 열리는 날짜 선택 창.
@@ -454,6 +978,7 @@ button.primary {
 .deadline-control {
     position: relative;
     display: inline-flex;
+    align-items: center;
     gap: 2px;
 }
 
@@ -477,21 +1002,61 @@ button.primary {
     width: auto;
 }
 
-/* 설정 탭 */
+/* 마감일이 정해져 있을 때 줄에 항상 보이는 마감일 버튼: 버튼 모양을 지우고 연한 주황 알약처럼 보이게 한다 */
+.task-row > .deadline-control button:not(.clear) {
+    padding: 1px 8px;
+    border: none;
+    border-radius: 999px;
+    background-color: var(--warn-soft);
+    color: var(--warn);
+    font-size: 0.82em;
+    white-space: nowrap;
+}
+
+.task-row > .deadline-control button.urgent {
+    background-color: var(--danger-soft);
+    color: var(--danger);
+    font-weight: 600;
+}
+
+/* 마감일 지우기(✕)는 줄에 마우스를 올렸을 때만 보인다 */
+.deadline-control .clear {
+    display: none;
+    padding: 0 6px;
+    border: none;
+    background: none;
+    color: var(--text-faint);
+}
+
+.task-row:hover .deadline-control .clear {
+    display: inline-block;
+}
+
+/* ===== 설정 탭 ===== */
+#settings h1 {
+    margin-bottom: 20px;
+}
+
+/* 설정 묶음 하나를 카드로 */
 .settings-section {
-    max-width: 520px;
-    margin-bottom: 28px;
+    max-width: 560px;
+    margin-bottom: 20px;
+    padding: 20px 22px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
 }
 
 .settings-section h2 {
-    margin: 0 0 6px;
-    font-size: 18px;
+    margin: 0 0 4px;
+    font-size: 16px;
+    font-weight: 600;
 }
 
 .settings-hint {
-    margin: 0 0 14px;
-    color: #666666;
-    font-size: 14px;
+    margin: 0 0 16px;
+    color: var(--text-muted);
+    font-size: 13px;
 }
 
 /* 설정 한 줄: 이름 + 슬라이더(또는 선택 칸) + 현재 값 */
@@ -505,9 +1070,14 @@ button.primary {
 .settings-label {
     width: 190px;
     flex-shrink: 0;
+    font-size: 13.5px;
 }
 
 .settings-row input[type="range"] {
+    flex: 1;
+}
+
+.settings-row select {
     flex: 1;
 }
 
@@ -515,61 +1085,75 @@ button.primary {
 .settings-value {
     width: 56px;
     text-align: right;
-    color: #444444;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
 }
 
-#settings-reset {
-    padding: 6px 14px;
-    cursor: pointer;
-}
-
-/* 일정 추가/수정 창과 프로젝트 추가/수정 창 (같은 모양을 쓴다) */
+/* ===== 일정 / 프로젝트 추가·수정 창 (같은 모양을 쓴다) ===== */
 #event-dialog,
 #project-dialog {
-    width: 360px;
-    border: 1px solid #cccccc;
-    border-radius: 8px;
-    padding: 20px;
+    width: 400px;
+    padding: 24px;
+    color: var(--text);
+    border: none;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
 }
 
 /* showModal()로 열었을 때 창 뒤를 어둡게 덮는 막 */
 #event-dialog::backdrop,
 #project-dialog::backdrop {
-    background-color: rgba(0, 0, 0, 0.3);
+    background-color: rgba(16, 24, 40, 0.4);
 }
 
 #event-dialog h2,
 #project-dialog h2 {
-    margin: 0 0 16px;
+    margin: 0 0 18px;
     font-size: 18px;
-}
-
-/* 이름 글자 아래로 선택지들을 세로로 쌓는 줄 (프로젝트 창의 진행률 방식) */
-.dialog-row.column {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 6px;
+    font-weight: 600;
 }
 
 /* 창 안의 한 줄: 이름 글자 + 입력 칸을 가로로 놓는다 */
 .dialog-row {
     display: flex;
     align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+/* 입력 칸 앞의 이름 글자: 폭을 똑같이 맞춰서 모든 입력 칸이 같은 위치에서 시작한다 */
+.dialog-label {
+    width: 52px;
+    flex-shrink: 0;
+}
+
+/* 이름 글자 아래로 선택지들을 세로로 쌓는 줄 (프로젝트 창의 진행률 방식) */
+.dialog-row.column {
+    flex-direction: column;
+    align-items: flex-start;
     gap: 8px;
-    margin-bottom: 12px;
+}
+
+.dialog-row.column label {
+    color: var(--text);
+    font-size: 14px;
 }
 
 /* 제목, 캘린더 칸은 남은 폭을 채운다 */
 .dialog-row input[type="text"],
 .dialog-row select {
     flex: 1;
+    color: var(--text);
+    font-size: 14px;
 }
 
 .dialog-error {
     min-height: 1.2em;
     margin: 0 0 8px;
-    color: #d93025;
-    font-size: 14px;
+    color: var(--danger);
+    font-size: 13px;
 }
 
 .dialog-buttons {
@@ -583,36 +1167,23 @@ button.primary {
 }
 
 .dialog-buttons button {
-    padding: 6px 14px;
-    cursor: pointer;
+    padding: 7px 16px;
 }
 
-.dialog-buttons .primary {
-    background-color: #4a7cff;
-    color: white;
-    border: none;
-    border-radius: 4px;
-}
-
-.dialog-buttons .danger {
-    color: #d93025;
-}
-
-/* hidden 속성이 붙은 요소는 숨긴다 (위의 flex 설정이 hidden을 덮어쓰지 않게 한다) */
-[hidden] {
-    display: none !important;
-}
-
+/* ===== 알림 ===== */
 /* 화면 아래 가운데에 잠깐 떴다 사라지는 알림 */
 #toast {
     position: fixed;
-    bottom: 24px;
+    bottom: 28px;
     left: 50%;
     transform: translateX(-50%);
-    padding: 10px 18px;
-    background-color: #323232;
-    color: white;
-    border-radius: 6px;
+    max-width: min(640px, 90vw);
+    padding: 11px 20px;
+    background-color: #2b3340;
+    color: #ffffff;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-md);
+    font-size: 13.5px;
     opacity: 0;
     pointer-events: none;  /* 안 보일 때는 클릭을 가로채지 않는다 */
     transition: opacity 0.2s;
@@ -620,11 +1191,4 @@ button.primary {
 
 #toast.show {
     opacity: 1;
-}
-
-/* 캘린더 목록의 체크박스 한 줄 */
-#calendar-list label {
-    display: block;
-    padding: 4px 0;
-    cursor: pointer;
 }
