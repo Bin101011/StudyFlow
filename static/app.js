@@ -8,7 +8,7 @@ window.addEventListener("unhandledrejection", function (e) {
     showToast("화면 오류: " + (e.reason && e.reason.message ? e.reason.message : e.reason));
 });
 
-// 탭 버튼 4개와 탭 내용 4개를 모두 찾아서 변수에 담는다
+// 탭 버튼들과 탭 내용들을 모두 찾아서 변수에 담는다
 const tabButtons = document.querySelectorAll(".tab-button");
 const tabContents = document.querySelectorAll(".tab-content");
 
@@ -45,6 +45,13 @@ tabButtons.forEach(function (button) {
         if (tabName === "projects") {
             loadProjects().catch(function (error) {
                 showToast("프로젝트를 불러오지 못했습니다: " + error.message);
+            });
+        }
+
+        // 7. 우선순위 탭도 열 때마다 새로 불러온다. (다른 탭에서 할 일을 끝내거나 추가했을 수 있다)
+        if (tabName === "priority") {
+            loadPriority().catch(function (error) {
+                showToast("할 일을 불러오지 못했습니다: " + error.message);
             });
         }
     });
@@ -1679,6 +1686,397 @@ projectNameInput.addEventListener("keydown", function (e) {
         saveProject();
     }
 });
+
+// ---------- 우선순위 탭 (Eisenhower Matrix) ----------
+// 안 끝낸 할 일을 7×7 칸에 올려서 "얼마나 중요하고 얼마나 급한지"를 한눈에 본다.
+// 가로가 긴급도, 세로가 중요도이고 둘 다 -3~3의 정수다. 가운데 줄(0)이 두 축이고, 그 줄이 네 구역(사분면)을 나눈다.
+// 칸에 점을 찍는 대신 칸 안에 할 일 이름표(chip)를 담는다. 한 칸에 여러 개가 들어가면 그 칸의 키가 늘어나서 글자가 겹치지 않는다.
+// 평가는 "끌어다 놓기"로 한다: 오른쪽 목록 → 칸(평가), 칸 → 다른 칸(고치기), 칸 → 오른쪽 목록(평가 취소).
+// 할 일을 한 번 클릭하면 작은 메뉴가 떠서 "완료"하거나 "매트릭스에서 빼기"(평가 취소)를 할 수 있다.
+
+const matrixElement = document.getElementById("matrix");
+const unrankedPanel = document.getElementById("priority-unranked");
+const unrankedList = document.getElementById("priority-unranked-list");
+const unrankedCount = document.getElementById("priority-unranked-count");
+
+const PRIORITY_RANGE = 3;          // 평가 범위는 -3 ~ 3 (서버의 PRIORITY_LIMIT과 같아야 한다)
+const PRIORITY_DRAG_THRESHOLD = 4; // 이 거리(px)보다 적게 움직이면 끌기가 아니라 클릭으로 본다
+
+let priorityTasks = [];  // 서버에서 받은 안 끝낸 할 일 전부 (평가한 것과 안 한 것이 섞여 있다)
+const matrixCells = {};  // "긴급도,중요도" → 그 칸의 요소. 예: matrixCells["3,-2"]
+
+// 7×7 칸을 한 번만 만든다. 위에서 아래로 중요도 3 → -3, 왼쪽에서 오른쪽으로 긴급도 -3 → 3
+function buildMatrix() {
+    for (let importance = PRIORITY_RANGE; importance >= -PRIORITY_RANGE; importance--) {
+        // 줄 왼쪽의 중요도 숫자
+        const rowLabel = document.createElement("div");
+        rowLabel.className = "matrix-label" + (importance === 0 ? " zero" : "");
+        rowLabel.textContent = importance;
+        matrixElement.appendChild(rowLabel);
+
+        for (let urgency = -PRIORITY_RANGE; urgency <= PRIORITY_RANGE; urgency++) {
+            const cell = document.createElement("div");
+            cell.className = "matrix-cell";
+            cell.dataset.urgency = urgency;
+            cell.dataset.importance = importance;
+            if (urgency === 0 || importance === 0) {
+                cell.classList.add("axis");  // 가운데 줄(축)
+            } else if (importance > 0) {
+                cell.classList.add(urgency > 0 ? "q-now" : "q-plan");
+            } else {
+                cell.classList.add(urgency > 0 ? "q-quick" : "q-drop");
+            }
+            matrixCells[urgency + "," + importance] = cell;
+            matrixElement.appendChild(cell);
+        }
+    }
+    // 칸들 아래의 긴급도 숫자 줄 (왼쪽 첫 칸은 줄 숫자 칸과 맞추려고 비워 둔다)
+    const colLabels = document.getElementById("matrix-col-labels");
+    colLabels.appendChild(document.createElement("div"));
+    for (let urgency = -PRIORITY_RANGE; urgency <= PRIORITY_RANGE; urgency++) {
+        const colLabel = document.createElement("div");
+        colLabel.className = "matrix-label" + (urgency === 0 ? " zero" : "");
+        colLabel.textContent = urgency;
+        colLabels.appendChild(colLabel);
+    }
+}
+
+// 할 일 하나의 이름표를 만든다. variant가 "chip"이면 칸 안의 작은 것, "row"이면 오른쪽 목록의 한 줄이다
+function makePriorityItem(task, variant) {
+    const item = document.createElement("div");
+    item.className = "priority-item " + variant;
+    item.dataset.taskId = task.id;
+
+    // 프로젝트 색 동그라미 (프로젝트가 없으면 속이 빈 회색 고리)
+    const dot = document.createElement("span");
+    dot.className = "priority-dot";
+    if (task.project_color) {
+        dot.style.backgroundColor = task.project_color;
+    } else {
+        dot.classList.add("none");
+    }
+
+    const name = document.createElement("span");
+    name.className = "priority-name";
+    name.textContent = task.content;
+    item.append(dot, name);
+
+    // 마감일이 있으면 긴급도를 정할 때 참고할 수 있게 보여준다. 3일 이내(지난 것 포함)는 빨갛게.
+    // 목록 줄에는 D-숫자를 붙이고, 칸 안의 이름표는 자리가 좁으니 빨간 테두리로만 알리고 자세한 것은 툴팁에 둔다
+    let deadlineText = "";
+    if (task.deadline) {
+        const days = daysUntil(task.deadline);
+        const soon = days <= 3;
+        if (variant === "row") {
+            const deadline = document.createElement("span");
+            deadline.className = "priority-deadline" + (soon ? " soon" : "");
+            deadline.textContent = ddayLabel(days);
+            item.appendChild(deadline);
+        } else if (soon) {
+            item.classList.add("soon");
+        }
+        deadlineText = "\n마감 " + task.deadline + " (" + ddayLabel(days) + ")";
+    }
+
+    if (variant === "row" && task.project_name) {
+        // 목록 줄에는 어느 프로젝트의 어느 단계인지도 작게 보여준다
+        const sub = document.createElement("span");
+        sub.className = "priority-sub";
+        sub.textContent = task.project_name + (task.parent_content ? " › " + task.parent_content : "");
+        item.appendChild(sub);
+    }
+
+    // 마우스를 올리면 전체 이름과 현재 평가가 보인다 (칸 안에서는 이름이 줄여져 보이므로)
+    const rating = task.importance === null ? "" : "\n중요 " + task.importance + " · 긴급 " + task.urgency;
+    item.title = task.content + (task.project_name ? "\n" + task.project_name : "") + deadlineText + rating;
+
+    item.addEventListener("pointerdown", function (e) {
+        beginPriorityDrag(e, item, task);
+    });
+    return item;
+}
+
+// 칸과 오른쪽 목록을 현재 priorityTasks에 맞춰 다시 채운다
+function renderPriority() {
+    Object.values(matrixCells).forEach(function (cell) {
+        cell.replaceChildren();
+    });
+    unrankedList.replaceChildren();
+
+    const unranked = [];
+    priorityTasks.forEach(function (task) {
+        if (task.importance === null || task.urgency === null) {
+            unranked.push(task);
+        } else {
+            matrixCells[task.urgency + "," + task.importance].appendChild(makePriorityItem(task, "chip"));
+        }
+    });
+
+    // 마감일이 가까운 것이 위로. 마감일이 없는 것은 뒤로, 같으면 만든 순서
+    unranked.sort(function (a, b) {
+        if (a.deadline && b.deadline && a.deadline !== b.deadline) {
+            return a.deadline < b.deadline ? -1 : 1;
+        }
+        if (Boolean(a.deadline) !== Boolean(b.deadline)) {
+            return a.deadline ? -1 : 1;
+        }
+        return a.id - b.id;
+    });
+    unranked.forEach(function (task) {
+        unrankedList.appendChild(makePriorityItem(task, "row"));
+    });
+    unrankedCount.textContent = unranked.length > 0 ? unranked.length + "개" : "";
+
+    if (unranked.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "priority-empty";
+        empty.textContent = priorityTasks.length === 0
+            ? "끝내지 않은 할 일이 없어요."
+            : "모든 할 일을 평가했어요.";
+        unrankedList.appendChild(empty);
+    }
+}
+
+async function loadPriority() {
+    const response = await fetch("/api/priority-tasks");
+    if (!response.ok) {
+        throw new Error(await errorMessageFrom(response));
+    }
+    priorityTasks = await response.json();
+    renderPriority();
+}
+
+// 평가를 바꾼다 (importance, urgency가 둘 다 null이면 평가 취소). 화면에는 먼저 반영하고, 저장에 실패하면 서버 값으로 되돌린다
+async function setPriority(task, importance, urgency) {
+    task.importance = importance;
+    task.urgency = urgency;
+    renderPriority();
+    try {
+        await sendRequest("/api/tasks/" + task.id, "PATCH", { importance: importance, urgency: urgency });
+    } catch (error) {
+        showToast("평가를 저장하지 못했습니다: " + error.message);
+        loadPriority().catch(function () {});
+    }
+}
+
+// ----- 끌어다 놓기 -----
+// 포인터 이벤트로 직접 만든다(타이머 위젯을 옮길 때와 같은 방식, 새 라이브러리 없음).
+// 끄는 동안 원래 이름표는 흐리게 남고, 마우스를 따라다니는 복사본(ghost)을 보여준다
+
+let priorityDrag = null;  // 끄는 중에만 값이 있다: { task, item, startX, startY, grabX, grabY, ghost, hover }
+
+function beginPriorityDrag(e, item, task) {
+    if (e.pointerType === "mouse" && e.button !== 0) {
+        return;
+    }
+    const rect = item.getBoundingClientRect();
+    priorityDrag = {
+        task: task, item: item, startX: e.clientX, startY: e.clientY,
+        grabX: e.clientX - rect.left, grabY: e.clientY - rect.top, ghost: null, hover: null,
+    };
+    // 마우스가 이름표 밖으로 나가도 계속 이 이름표가 이벤트를 받게 한다
+    item.setPointerCapture(e.pointerId);
+    item.addEventListener("pointermove", movePriorityDrag);
+    item.addEventListener("pointerup", endPriorityDrag);
+    item.addEventListener("pointercancel", cancelPriorityDrag);
+}
+
+// 마우스 아래에 있는 놓을 자리를 찾는다: 칸, 오른쪽 목록, 아니면 null. (ghost는 pointer-events: none이라 아래가 보인다)
+function priorityDropTarget(x, y) {
+    const element = document.elementFromPoint(x, y);
+    if (!element) {
+        return null;
+    }
+    const cell = element.closest(".matrix-cell");
+    if (cell) {
+        return cell;
+    }
+    return element.closest("#priority-unranked");
+}
+
+function movePriorityDrag(e) {
+    const drag = priorityDrag;
+    if (!drag) {
+        return;
+    }
+    if (!drag.ghost) {
+        if (Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) < PRIORITY_DRAG_THRESHOLD) {
+            return;
+        }
+        drag.ghost = drag.item.cloneNode(true);
+        drag.ghost.classList.add("priority-ghost");
+        drag.ghost.style.width = drag.item.offsetWidth + "px";
+        document.body.appendChild(drag.ghost);
+        drag.item.classList.add("drag-source");
+        document.body.classList.add("priority-dragging");
+    }
+    drag.ghost.style.left = (e.clientX - drag.grabX) + "px";
+    drag.ghost.style.top = (e.clientY - drag.grabY) + "px";
+
+    // 놓을 수 있는 자리를 강조한다
+    const target = priorityDropTarget(e.clientX, e.clientY);
+    if (target !== drag.hover) {
+        if (drag.hover) {
+            drag.hover.classList.remove("drop-hover");
+        }
+        if (target) {
+            target.classList.add("drop-hover");
+        }
+        drag.hover = target;
+    }
+
+    // 화면 위나 아래 끝 근처로 가면 페이지를 스크롤한다 (키가 큰 칸 때문에 아래쪽 줄이 화면 밖일 수 있다)
+    if (e.clientY < 50) {
+        window.scrollBy(0, -14);
+    } else if (e.clientY > window.innerHeight - 50) {
+        window.scrollBy(0, 14);
+    }
+}
+
+// 끌기를 마무리한다. 놓은 자리가 있으면 그 자리로 평가를 바꾼다
+function finishPriorityDrag(e, drop) {
+    const drag = priorityDrag;
+    if (!drag) {
+        return;
+    }
+    priorityDrag = null;
+    drag.item.removeEventListener("pointermove", movePriorityDrag);
+    drag.item.removeEventListener("pointerup", endPriorityDrag);
+    drag.item.removeEventListener("pointercancel", cancelPriorityDrag);
+    document.body.classList.remove("priority-dragging");
+    drag.item.classList.remove("drag-source");
+    if (drag.hover) {
+        drag.hover.classList.remove("drop-hover");
+    }
+    if (!drag.ghost) {
+        // 거의 안 움직였다 = 그냥 클릭 → 메뉴를 띄운다. 단, 이미 이 할 일의 메뉴가 떠 있다가 이번 누름으로 닫혔다면 다시 열지 않는다(한 번 더 클릭하면 닫히는 느낌)
+        if (drop && priorityMenuClosedFor !== drag.task.id) {
+            openPriorityMenu(drag.item, drag.task);
+        }
+        return;
+    }
+    drag.ghost.remove();
+    if (!drop) {
+        return;
+    }
+
+    const target = priorityDropTarget(e.clientX, e.clientY);
+    const task = drag.task;
+    if (target && target.classList.contains("matrix-cell")) {
+        const urgency = Number(target.dataset.urgency);
+        const importance = Number(target.dataset.importance);
+        if (task.urgency !== urgency || task.importance !== importance) {
+            setPriority(task, importance, urgency);
+        }
+    } else if (target === unrankedPanel && task.importance !== null) {
+        setPriority(task, null, null);
+    }
+}
+
+function endPriorityDrag(e) {
+    finishPriorityDrag(e, true);
+}
+
+function cancelPriorityDrag(e) {
+    finishPriorityDrag(e, false);
+}
+
+// ----- 클릭 메뉴 -----
+// 할 일을 한 번 클릭하면 그 옆에 뜨는 작은 메뉴. "완료"는 어느 쪽(칸/목록)에서든, "매트릭스에서 빼기"는 칸 안의 것에만 있다.
+// 빼기는 할 일을 지우는 것이 아니라 평가만 취소해서 오른쪽 목록으로 돌려보낸다.
+
+let priorityMenu = null;            // 떠 있는 메뉴 요소 (없으면 null)
+let priorityMenuTaskId = null;      // 떠 있는 메뉴가 어느 할 일의 것인지
+let priorityMenuClosedFor = null;   // 방금 누름으로 닫힌 메뉴의 할 일 번호. 같은 할 일을 다시 클릭했을 때 되열리는 것을 막는 데 쓴다
+
+function closePriorityMenu() {
+    if (priorityMenu) {
+        priorityMenu.remove();
+        priorityMenu = null;
+        priorityMenuTaskId = null;
+    }
+}
+
+function openPriorityMenu(item, task) {
+    closePriorityMenu();
+    const menu = document.createElement("div");
+    menu.className = "priority-menu";
+
+    const title = document.createElement("div");
+    title.className = "priority-menu-title";
+    title.textContent = task.content;
+    menu.appendChild(title);
+
+    const doneButton = document.createElement("button");
+    doneButton.textContent = "✓ 완료";
+    doneButton.addEventListener("click", function () {
+        closePriorityMenu();
+        completePriorityTask(task);
+    });
+    menu.appendChild(doneButton);
+
+    if (task.importance !== null) {
+        const removeButton = document.createElement("button");
+        removeButton.textContent = "↩ 매트릭스에서 빼기";
+        removeButton.addEventListener("click", function () {
+            closePriorityMenu();
+            setPriority(task, null, null);
+        });
+        menu.appendChild(removeButton);
+    }
+
+    document.body.appendChild(menu);
+    priorityMenu = menu;
+    priorityMenuTaskId = task.id;
+
+    // 이름표 바로 아래에 띄우되, 화면 밖으로 나가면 위로/안쪽으로 옮긴다
+    const rect = item.getBoundingClientRect();
+    const width = menu.offsetWidth;
+    const height = menu.offsetHeight;
+    let left = Math.min(rect.left, window.innerWidth - width - 8);
+    let top = rect.bottom + 6;
+    if (top + height > window.innerHeight - 8) {
+        top = Math.max(8, rect.top - height - 6);
+    }
+    menu.style.left = Math.max(8, left) + "px";
+    menu.style.top = top + "px";
+}
+
+// 할 일을 끝낸다: 화면에서 먼저 치우고 서버에 저장한다. 실패하면 서버 값으로 되돌린다
+async function completePriorityTask(task) {
+    priorityTasks = priorityTasks.filter(function (t) {
+        return t !== task;
+    });
+    renderPriority();
+    try {
+        await sendRequest("/api/tasks/" + task.id, "PATCH", { done: true });
+        showToast("완료했어요: " + task.content);
+    } catch (error) {
+        showToast("완료하지 못했습니다: " + error.message);
+        loadPriority().catch(function () {});
+    }
+}
+
+// 메뉴 밖을 누르면 닫는다. capture(true)로 다른 곳의 이벤트보다 먼저 받아서, 메뉴가 열려 있었는지 기억해 둔다
+document.addEventListener("pointerdown", function (e) {
+    priorityMenuClosedFor = null;
+    if (priorityMenu && !priorityMenu.contains(e.target)) {
+        priorityMenuClosedFor = priorityMenuTaskId;
+        closePriorityMenu();
+    }
+}, true);
+
+document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") {
+        closePriorityMenu();
+    }
+});
+
+// 스크롤하거나 창 크기가 바뀌면 메뉴 위치가 어긋나니 닫는다
+window.addEventListener("scroll", closePriorityMenu);
+window.addEventListener("resize", closePriorityMenu);
+
+buildMatrix();
 
 // ---------- 설정 탭 ----------
 

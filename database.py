@@ -35,6 +35,10 @@ def run(sql, params=()):
             return rows, cursor.rowcount
 
 
+# 우선순위 탭의 중요도, 긴급도 범위는 -PRIORITY_LIMIT ~ PRIORITY_LIMIT (7×7 칸). 처음에는 5였다가 칸이 너무 작아 3으로 줄였다
+PRIORITY_LIMIT = 3
+
+
 def init_db():
     """프로그램을 켤 때 한 번 실행한다. tasks, projects 테이블이 없으면 만든다 (있으면 아무것도 하지 않는다)."""
     run("""
@@ -75,9 +79,19 @@ def init_db():
     # PRAGMA table_info: 테이블에 어떤 칸들이 있는지 알려주는 SQLite 명령
     columns, _ = run("PRAGMA table_info(tasks)")
     existing = [column["name"] for column in columns]
-    for name, column_type in (("done_at", "TEXT"), ("deadline", "TEXT"), ("parent_id", "INTEGER")):
+    # importance(중요도), urgency(긴급도): 우선순위 탭(12단계)에서 평가한 -5~5 정수. 평가 안 한 할 일은 둘 다 NULL
+    for name, column_type in (("done_at", "TEXT"), ("deadline", "TEXT"), ("parent_id", "INTEGER"),
+                              ("importance", "INTEGER"), ("urgency", "INTEGER")):
         if name not in existing:
             run(f"ALTER TABLE tasks ADD COLUMN {name} {column_type}")
+
+    # 범위가 줄어들기 전(-5~5)에 평가해 둔 값이 있으면 새 범위 안으로 맞춘다. MAX/MIN은 두 값 중 큰/작은 쪽을 고른다.
+    # 이미 범위 안인 값은 그대로이고, 평가 안 한(NULL) 할 일은 건드리지 않는다
+    run(
+        "UPDATE tasks SET importance = MAX(?, MIN(?, importance)), urgency = MAX(?, MIN(?, urgency)) "
+        "WHERE importance IS NOT NULL AND urgency IS NOT NULL",
+        (-PRIORITY_LIMIT, PRIORITY_LIMIT, -PRIORITY_LIMIT, PRIORITY_LIMIT),
+    )
 
 
 # "하위 단계가 하나도 없는 할 일"만 고르는 조건. t는 tasks 표의 별명이다.
@@ -122,6 +136,18 @@ def list_overdue_tasks(today):
     return rows
 
 
+def list_open_tasks():
+    """우선순위 탭에 보여줄 할 일: 아직 안 끝냈고 하위 단계가 없는 모든 할 일 (날짜가 있든 없든, 지난 것이든 먼 미래든).
+    평가한 것(importance, urgency가 있음)과 안 한 것(NULL)이 섞여 있고, 나누는 일은 화면이 한다."""
+    rows, _ = run(
+        "SELECT t.*, p.name AS project_name, p.color AS project_color, pt.content AS parent_content "
+        "FROM tasks t LEFT JOIN projects p ON p.id = t.project_id "
+        "LEFT JOIN tasks pt ON pt.id = t.parent_id "
+        f"WHERE t.done = 0 AND {NO_CHILDREN} ORDER BY t.id"
+    )
+    return rows
+
+
 def get_task(task_id):
     """할 일 하나를 돌려준다. 없으면 None."""
     rows, _ = run("SELECT * FROM tasks WHERE id = ?", (task_id,))
@@ -144,7 +170,7 @@ def add_task(content, date, project_id=None, parent_id=None):
 
 # 수정할 수 있는 칸의 이름들. 아래 update_row가 SQL 문장에 칸 이름을 직접 넣는데,
 # 칸 이름은 ?로 안전하게 넘길 수 없다. 그래서 화면이 보낸 이름을 그대로 쓰지 않고, 이 목록에 있는 것만 쓴다
-EDITABLE_COLUMNS = ("content", "date", "done", "done_at", "deadline")
+EDITABLE_COLUMNS = ("content", "date", "done", "done_at", "deadline", "importance", "urgency")
 
 
 def update_task(task_id, changes):

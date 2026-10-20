@@ -536,6 +536,30 @@ def api_get_tasks():
     })
 
 
+# 우선순위 탭(12단계)에 보여줄, 아직 안 끝낸 모든 할 일. importance/urgency가 null이면 "평가 안 함"이다
+@app.route("/api/priority-tasks")
+def api_get_priority_tasks():
+    return jsonify(database.list_open_tasks())
+
+
+# 중요도와 긴급도의 범위. 우선순위 탭의 7×7 칸이 -3~3이다
+PRIORITY_MIN, PRIORITY_MAX = -database.PRIORITY_LIMIT, database.PRIORITY_LIMIT
+
+
+def parse_priority(data):
+    """화면이 보낸 importance, urgency를 검사한다. 둘은 항상 함께 와야 하고, 둘 다 -3~3의 정수이거나(평가함)
+    둘 다 null이다(평가 취소). 맞으면 ({"importance": .., "urgency": ..}, None), 틀리면 (None, 오류 응답)."""
+    if "importance" not in data or "urgency" not in data:
+        return None, (jsonify({"error": "중요도와 긴급도를 함께 보내야 합니다."}), 400)
+    values = (data["importance"], data["urgency"])
+    if all(v is None for v in values):
+        return {"importance": None, "urgency": None}, None
+    # bool은 파이썬에서 정수의 한 종류라서 따로 거른다
+    if not all(isinstance(v, int) and not isinstance(v, bool) and PRIORITY_MIN <= v <= PRIORITY_MAX for v in values):
+        return None, (jsonify({"error": f"중요도와 긴급도는 {PRIORITY_MIN}~{PRIORITY_MAX} 사이의 정수이거나 둘 다 비어 있어야 합니다."}), 400)
+    return {"importance": values[0], "urgency": values[1]}, None
+
+
 # 할 일 추가 (POST)
 @app.route("/api/tasks", methods=["POST"])
 def api_create_task():
@@ -607,6 +631,11 @@ def api_update_task(task_id):
         if not content:
             return jsonify({"error": "할 일 내용을 입력하세요."}), 400
         changes["content"] = content
+    if "importance" in data or "urgency" in data:
+        priority, error_response = parse_priority(data)
+        if error_response:
+            return error_response
+        changes.update(priority)
 
     if not changes:
         return jsonify({"error": "바꿀 값이 없습니다."}), 400

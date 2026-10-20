@@ -20,6 +20,7 @@
         <button class="tab-button active" data-tab="calendar">캘린더</button>
         <button class="tab-button" data-tab="today">오늘</button>
         <button class="tab-button" data-tab="projects">프로젝트</button>
+        <button class="tab-button" data-tab="priority">우선순위</button>
         <button class="tab-button" data-tab="settings">설정</button>
 
         <!-- 가운데: Pomodoro 타이머. 어느 탭에서나 보이고, 탭을 옮겨도 계속 돈다.
@@ -104,6 +105,36 @@
             </div>
             <!-- 프로젝트 카드들은 app.js가 /api/projects에서 받아 여기에 만든다 (마감일이 가까운 순) -->
             <div id="project-list"></div>
+        </div>
+        <div class="tab-content" id="priority">
+            <div class="priority-header">
+                <h1>우선순위</h1>
+                <p>오른쪽의 할 일을 끌어서 칸에 놓으면 평가가 됩니다. 가로는 얼마나 급한지, 세로는 얼마나 중요한지(-3~3)입니다. 놓은 것을 다시 끌어서 고칠 수 있고, 할 일을 한 번 클릭하면 "완료"와 "매트릭스에서 빼기" 메뉴가 뜹니다.</p>
+            </div>
+            <div class="priority-layout">
+                <div class="matrix-wrap">
+                    <!-- 위쪽 두 사분면 이름. 아래쪽 이름은 칸들 아래에 있다 -->
+                    <div class="matrix-quadrant-labels top">
+                        <span class="q-plan">중요하지만 급하지 않음 · 계획하기</span>
+                        <span class="q-now">중요하고 급함 · 지금 하기</span>
+                    </div>
+                    <!-- 7×7 칸은 app.js가 만든다. 가운데 줄(0)이 두 축이다 -->
+                    <div id="matrix"></div>
+                    <!-- 칸들 아래의 긴급도 숫자 줄 -->
+                    <div id="matrix-col-labels"></div>
+                    <div class="matrix-quadrant-labels bottom">
+                        <span class="q-drop">덜 중요하고 급하지 않음 · 미루기</span>
+                        <span class="q-quick">덜 중요하지만 급함 · 빨리 처리하기</span>
+                    </div>
+                    <div class="matrix-axis-note">↑ 중요도 &nbsp;·&nbsp; 긴급도 →</div>
+                </div>
+
+                <!-- 아직 평가하지 않은 할 일. 점을 이쪽으로 끌어다 놓으면 평가가 취소된다 -->
+                <aside id="priority-unranked">
+                    <h2>평가 안 한 할 일 <span id="priority-unranked-count"></span></h2>
+                    <ul id="priority-unranked-list"></ul>
+                </aside>
+            </div>
         </div>
         <div class="tab-content" id="settings">
             <h1>설정</h1>
