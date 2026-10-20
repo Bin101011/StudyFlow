@@ -241,6 +241,99 @@ nav {
     color: var(--accent);
 }
 
+/* 가운데의 Pomodoro 타이머 알약. margin-left: auto가 동기화 상태의 auto와 남는 공간을 반씩 나눠 가져서 두 곳 사이 가운데에 놓인다.
+   배경이 왼쪽부터 --pomodoro-progress 만큼 차올라서 진행 정도를 보여준다 (집중은 빨강, 휴식은 초록) */
+#pomodoro {
+    --pomodoro-color: var(--danger);
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 4px 3px 14px;
+    font-size: 13px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background-color: var(--bg);  /* 아래 그라데이션이 투명한 부분은 흰 바탕이 비치게 (끌어서 옮기면 다른 내용 위에 놓이므로) */
+    cursor: grab;
+    user-select: none;
+    touch-action: none;  /* 터치로 끌 때 화면이 같이 스크롤되지 않게 */
+    background-image: linear-gradient(to right,
+        color-mix(in srgb, var(--pomodoro-color) 14%, transparent) var(--pomodoro-progress, 0%),
+        transparent var(--pomodoro-progress, 0%));
+}
+
+#pomodoro.break {
+    --pomodoro-color: var(--ok);
+}
+
+/* 끌어서 옮긴 상태: 상단 바에서 떨어져 나와 화면에 고정된다. 다른 내용 위에 떠 있도록 그림자를 준다 */
+#pomodoro.floating {
+    position: fixed;
+    z-index: 100;
+    margin: 0;
+    box-shadow: var(--shadow-md);
+}
+
+#pomodoro.dragging {
+    cursor: grabbing;
+    box-shadow: var(--shadow-lg);
+}
+
+/* 단계 이름 앞의 동그라미: 시간이 흐르는 중이면 꽉 찬 점, 멈춰 있으면 속이 빈 고리 */
+#pomodoro-phase {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-weight: 600;
+    color: var(--pomodoro-color);
+}
+
+#pomodoro-phase::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    box-sizing: border-box;
+    border: 2px solid var(--pomodoro-color);
+    border-radius: 50%;
+}
+
+#pomodoro.running #pomodoro-phase::before {
+    background-color: var(--pomodoro-color);
+}
+
+#pomodoro-time {
+    min-width: 3.2em;  /* 숫자가 바뀌어도 알약 폭이 흔들리지 않게 */
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+}
+
+#pomodoro button {
+    min-width: 28px;
+    height: 28px;
+    padding: 0 6px;
+    border: none;
+    border-radius: 14px;
+    background: none;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+#pomodoro button:hover:not(:disabled) {
+    background-color: color-mix(in srgb, var(--pomodoro-color) 16%, transparent);
+    color: var(--text);
+}
+
+/* 단계가 끝났을 때 알약 둘레가 몇 번 번져 나가서 눈에 띄게 한다 */
+#pomodoro.done {
+    animation: pomodoro-pulse 1s ease-out 4;
+}
+
+@keyframes pomodoro-pulse {
+    from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--pomodoro-color) 55%, transparent); }
+    to { box-shadow: 0 0 0 12px transparent; }
+}
+
 /* 오른쪽 끝의 동기화 상태. margin-left: auto가 남는 공간을 왼쪽에 몰아줘서 오른쪽 끝에 붙는다 */
 #sync-status {
     margin-left: auto;

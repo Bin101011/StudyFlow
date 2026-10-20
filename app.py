@@ -502,6 +502,7 @@ def api_get_settings():
     return jsonify({
         "values": settings_store.load_settings(),
         "sliders": settings_store.SLIDER_DEFINITIONS,
+        "pomodoroSliders": settings_store.POMODORO_SLIDER_DEFINITIONS,
     })
 
 

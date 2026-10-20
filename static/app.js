@@ -228,13 +228,13 @@ function describeEvent(event) {
 
 // 화면 아래에 알림을 4초 동안 띄운다
 let toastTimer = null;
-function showToast(message) {
+function showToast(message, duration = 4000) {
     toastElement.textContent = message;
     toastElement.classList.add("show");
     clearTimeout(toastTimer);
     toastTimer = setTimeout(function () {
         toastElement.classList.remove("show");
-    }, 4000);
+    }, duration);
 }
 
 // 실패한 응답에서 화면에 보여줄 이유를 꺼낸다. 서버가 {"error": "이유"}를 담아 보냈으면 그 이유를,
@@ -1690,6 +1690,8 @@ const editableCalendars = [];
 const sliderListElement = document.getElementById("slider-list");
 const defaultCalendarSelect = document.getElementById("default-calendar-select");
 const wrapAllDayCheckbox = document.getElementById("wrap-all-day-checkbox");
+const pomodoroSliderListElement = document.getElementById("pomodoro-slider-list");
+const pomodoroSoundCheckbox = document.getElementById("pomodoro-sound-checkbox");
 
 // 설정 이름 → 그 값을 담는 CSS 변수 이름. 슬라이더 값이 바뀌면 이 CSS 변수를 바꾼다
 const SETTING_CSS_VARS = {
@@ -1717,6 +1719,8 @@ function applySettings() {
     calendarElement.classList.toggle("wrap-all-day", settings.wrapAllDay !== false);
     // 칸 크기가 바뀌었으니 FullCalendar가 레이아웃을 다시 계산하게 한다
     calendar.updateSize();
+    // Pomodoro 시간 설정이 바뀌었을 수 있으니 타이머 위젯도 맞춘다 (아래 "Pomodoro 타이머" 구역)
+    pomodoroSettingsChanged();
 }
 
 // 설정을 서버에 보내 settings.json에 저장한다
@@ -1726,6 +1730,44 @@ async function saveSettings() {
     } catch (error) {
         showToast("설정을 저장하지 못했습니다: " + error.message);
     }
+}
+
+// 슬라이더 한 줄(이름 + 슬라이더 + 현재 값)을 만들어 container에 붙인다. def는 서버가 알려준 슬라이더 정의다
+function buildSlider(def, container) {
+    settingUnits[def.key] = def.unit;
+
+    const row = document.createElement("label");
+    row.className = "settings-row";
+
+    const name = document.createElement("span");
+    name.className = "settings-label";
+    name.textContent = def.label;
+
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.min = def.min;
+    slider.max = def.max;
+    slider.step = def.step;
+    slider.value = settings[def.key];
+    slider.dataset.key = def.key;       // 나중에 "기본값으로"에서 이 슬라이더를 찾기 위한 표시
+    slider.dataset.default = def.default;
+    slider.dataset.unit = def.unit;
+
+    const valueText = document.createElement("span");
+    valueText.className = "settings-value";
+    valueText.textContent = settings[def.key] + def.unit;
+
+    row.append(name, slider, valueText);
+    container.appendChild(row);
+
+    // input 이벤트: 슬라이더를 끄는 동안 계속 발생 → 화면에 즉시 반영
+    slider.addEventListener("input", function () {
+        settings[def.key] = Number(slider.value);
+        valueText.textContent = slider.value + def.unit;
+        applySettings();
+    });
+    // change 이벤트: 마우스를 놓았을 때 한 번 발생 → 이때 저장 (끄는 동안 저장 요청이 쏟아지지 않게)
+    slider.addEventListener("change", saveSettings);
 }
 
 // 서버에서 설정을 받아와서 슬라이더를 만들고 화면에 반영한다
@@ -1745,43 +1787,16 @@ async function loadSettings() {
             hiddenCalendarIds.add(id);
         });
 
-        sliderListElement.innerHTML = "";  // 혹시 이미 있던 슬라이더를 비운다
+        pomodoroSoundCheckbox.checked = settings.pomodoroSound !== false;
+
+        // 혹시 이미 있던 슬라이더를 비우고, 화면 크기 슬라이더와 Pomodoro 슬라이더를 각자의 칸에 만든다
+        sliderListElement.innerHTML = "";
+        pomodoroSliderListElement.innerHTML = "";
         data.sliders.forEach(function (def) {
-            settingUnits[def.key] = def.unit;
-
-            // 한 줄: 이름 글자 + 슬라이더 + 현재 값 글자
-            const row = document.createElement("label");
-            row.className = "settings-row";
-
-            const name = document.createElement("span");
-            name.className = "settings-label";
-            name.textContent = def.label;
-
-            const slider = document.createElement("input");
-            slider.type = "range";
-            slider.min = def.min;
-            slider.max = def.max;
-            slider.step = def.step;
-            slider.value = settings[def.key];
-            slider.dataset.key = def.key;       // 나중에 "기본값으로"에서 이 슬라이더를 찾기 위한 표시
-            slider.dataset.default = def.default;
-            slider.dataset.unit = def.unit;
-
-            const valueText = document.createElement("span");
-            valueText.className = "settings-value";
-            valueText.textContent = settings[def.key] + def.unit;
-
-            row.append(name, slider, valueText);
-            sliderListElement.appendChild(row);
-
-            // input 이벤트: 슬라이더를 끄는 동안 계속 발생 → 화면에 즉시 반영
-            slider.addEventListener("input", function () {
-                settings[def.key] = Number(slider.value);
-                valueText.textContent = slider.value + def.unit;
-                applySettings();
-            });
-            // change 이벤트: 마우스를 놓았을 때 한 번 발생 → 이때 저장 (끄는 동안 저장 요청이 쏟아지지 않게)
-            slider.addEventListener("change", saveSettings);
+            buildSlider(def, sliderListElement);
+        });
+        (data.pomodoroSliders || []).forEach(function (def) {
+            buildSlider(def, pomodoroSliderListElement);
         });
     } catch (error) {
         // 실패해도 기본 모양으로 계속 쓸 수 있다
@@ -1823,6 +1838,12 @@ function updateDefaultCalendar() {
 wrapAllDayCheckbox.addEventListener("change", function () {
     settings.wrapAllDay = wrapAllDayCheckbox.checked;
     applySettings();
+    saveSettings();
+});
+
+// 설정 탭에서 타이머 소리 스위치를 눌렀을 때: 저장만 하면 된다 (소리를 낼 때마다 설정을 읽는다)
+pomodoroSoundCheckbox.addEventListener("change", function () {
+    settings.pomodoroSound = pomodoroSoundCheckbox.checked;
     saveSettings();
 });
 
@@ -2058,3 +2079,374 @@ syncRefreshButton.addEventListener("click", async function () {
         syncRefreshButton.disabled = false;
     }
 });
+
+// ---------- Pomodoro 타이머 ----------
+// 집중(기본 25분)과 휴식(짧게 5분, 집중 4번마다 길게 15분)을 번갈아 하는 타이머. 상단 바에 있어서 탭을 옮겨도 계속 돈다.
+// 시간은 "1초마다 1씩 줄이기"가 아니라 "끝나는 시각(endTime)"을 기준으로 매번 남은 시간을 계산한다.
+// 그래서 창이 최소화되거나 컴퓨터가 잠깐 느려져도 시간이 어긋나지 않는다. 상태는 메모리에만 있어서 프로그램을 끄면 초기화된다.
+
+const pomodoroElement = document.getElementById("pomodoro");
+const pomodoroPhaseElement = document.getElementById("pomodoro-phase");
+const pomodoroTimeElement = document.getElementById("pomodoro-time");
+const pomodoroToggleButton = document.getElementById("pomodoro-toggle");
+const pomodoroSkipButton = document.getElementById("pomodoro-skip");
+const pomodoroResetButton = document.getElementById("pomodoro-reset");
+
+// 단계 이름 → 화면에 보일 이름, 시간(분)을 담은 설정 이름과 설정을 못 불러왔을 때 쓸 기본값
+const POMODORO_PHASES = {
+    focus: { label: "집중", settingKey: "pomodoroFocus", fallbackMinutes: 25 },
+    short: { label: "짧은 휴식", settingKey: "pomodoroShortBreak", fallbackMinutes: 5 },
+    long: { label: "긴 휴식", settingKey: "pomodoroLongBreak", fallbackMinutes: 15 },
+};
+
+const pomodoro = {
+    phase: "focus",     // 지금 단계: "focus"(집중), "short"(짧은 휴식), "long"(긴 휴식)
+    running: false,     // 시간이 흐르고 있는지
+    started: false,     // 이 단계를 한 번이라도 시작했는지. 아직이면 설정에서 시간을 바꿀 때 표시도 같이 바뀐다
+    endTime: 0,         // 흐르는 중일 때: 끝나는 시각 (Date.now()와 같은 밀리초 단위)
+    remainingMs: 0,     // 멈춰 있을 때: 남은 시간 (밀리초)
+    completedFocus: 0,  // 끝까지 채운 집중 횟수. 긴 휴식 시점을 정하는 데 쓴다
+};
+
+// 단계의 길이(밀리초)를 설정에서 읽는다
+function pomodoroDurationMs(phase) {
+    const info = POMODORO_PHASES[phase];
+    const minutes = typeof settings[info.settingKey] === "number" ? settings[info.settingKey] : info.fallbackMinutes;
+    return minutes * 60 * 1000;
+}
+
+// 지금 단계의 남은 시간 (밀리초)
+function pomodoroRemainingMs() {
+    return pomodoro.running ? Math.max(0, pomodoro.endTime - Date.now()) : pomodoro.remainingMs;
+}
+
+// 남은 시간을 "24:59" 모양으로 (한 시간이 넘으면 "1:05:00")
+function formatPomodoroTime(ms) {
+    const totalSeconds = Math.ceil(ms / 1000);  // 올림: 마지막 1초 동안 "0:01"이 보이고 끝나는 순간 "0:00"이 된다
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    const pad = function (n) {
+        return String(n).padStart(2, "0");
+    };
+    return hours > 0 ? hours + ":" + pad(minutes) + ":" + pad(seconds) : pad(minutes) + ":" + pad(seconds);
+}
+
+// 위젯의 글자, 버튼, 진행 막대를 현재 상태에 맞춰 다시 그린다
+function renderPomodoro() {
+    const remaining = pomodoroRemainingMs();
+    const duration = pomodoroDurationMs(pomodoro.phase);
+    const info = POMODORO_PHASES[pomodoro.phase];
+
+    pomodoroPhaseElement.textContent = info.label;
+    pomodoroTimeElement.textContent = formatPomodoroTime(remaining);
+    pomodoroToggleButton.textContent = pomodoro.running ? "⏸" : "▶";
+    pomodoroToggleButton.title = pomodoro.running ? "일시정지" : (pomodoro.started ? "계속" : "시작");
+
+    // 배경이 왼쪽부터 차오르는 정도 (0~100%)
+    const elapsedPercent = duration > 0 ? Math.min(100, Math.max(0, (1 - remaining / duration) * 100)) : 0;
+    pomodoroElement.style.setProperty("--pomodoro-progress", elapsedPercent.toFixed(2) + "%");
+    pomodoroElement.classList.toggle("focus", pomodoro.phase === "focus");
+    pomodoroElement.classList.toggle("break", pomodoro.phase !== "focus");
+    pomodoroElement.classList.toggle("running", pomodoro.running);
+
+    const every = typeof settings.pomodoroLongEvery === "number" ? settings.pomodoroLongEvery : 4;
+    const untilLong = every - (pomodoro.completedFocus % every);
+    pomodoroElement.title = "끝까지 채운 집중 " + pomodoro.completedFocus + "번 · 긴 휴식까지 " + untilLong + "번\n끌어서 옮길 수 있어요 (두 번 클릭하면 원래 자리로)";
+    pomodoroResetButton.title = "처음부터 다시 (집중 " + Math.round(pomodoroDurationMs("focus") / 60000) + "분부터)";
+}
+
+// 설정이 바뀌었을 때 (applySettings가 부른다). 아직 시작 안 한 단계는 새 시간으로 바꾸고, 진행 중인 단계는 그대로 둔다
+function pomodoroSettingsChanged() {
+    if (!pomodoro.started) {
+        pomodoro.remainingMs = pomodoroDurationMs(pomodoro.phase);
+    }
+    renderPomodoro();
+    applyPomodoroPosition();
+}
+
+// ----- 시계: 0.25초마다 pomodoroTick을 부른다 -----
+// 창이 최소화되면 브라우저는 일반 setInterval을 크게 늦춘다(최대 1분에 한 번). 공부하는 동안 창을 뒤로 보내 두는 일이 많으니,
+// 그런 제한을 덜 받는 Web Worker(화면과 따로 도는 작은 일꾼)에게 시계를 맡긴다. 만들 수 없으면 setInterval로 대신한다
+let pomodoroWorker = null;
+let pomodoroFallbackTimer = null;
+
+function startPomodoroClock() {
+    stopPomodoroClock();
+    try {
+        if (!pomodoroWorker) {
+            const code = "let timer = null; onmessage = function (e) { clearInterval(timer); " +
+                "if (e.data === 'start') { timer = setInterval(function () { postMessage(0); }, 250); } };";
+            pomodoroWorker = new Worker(URL.createObjectURL(new Blob([code], { type: "text/javascript" })));
+            pomodoroWorker.onmessage = pomodoroTick;
+        }
+        pomodoroWorker.postMessage("start");
+    } catch (error) {
+        pomodoroFallbackTimer = setInterval(pomodoroTick, 250);
+    }
+}
+
+function stopPomodoroClock() {
+    if (pomodoroWorker) {
+        pomodoroWorker.postMessage("stop");
+    }
+    clearInterval(pomodoroFallbackTimer);
+    pomodoroFallbackTimer = null;
+}
+
+function pomodoroTick() {
+    if (!pomodoro.running) {
+        return;
+    }
+    if (pomodoroRemainingMs() <= 0) {
+        finishPomodoroPhase();
+    } else {
+        renderPomodoro();
+    }
+}
+
+// ----- 소리 -----
+// 브라우저는 사용자가 아무것도 안 눌렀는데 갑자기 나는 소리를 막는다. 그래서 시작 버튼을 누를 때 소리 장치를 미리 깨워 둔다
+let pomodoroAudio = null;
+
+function unlockPomodoroAudio() {
+    try {
+        if (!pomodoroAudio) {
+            pomodoroAudio = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (pomodoroAudio.state === "suspended") {
+            pomodoroAudio.resume();
+        }
+    } catch (error) {
+        pomodoroAudio = null;  // 소리를 못 내도 타이머는 계속 쓸 수 있다
+    }
+}
+
+// 맑은 종소리 같은 소리를 낸다. 음 높이(Hz)를 차례로 하나씩: 집중이 끝나면 올라가는 소리, 휴식이 끝나면 내려오는 소리
+function playPomodoroChime(frequencies) {
+    if (settings.pomodoroSound === false) {
+        return;
+    }
+    unlockPomodoroAudio();
+    if (!pomodoroAudio) {
+        return;
+    }
+    const start = pomodoroAudio.currentTime;
+    frequencies.forEach(function (frequency, index) {
+        const oscillator = pomodoroAudio.createOscillator();  // 정해진 높이의 소리를 만드는 장치
+        const volume = pomodoroAudio.createGain();            // 소리 크기를 조절하는 장치
+        const noteStart = start + index * 0.22;
+        oscillator.type = "sine";
+        oscillator.frequency.value = frequency;
+        // 크기를 0에서 순식간에 올렸다가 서서히 줄여서 "딩" 하는 소리로 만든다
+        volume.gain.setValueAtTime(0.0001, noteStart);
+        volume.gain.exponentialRampToValueAtTime(0.25, noteStart + 0.02);
+        volume.gain.exponentialRampToValueAtTime(0.0001, noteStart + 0.9);
+        oscillator.connect(volume);
+        volume.connect(pomodoroAudio.destination);
+        oscillator.start(noteStart);
+        oscillator.stop(noteStart + 1);
+    });
+}
+
+// ----- 단계 전환 -----
+
+// 새 단계로 바꾼다. 시간은 아직 흐르지 않는 상태(시작 전)로 준비해 둔다
+function setPomodoroPhase(phase) {
+    pomodoro.phase = phase;
+    pomodoro.running = false;
+    pomodoro.started = false;
+    pomodoro.remainingMs = pomodoroDurationMs(phase);
+    stopPomodoroClock();
+    renderPomodoro();
+}
+
+function startPomodoro() {
+    unlockPomodoroAudio();
+    pomodoro.endTime = Date.now() + pomodoro.remainingMs;
+    pomodoro.running = true;
+    pomodoro.started = true;
+    pomodoroElement.classList.remove("done");
+    startPomodoroClock();
+    renderPomodoro();
+}
+
+function pausePomodoro() {
+    pomodoro.remainingMs = pomodoroRemainingMs();
+    pomodoro.running = false;
+    stopPomodoroClock();
+    renderPomodoro();
+}
+
+// 단계를 끝까지 채웠을 때: 소리와 알림을 내고 다음 단계를 (멈춘 채로) 준비한다
+function finishPomodoroPhase() {
+    const finished = pomodoro.phase;
+    let next = "focus";
+    let message = "휴식이 끝났어요. 다시 집중해 볼까요?";
+    if (finished === "focus") {
+        pomodoro.completedFocus += 1;
+        const every = typeof settings.pomodoroLongEvery === "number" ? settings.pomodoroLongEvery : 4;
+        next = pomodoro.completedFocus % every === 0 ? "long" : "short";
+        message = "집중 " + pomodoro.completedFocus + "번 완료! " + POMODORO_PHASES[next].label + " " +
+            Math.round(pomodoroDurationMs(next) / 60000) + "분을 쉬세요.";
+    }
+    setPomodoroPhase(next);
+    playPomodoroChime(finished === "focus" ? [660, 880, 1320] : [1320, 990, 660]);
+    showToast(message, 8000);
+    // 위젯이 잠깐 두근거려서 눈에 띄게 한다. 사용자가 시작 버튼을 누르면 멈춘다
+    pomodoroElement.classList.add("done");
+}
+
+// 건너뛰기: 지금 단계를 접고 다음 단계로 간다. 집중을 건너뛴 것은 "끝까지 채운 횟수"에 세지 않는다.
+// 시간이 흐르는 중에 건너뛰었다면 다음 단계도 바로 시작한다
+function skipPomodoro() {
+    const wasRunning = pomodoro.running;
+    // 집중을 건너뛰면 짧은 휴식으로, 휴식을 건너뛰면 집중으로 간다
+    const next = pomodoro.phase === "focus" ? "short" : "focus";
+    setPomodoroPhase(next);
+    if (wasRunning) {
+        startPomodoro();
+    }
+}
+
+// 처음부터 다시: 집중 단계 맨 처음으로 돌아가고 횟수도 0으로. 진행 중인 것을 실수로 날리지 않게 시작한 뒤에는 한 번 더 눌러야 한다
+let pomodoroResetTimer = null;
+
+function cancelPomodoroResetConfirm() {
+    clearTimeout(pomodoroResetTimer);
+    pomodoroResetTimer = null;
+    pomodoroResetButton.textContent = "↺";
+}
+
+pomodoroToggleButton.addEventListener("click", function () {
+    cancelPomodoroResetConfirm();
+    if (pomodoro.running) {
+        pausePomodoro();
+    } else {
+        startPomodoro();
+    }
+});
+
+pomodoroSkipButton.addEventListener("click", function () {
+    cancelPomodoroResetConfirm();
+    skipPomodoro();
+});
+
+pomodoroResetButton.addEventListener("click", function () {
+    const hasProgress = pomodoro.started || pomodoro.completedFocus > 0 || pomodoro.phase !== "focus";
+    if (hasProgress && !pomodoroResetTimer) {
+        pomodoroResetButton.textContent = "정말?";
+        pomodoroResetTimer = setTimeout(cancelPomodoroResetConfirm, 3000);
+        return;
+    }
+    cancelPomodoroResetConfirm();
+    pomodoro.completedFocus = 0;
+    setPomodoroPhase("focus");
+    pomodoroElement.classList.remove("done");
+});
+
+// 최소화했던 창을 다시 열면 곧바로 남은 시간을 맞춘다 (그 사이에 끝났다면 끝 처리도 바로 한다)
+document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) {
+        pomodoroTick();
+    }
+});
+
+// ----- 끌어서 옮기기 -----
+// 위젯을 마우스로 끌면 상단 바에서 떨어져 나와(position: fixed) 화면 어디에나 놓을 수 있다. 놓은 자리는 settings.json에 저장된다.
+// 포인터 이벤트(pointerdown/move/up)는 마우스, 터치, 펜을 한꺼번에 다루는 이벤트다.
+// 끄는 동안 하는 일은 위젯 하나의 left/top 값 두 개를 바꾸는 것뿐이라 컴퓨터에 주는 부담은 거의 없다.
+
+const POMODORO_DRAG_THRESHOLD = 4;  // 이 거리(px) 이상 움직여야 "끌기"로 본다. 클릭하다 살짝 흔들린 것은 무시
+let pomodoroDrag = null;            // 끌고 있는 중에만 값이 있다: { startX, startY, offsetX, offsetY, moved }
+
+// 위젯이 화면 밖으로 나가지 않게 좌표를 화면 안으로 맞춘다
+function clampPomodoroPosition(x, y) {
+    const maxX = Math.max(0, window.innerWidth - pomodoroElement.offsetWidth);
+    const maxY = Math.max(0, window.innerHeight - pomodoroElement.offsetHeight);
+    return { x: Math.min(Math.max(0, x), maxX), y: Math.min(Math.max(0, y), maxY) };
+}
+
+function placePomodoro(x, y) {
+    const position = clampPomodoroPosition(x, y);
+    pomodoroElement.classList.add("floating");
+    pomodoroElement.style.left = position.x + "px";
+    pomodoroElement.style.top = position.y + "px";
+}
+
+// 저장된 위치(settings.pomodoroPosition)를 화면에 반영한다. 없으면 원래 자리(상단 바 가운데)로 돌려놓는다
+function applyPomodoroPosition() {
+    if (pomodoroDrag && pomodoroDrag.moved) {
+        return;  // 끄는 중에는 건드리지 않는다
+    }
+    const position = settings.pomodoroPosition;
+    if (position && typeof position.x === "number" && typeof position.y === "number") {
+        placePomodoro(position.x, position.y);
+    } else {
+        pomodoroElement.classList.remove("floating");
+        pomodoroElement.style.left = "";
+        pomodoroElement.style.top = "";
+    }
+}
+
+pomodoroElement.addEventListener("pointerdown", function (e) {
+    // 버튼을 누른 것은 끌기가 아니다. 마우스는 왼쪽 버튼만
+    if (e.target.closest("button") || (e.pointerType === "mouse" && e.button !== 0)) {
+        return;
+    }
+    const rect = pomodoroElement.getBoundingClientRect();
+    pomodoroDrag = { startX: e.clientX, startY: e.clientY, offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top, moved: false };
+    // 마우스가 위젯 밖으로 빠르게 나가도 계속 이 위젯이 이벤트를 받게 한다
+    pomodoroElement.setPointerCapture(e.pointerId);
+});
+
+pomodoroElement.addEventListener("pointermove", function (e) {
+    if (!pomodoroDrag) {
+        return;
+    }
+    if (!pomodoroDrag.moved && Math.hypot(e.clientX - pomodoroDrag.startX, e.clientY - pomodoroDrag.startY) < POMODORO_DRAG_THRESHOLD) {
+        return;
+    }
+    pomodoroDrag.moved = true;
+    pomodoroElement.classList.add("dragging");
+    placePomodoro(e.clientX - pomodoroDrag.offsetX, e.clientY - pomodoroDrag.offsetY);
+});
+
+function endPomodoroDrag() {
+    if (!pomodoroDrag) {
+        return;
+    }
+    const moved = pomodoroDrag.moved;
+    pomodoroDrag = null;
+    pomodoroElement.classList.remove("dragging");
+    if (moved) {
+        // 놓은 자리를 저장한다 (놓은 뒤에 한 번만 저장해서 끄는 동안 저장 요청이 쏟아지지 않는다)
+        const rect = pomodoroElement.getBoundingClientRect();
+        settings.pomodoroPosition = { x: Math.round(rect.left), y: Math.round(rect.top) };
+        saveSettings();
+    }
+}
+
+pomodoroElement.addEventListener("pointerup", endPomodoroDrag);
+pomodoroElement.addEventListener("pointercancel", endPomodoroDrag);
+
+// 원래 자리로: 위젯의 빈 곳을 두 번 클릭하거나, 설정 탭의 버튼을 누른다
+function resetPomodoroPosition() {
+    settings.pomodoroPosition = null;
+    applyPomodoroPosition();
+    saveSettings();
+}
+
+pomodoroElement.addEventListener("dblclick", function (e) {
+    if (!e.target.closest("button")) {
+        resetPomodoroPosition();
+    }
+});
+
+document.getElementById("pomodoro-position-reset").addEventListener("click", resetPomodoroPosition);
+
+// 창 크기를 줄였을 때 위젯이 화면 밖에 갇히지 않게 다시 맞춘다
+window.addEventListener("resize", applyPomodoroPosition);
+
+pomodoro.remainingMs = pomodoroDurationMs("focus");  // 설정을 불러오기 전에는 기본 25분으로 시작
+renderPomodoro();

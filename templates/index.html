@@ -22,6 +22,16 @@
         <button class="tab-button" data-tab="projects">프로젝트</button>
         <button class="tab-button" data-tab="settings">설정</button>
 
+        <!-- 가운데: Pomodoro 타이머. 어느 탭에서나 보이고, 탭을 옮겨도 계속 돈다.
+             배경이 왼쪽부터 천천히 차오르는 것이 진행 정도다. 안의 글자와 버튼은 app.js가 채우고 바꾼다 -->
+        <div id="pomodoro" class="focus" title="끌어서 옮길 수 있어요 (두 번 클릭하면 원래 자리로)">
+            <span id="pomodoro-phase">집중</span>
+            <span id="pomodoro-time">25:00</span>
+            <button id="pomodoro-toggle" title="시작">▶</button>
+            <button id="pomodoro-skip" title="다음 단계로 건너뛰기">⏭</button>
+            <button id="pomodoro-reset" title="처음부터 다시 (집중 25분부터)">↺</button>
+        </div>
+
         <!-- 오른쪽 끝: 마지막으로 Google과 동기화한 시각, 인터넷이 끊겼는지, 새로고침 버튼. 어느 탭에서나 보인다 -->
         <div id="sync-status">
             <span id="sync-text">동기화 확인 중...</span>
@@ -104,6 +114,18 @@
                 <!-- 슬라이더들은 app.js가 서버(/api/settings)에서 정의를 받아 여기에 만든다 -->
                 <div id="slider-list"></div>
                 <button id="settings-reset">기본값으로</button>
+            </section>
+
+            <section class="settings-section">
+                <h2>Pomodoro 타이머</h2>
+                <p class="settings-hint">집중과 휴식을 번갈아 하는 타이머입니다. 상단 바 가운데에 있고 마우스로 끌어서 아무 곳에나 옮길 수 있습니다. 진행 중인 단계의 시간은 바꿔도 그대로 이어집니다.</p>
+                <!-- 슬라이더들은 app.js가 서버(/api/settings)에서 정의를 받아 여기에 만든다 -->
+                <div id="pomodoro-slider-list"></div>
+                <label class="settings-row">
+                    <input type="checkbox" id="pomodoro-sound-checkbox">
+                    <span>단계가 끝나면 소리로 알려주기</span>
+                </label>
+                <button id="pomodoro-position-reset">타이머 위치 원래대로</button>
             </section>
 
             <section class="settings-section">
