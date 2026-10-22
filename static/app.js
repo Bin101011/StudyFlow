@@ -791,6 +791,62 @@ function makeTaskRow(task, options) {
 
     item.append(checkbox, content);
 
+    // 이름 고치기: 이름을 두 번 클릭하거나 줄의 "수정" 버튼을 누르면 이름 자리가 입력 칸으로 바뀐다.
+    // Enter나 다른 곳을 누르면 저장하고, Esc는 취소한다. 비우면 저장하지 않고 원래대로 둔다(지우기는 "삭제" 버튼으로 한다)
+    function startEditing() {
+        if (item.classList.contains("editing")) {
+            return;
+        }
+        item.classList.add("editing");
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "task-edit-input";
+        input.value = task.content;
+        let finished = false;
+
+        async function finish(save) {
+            if (finished) {
+                return;  // Enter로 끝낸 뒤 입력 칸이 사라지면서 생기는 blur는 무시한다
+            }
+            finished = true;
+            const text = input.value.trim();
+            if (!save || !text || text === task.content) {
+                input.replaceWith(content);
+                item.classList.remove("editing");
+                return;
+            }
+            try {
+                await sendRequest("/api/tasks/" + task.id, "PATCH", { content: text });
+                task.content = text;
+                await options.reload();  // 목록을 다시 그리면 새 이름으로 나온다
+            } catch (error) {
+                showToast("이름을 고치지 못했습니다: " + error.message);
+                input.replaceWith(content);
+                item.classList.remove("editing");
+            }
+        }
+
+        input.addEventListener("keydown", function (e) {
+            if (e.isComposing) {
+                return;  // 한글을 조합하는 중의 Enter는 글자를 확정하는 키다 (오늘 탭 입력칸과 같은 이유)
+            }
+            if (e.key === "Enter") {
+                e.preventDefault();
+                finish(true);
+            } else if (e.key === "Escape") {
+                e.preventDefault();
+                finish(false);
+            }
+        });
+        input.addEventListener("blur", function () {
+            finish(true);
+        });
+        content.replaceWith(input);
+        input.focus();
+        input.select();
+    }
+    content.addEventListener("dblclick", startEditing);
+
     if (options.countText) {
         const count = document.createElement("span");
         count.className = "task-count";
@@ -807,6 +863,12 @@ function makeTaskRow(task, options) {
     // 버튼이 줄마다 항상 늘어서 있으면 화면이 복잡해서, 평소에는 숨겨두고 필요할 때만 보이게 한다
     const actions = document.createElement("span");
     actions.className = "task-actions";
+
+    const editButton = document.createElement("button");
+    editButton.textContent = "수정";
+    editButton.title = "이름 고치기 (이름을 두 번 클릭해도 됩니다)";
+    editButton.addEventListener("click", startEditing);
+    actions.appendChild(editButton);
 
     // 마감일: 프로젝트 카드에서는 눌러서 바꿀 수 있는 버튼, 그 밖에서는 글자로만 보여준다.
     // 마감일이 정해져 있으면 줄에 항상 보이고, 아직 없으면 "마감일" 버튼이 마우스를 올렸을 때만 뜬다
@@ -1785,17 +1847,20 @@ function makePriorityItem(task, variant) {
         deadlineText = "\n마감 " + task.deadline + " (" + ddayLabel(days) + ")";
     }
 
-    if (variant === "row" && task.project_name) {
-        // 목록 줄에는 어느 프로젝트의 어느 단계인지도 작게 보여준다
+    // 하위 단계를 가진 단계는 하위 단계들을 묶어서 하나로 보여준다. 얼마나 끝났는지 "하위 2/5 완료"로 알린다
+    const progress = task.child_total > 0 ? "하위 " + task.child_done + "/" + task.child_total + " 완료" : "";
+
+    if (variant === "row" && (task.project_name || progress)) {
+        // 목록 줄에는 어느 프로젝트의 단계인지와 하위 단계 진행도를 작게 보여준다
         const sub = document.createElement("span");
         sub.className = "priority-sub";
-        sub.textContent = task.project_name + (task.parent_content ? " › " + task.parent_content : "");
+        sub.textContent = [task.project_name, progress].filter(Boolean).join(" · ");
         item.appendChild(sub);
     }
 
     // 마우스를 올리면 전체 이름과 현재 평가가 보인다 (칸 안에서는 이름이 줄여져 보이므로)
     const rating = task.importance === null ? "" : "\n중요 " + task.importance + " · 긴급 " + task.urgency;
-    item.title = task.content + (task.project_name ? "\n" + task.project_name : "") + deadlineText + rating;
+    item.title = task.content + (task.project_name ? "\n" + task.project_name : "") + (progress ? "\n" + progress : "") + deadlineText + rating;
 
     item.addEventListener("pointerdown", function (e) {
         beginPriorityDrag(e, item, task);
@@ -2014,8 +2079,10 @@ function openPriorityMenu(item, task) {
     title.textContent = task.content;
     menu.appendChild(title);
 
+    // 하위 단계가 남아 있는 단계를 완료하면 그 하위 단계들도 함께 끝낸 것이 되므로 미리 알려준다
+    const openChildren = task.child_total - task.child_done;
     const doneButton = document.createElement("button");
-    doneButton.textContent = "✓ 완료";
+    doneButton.textContent = "✓ 완료" + (openChildren > 0 ? " (남은 하위 " + openChildren + "개 포함)" : "");
     doneButton.addEventListener("click", function () {
         closePriorityMenu();
         completePriorityTask(task);
@@ -2057,7 +2124,7 @@ async function completePriorityTask(task) {
     renderPriority();
     try {
         await sendRequest("/api/tasks/" + task.id, "PATCH", { done: true });
-        showToast("완료했어요: " + task.content);
+        showToast("완료했어요: " + task.content + (task.child_total - task.child_done > 0 ? " (남은 하위 단계 " + (task.child_total - task.child_done) + "개 포함)" : ""));
     } catch (error) {
         showToast("완료하지 못했습니다: " + error.message);
         loadPriority().catch(function () {});

@@ -137,14 +137,28 @@ def list_overdue_tasks(today):
 
 
 def list_open_tasks():
-    """우선순위 탭에 보여줄 할 일: 아직 안 끝냈고 하위 단계가 없는 모든 할 일 (날짜가 있든 없든, 지난 것이든 먼 미래든).
+    """우선순위 탭에 보여줄 할 일: 아직 안 끝낸 "큰 단위"의 할 일들 (날짜가 있든 없든, 지난 것이든 먼 미래든).
+    큰 단위란 맨 위 단계(parent_id가 없는 것)다. 하위 단계(예: "책 읽기" 아래의 "1장", "2장")는 따로 보여주지 않고,
+    그 하위 단계를 가진 상위 단계("책 읽기") 하나로 묶어서 보여준다. 평가(importance, urgency)도 상위 단계에 붙는다.
+    - 하위 단계가 없는 단계: 자기가 안 끝났으면 나온다
+    - 하위 단계가 있는 단계: 하위 단계 중 하나라도 안 끝났으면 나온다 (자기 done 값은 쓰지 않는다. 하위 단계 상태로 계산한다)
+    child_total, child_done은 하위 단계의 전체/끝낸 개수이고, 마감일이 없는 상위 단계는 안 끝낸 하위 단계 중 가장 빠른 마감일을 대신 쓴다.
     평가한 것(importance, urgency가 있음)과 안 한 것(NULL)이 섞여 있고, 나누는 일은 화면이 한다."""
+    # 안쪽 SELECT에서 개수를 계산하고, 바깥 SELECT에서 그 개수로 걸러낸다
     rows, _ = run(
-        "SELECT t.*, p.name AS project_name, p.color AS project_color, pt.content AS parent_content "
-        "FROM tasks t LEFT JOIN projects p ON p.id = t.project_id "
-        "LEFT JOIN tasks pt ON pt.id = t.parent_id "
-        f"WHERE t.done = 0 AND {NO_CHILDREN} ORDER BY t.id"
+        "SELECT * FROM ("
+        "  SELECT t.*, p.name AS project_name, p.color AS project_color, "
+        "         (SELECT COUNT(*) FROM tasks c WHERE c.parent_id = t.id) AS child_total, "
+        "         (SELECT COUNT(*) FROM tasks c WHERE c.parent_id = t.id AND c.done = 1) AS child_done, "
+        "         (SELECT MIN(c.deadline) FROM tasks c WHERE c.parent_id = t.id AND c.done = 0 AND c.deadline IS NOT NULL) AS child_deadline "
+        "  FROM tasks t LEFT JOIN projects p ON p.id = t.project_id "
+        "  WHERE t.parent_id IS NULL"
+        ") WHERE (child_total = 0 AND done = 0) OR (child_total > 0 AND child_done < child_total) "
+        "ORDER BY id"
     )
+    for row in rows:
+        row["deadline"] = row["deadline"] or row["child_deadline"]
+        row["parent_content"] = None  # 맨 위 단계라서 상위 단계가 없다 (화면 코드와의 호환용)
     return rows
 
 
@@ -182,7 +196,12 @@ def update_task(task_id, changes):
         done_at = datetime.datetime.now().isoformat(timespec="seconds") if changes["done"] else None
         changes = {**changes, "done_at": done_at}
 
-    return update_row("tasks", EDITABLE_COLUMNS, task_id, changes)
+    updated = update_row("tasks", EDITABLE_COLUMNS, task_id, changes)
+    # 하위 단계를 가진 단계를 "완료"하면(우선순위 탭의 완료 메뉴) 아직 안 끝낸 하위 단계도 함께 끝낸 것으로 한다.
+    # 하위 단계가 없는 할 일은 해당 줄이 없어서 아무 일도 일어나지 않는다
+    if updated and changes.get("done"):
+        run("UPDATE tasks SET done = 1, done_at = ? WHERE parent_id = ? AND done = 0", (changes["done_at"], task_id))
+    return updated
 
 
 def update_row(table, allowed_columns, row_id, changes):
