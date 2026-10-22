@@ -8,7 +8,7 @@ window.addEventListener("unhandledrejection", function (e) {
     showToast("화면 오류: " + (e.reason && e.reason.message ? e.reason.message : e.reason));
 });
 
-// 탭 버튼들과 탭 내용들을 모두 찾아서 변수에 담는다
+// 탭 버튼 6개와 탭 내용 6개를 모두 찾아서 변수에 담는다
 const tabButtons = document.querySelectorAll(".tab-button");
 const tabContents = document.querySelectorAll(".tab-content");
 
@@ -53,6 +53,13 @@ tabButtons.forEach(function (button) {
             loadPriority().catch(function (error) {
                 showToast("할 일을 불러오지 못했습니다: " + error.message);
             });
+        }
+
+        // 8. 노트 탭은 열 때 목록을 새로 받고, 다른 탭으로 나가기 전에는 고치던 노트를 저장한다
+        if (tabName === "notes") {
+            openNotesTab();
+        } else {
+            flushNote();
         }
     });
 });
@@ -2078,6 +2085,706 @@ window.addEventListener("resize", closePriorityMenu);
 
 buildMatrix();
 
+// ---------- 노트 탭 (Obsidian vault) ----------
+// 설정 탭에 적은 Obsidian vault 폴더의 .md 노트를 StudyFlow 안에서 보고 고친다. 고친 내용은 vault의 파일에 바로 저장되어 Obsidian에서도 보인다.
+// 노트는 사용자의 원본 데이터라서 서버(notes_store.py)가 경로 검사, 안전한 저장, 충돌 감지, 백업을 맡고, 이 코드는 화면과 "언제 저장하나"를 맡는다.
+//  - 읽기 모드: 마크다운을 서식대로 보여준다 (marked가 HTML로 바꾸고, DOMPurify가 위험한 부분을 걸러낸다)
+//  - 편집 모드: 글자를 그대로 고친다. 입력을 멈추고 1초 뒤(또는 Ctrl+S, 다른 노트/탭으로 이동할 때) 자동 저장한다
+//  - Obsidian에서 같은 노트가 바뀌면 4초 안에 알아채고, 내가 고치는 중이 아니면 새 내용을 불러온다. 고치는 중이면 어느 쪽을 쓸지 물어본다
+
+const notesLayout = document.getElementById("notes-layout");
+const notesUnconfigured = document.getElementById("notes-unconfigured");
+const notesUnconfiguredText = document.getElementById("notes-unconfigured-text");
+const notesTree = document.getElementById("notes-tree");
+const notesCount = document.getElementById("notes-count");
+const notesSearch = document.getElementById("notes-search");
+const notesEmpty = document.getElementById("notes-empty");
+const notesEditor = document.getElementById("notes-editor");
+const notesTitle = document.getElementById("notes-title");
+const notesStatus = document.getElementById("notes-status");
+const notesRead = document.getElementById("notes-read");
+const notesText = document.getElementById("notes-text");
+const notesModeRead = document.getElementById("notes-mode-read");
+const notesModeEdit = document.getElementById("notes-mode-edit");
+const notesConflict = document.getElementById("notes-conflict");
+const notesConflictText = document.getElementById("notes-conflict-text");
+const noteDialog = document.getElementById("note-dialog");
+const noteNameInput = document.getElementById("note-name");
+const noteErrorElement = document.getElementById("note-error");
+const vaultPathInput = document.getElementById("vault-path-input");
+const vaultPathStatus = document.getElementById("vault-path-status");
+
+const NOTE_SAVE_DELAY_MS = 1000;   // 입력을 멈추고 이만큼 지나면 자동 저장
+const NOTE_POLL_INTERVAL_MS = 4000; // 열어 둔 노트가 밖에서 바뀌었는지 확인하는 간격
+
+let notesList = [];               // 서버가 알려준 노트 목록 [{path, mtime}]
+let notesQuery = "";              // 검색칸에 적힌 글자
+const openFolders = new Set();    // 펼쳐 둔 폴더들의 경로
+
+// 지금 열어 둔 노트의 상태. 글자 자체는 편집 칸(notesText)이 갖고 있고, 읽기 모드는 거기서 읽어서 그린다
+const note = {
+    path: null,        // vault 안의 상대 경로 "폴더/이름.md" (안 열었으면 null)
+    mtime: null,       // 노트를 읽거나 저장했을 때 서버가 알려준 수정 시각. 저장할 때 서버가 "그 사이에 안 바뀌었나?" 확인하는 데 쓴다
+    diskMtime: null,   // 충돌이 났을 때 지금 파일의 수정 시각
+    mode: "read",      // "read" 또는 "edit"
+    dirty: false,      // 아직 저장 안 한 수정이 있는지
+    saving: false,     // 저장 요청이 진행 중인지
+    saveAgain: false,  // 저장 중에 또 고쳐서, 끝나면 한 번 더 저장해야 하는지
+    conflict: false,   // 밖에서 바뀌어서 저장을 멈춘 상태인지
+    saveTimer: null,
+};
+
+// 서버에 요청을 보내고 JSON 답을 돌려준다. 실패하면 이유를 담은 Error를 던지고, error.status에 응답 번호를 달아 둔다
+async function notesRequest(url, options) {
+    const response = await fetch(url, options);
+    if (!response.ok) {
+        const error = new Error(await errorMessageFrom(response));
+        error.status = response.status;
+        throw error;
+    }
+    return response.json();
+}
+
+function noteUrl(base, path) {
+    return base + "?path=" + encodeURIComponent(path);
+}
+
+function isNotesTabActive() {
+    return document.getElementById("notes").classList.contains("active");
+}
+
+function setNoteStatus(text, isError) {
+    notesStatus.textContent = text;
+    notesStatus.classList.toggle("error", Boolean(isError));
+}
+
+// ----- 노트 목록 (왼쪽) -----
+
+// "폴더/하위/이름.md" → "이름"
+function noteDisplayName(path) {
+    return path.split("/").pop().replace(/\.md$/i, "");
+}
+
+// 서버에서 노트 목록을 받아 온다. vault를 안 정했거나 폴더를 못 찾으면 안내를 보여주고 { configured:false } 모양을 돌려준다
+async function loadNotesList() {
+    const data = await notesRequest("/api/notes");
+    const usable = data.configured && !data.error;
+    notesLayout.hidden = !usable;
+    notesUnconfigured.hidden = usable;
+    if (!usable) {
+        notesUnconfiguredText.textContent = data.error
+            ? data.error
+            : "Obsidian vault 폴더가 아직 정해지지 않았습니다. 설정 탭에서 폴더 경로를 적어 주세요.";
+        notesList = [];
+        return data;
+    }
+    notesList = data.notes;
+    notesCount.textContent = "노트 " + notesList.length + "개" + (data.truncated ? " (일부만 표시)" : "");
+    renderNotesTree();
+    return data;
+}
+
+// 목록을 "폴더 › 하위 폴더 › 노트" 모양의 나무로 묶는다
+function buildNoteTree(list) {
+    const root = { folders: new Map(), files: [] };
+    list.forEach(function (item) {
+        const parts = item.path.split("/");
+        let node = root;
+        for (let i = 0; i < parts.length - 1; i++) {
+            if (!node.folders.has(parts[i])) {
+                node.folders.set(parts[i], { folders: new Map(), files: [] });
+            }
+            node = node.folders.get(parts[i]);
+        }
+        node.files.push({ name: parts[parts.length - 1], path: item.path });
+    });
+    return root;
+}
+
+function makeNoteItem(path, label, folderLabel) {
+    const button = document.createElement("button");
+    button.className = "note-item" + (path === note.path ? " active" : "");
+    button.title = path;
+    button.textContent = label;
+    if (folderLabel) {
+        const folder = document.createElement("span");
+        folder.className = "note-item-folder";
+        folder.textContent = folderLabel;
+        button.appendChild(folder);
+    }
+    button.addEventListener("click", function () {
+        openNote(path);
+    });
+    return button;
+}
+
+// 이름 비교 규칙: 한국어 정렬 순서이고, 숫자는 크기 순서로 비교한다 ("노트 2"가 "노트 10"보다 앞)
+const noteNameCollator = new Intl.Collator("ko", { numeric: true });
+const compareKorean = function (a, b) {
+    return noteNameCollator.compare(a, b);
+};
+
+function renderNoteFolder(node, container, prefix) {
+    // 폴더가 먼저, 그다음 노트. 각각 이름순
+    Array.from(node.folders.keys()).sort(compareKorean).forEach(function (name) {
+        const path = prefix + name;
+        const details = document.createElement("details");  // 접었다 펴는 줄을 만드는 기본 HTML 태그
+        details.className = "note-folder";
+        details.open = openFolders.has(path);
+        const summary = document.createElement("summary");
+        summary.textContent = name;
+        const children = document.createElement("div");
+        children.className = "note-folder-children";
+        details.append(summary, children);
+        details.addEventListener("toggle", function () {
+            if (details.open) {
+                openFolders.add(path);
+            } else {
+                openFolders.delete(path);
+            }
+        });
+        renderNoteFolder(node.folders.get(name), children, path + "/");
+        container.appendChild(details);
+    });
+    node.files.sort(function (a, b) {
+        return compareKorean(a.name, b.name);
+    }).forEach(function (file) {
+        container.appendChild(makeNoteItem(file.path, noteDisplayName(file.path)));
+    });
+}
+
+function renderNotesTree() {
+    notesTree.replaceChildren();
+    const query = notesQuery.trim().toLowerCase();
+    if (query) {
+        // 검색 중에는 폴더 구조 대신 맞는 노트만 평평하게 보여준다 (폴더 이름은 노트 이름 옆에 작게)
+        const found = notesList.filter(function (item) {
+            return item.path.toLowerCase().includes(query);
+        });
+        found.forEach(function (item) {
+            const folder = item.path.includes("/") ? item.path.slice(0, item.path.lastIndexOf("/")) : "";
+            notesTree.appendChild(makeNoteItem(item.path, noteDisplayName(item.path), folder));
+        });
+        if (found.length === 0) {
+            notesTree.appendChild(makeNotesHint("찾는 노트가 없어요."));
+        }
+        return;
+    }
+    if (notesList.length === 0) {
+        notesTree.appendChild(makeNotesHint("노트가 없어요. ＋ 버튼으로 만들어 보세요."));
+        return;
+    }
+    renderNoteFolder(buildNoteTree(notesList), notesTree, "");
+}
+
+function makeNotesHint(text) {
+    const p = document.createElement("p");
+    p.className = "notes-hint";
+    p.textContent = text;
+    return p;
+}
+
+notesSearch.addEventListener("input", function () {
+    notesQuery = notesSearch.value;
+    renderNotesTree();
+});
+
+document.getElementById("notes-refresh").addEventListener("click", function () {
+    loadNotesList().catch(function (error) {
+        showToast("노트 목록을 불러오지 못했습니다: " + error.message);
+    });
+});
+
+document.getElementById("notes-open-settings").addEventListener("click", function () {
+    document.querySelector("[data-tab=settings]").click();
+});
+
+// ----- 노트 열기 / 읽기 / 편집 -----
+
+function showReadOrEdit() {
+    notesModeRead.classList.toggle("active", note.mode === "read");
+    notesModeEdit.classList.toggle("active", note.mode === "edit");
+    notesRead.hidden = note.mode !== "read";
+    notesText.hidden = note.mode !== "edit";
+    if (note.mode === "read") {
+        renderNoteMarkdown();
+    } else {
+        notesText.focus({ preventScroll: true });
+    }
+}
+
+async function setNoteMode(mode) {
+    note.mode = mode;
+    showReadOrEdit();
+}
+
+notesModeRead.addEventListener("click", function () {
+    setNoteMode("read");
+});
+notesModeEdit.addEventListener("click", function () {
+    setNoteMode("edit");
+});
+
+function showNoteTitle(path) {
+    notesTitle.replaceChildren();
+    if (path.includes("/")) {
+        const folder = document.createElement("span");
+        folder.className = "notes-title-folder";
+        folder.textContent = path.slice(0, path.lastIndexOf("/")).split("/").join(" › ") + " › ";
+        notesTitle.appendChild(folder);
+    }
+    notesTitle.append(noteDisplayName(path));
+    notesTitle.title = path;
+}
+
+function hideConflict() {
+    note.conflict = false;
+    notesConflict.hidden = true;
+}
+
+// 서버에서 노트 내용을 받아 편집 칸과 상태에 넣는다 (아직 저장 안 한 수정은 버려진다)
+async function loadNoteFromDisk(path) {
+    const data = await notesRequest(noteUrl("/api/notes/content", path));
+    note.path = path;
+    note.mtime = data.mtime;
+    notesText.value = data.content;
+    note.dirty = false;
+    hideConflict();
+    return data;
+}
+
+// 노트를 연다. options.edit가 true면 바로 편집 모드로 (새 노트용). 열기 전에 지금 노트의 수정을 먼저 저장한다
+async function openNote(path, options) {
+    options = options || {};
+    await flushNote();
+    try {
+        await loadNoteFromDisk(path);
+    } catch (error) {
+        showToast("노트를 열지 못했습니다: " + error.message);
+        if (error.status === 404) {
+            loadNotesList().catch(function () {});  // 지워졌거나 이름이 바뀐 노트가 목록에 남아 있을 수 있다
+        }
+        return;
+    }
+    notesEmpty.hidden = true;
+    notesEditor.hidden = false;
+    showNoteTitle(path);
+    setNoteStatus("");
+    note.mode = options.edit ? "edit" : "read";
+    showReadOrEdit();
+    notesRead.scrollTop = 0;
+
+    // 열어 둔 노트가 들어 있는 폴더들을 펼치고 목록에서 강조한다
+    const parts = path.split("/");
+    for (let i = 1; i < parts.length; i++) {
+        openFolders.add(parts.slice(0, i).join("/"));
+    }
+    renderNotesTree();
+
+    // 다음에 노트 탭을 열 때 이 노트가 열려 있도록 기억한다
+    await settingsReady;
+    if (settings.lastNote !== path) {
+        settings.lastNote = path;
+        saveSettings();
+    }
+}
+
+// ----- 마크다운을 읽기 모드로 보여주기 -----
+
+// 노트 맨 위의 속성 영역(--- 로 둘러싸인 부분)을 본문과 나눈다
+function splitFrontmatter(text) {
+    const match = /^---\n([\s\S]*?)\n---[ \t]*(?:\n|$)/.exec(text);
+    return match ? { front: match[1], body: text.slice(match[0].length) } : { front: null, body: text };
+}
+
+// 노트 이름(또는 "폴더/이름")으로 노트를 찾는다. Obsidian의 [[링크]]가 가리키는 노트를 찾는 데 쓴다
+function findNoteByName(name) {
+    const wanted = name.trim().toLowerCase();
+    const found = notesList.find(function (item) {
+        const path = item.path.toLowerCase();
+        return path === wanted + ".md" || path === wanted || noteDisplayName(path) === wanted;
+    });
+    return found ? found.path : null;
+}
+
+// 읽기 화면에서 [[노트 이름]] 또는 [[노트 이름|보일 글자]]를 링크로 바꾼다. 코드 안이나 이미 링크인 곳은 건드리지 않는다
+function linkWikilinks(root) {
+    const pattern = /\[\[([^\[\]\n|#]+)(?:#[^\[\]\n|]*)?(?:\|([^\[\]\n]+))?\]\]/g;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const targets = [];
+    while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (!node.parentElement.closest("code, pre, a") && pattern.test(node.nodeValue)) {
+            targets.push(node);
+        }
+        pattern.lastIndex = 0;
+    }
+    targets.forEach(function (node) {
+        const fragment = document.createDocumentFragment();
+        const text = node.nodeValue;
+        let last = 0;
+        text.replace(pattern, function (whole, target, alias, offset) {
+            fragment.append(text.slice(last, offset));
+            const link = document.createElement("a");
+            link.className = "wikilink";
+            link.textContent = (alias || target).trim();
+            const path = findNoteByName(target);
+            if (path) {
+                link.dataset.path = path;
+                link.href = "#";
+            } else {
+                link.classList.add("missing");
+                link.title = "이 이름의 노트를 찾을 수 없어요";
+            }
+            fragment.append(link);
+            last = offset + whole.length;
+            return whole;
+        });
+        fragment.append(text.slice(last));
+        node.replaceWith(fragment);
+    });
+}
+
+// Obsidian의 형광펜 문법 ==글자== 를 <mark>글자</mark>로 바꾸는 규칙을 marked에 더한다 (표준 마크다운에는 없는 문법이다).
+// 안쪽의 굵게/기울임/링크도 그대로 처리된다. 여는 == 바로 뒤는 공백이나 =가 아니어야 해서 "a == b == c" 같은 비교식이나 "===세 개==="는
+// 형광펜으로 오해하지 않는다. 닫는 == 앞의 공백은 봐준다("==글자 ==" 처럼 실수로 띄어 쓴 경우가 실제 노트에 있었다). 닫는 ==가 없으면 그냥 글자다.
+// 코드(`...`, ``` 블록) 안에서는 marked가 이 규칙까지 오지 않는다
+if (typeof marked !== "undefined") {
+    marked.use({
+        extensions: [{
+            name: "highlight",
+            level: "inline",
+            start: function (src) {
+                return src.indexOf("==");
+            },
+            tokenizer: function (src) {
+                const match = /^==(?![=\s])([^\n]*?[^=])==(?!=)/.exec(src);
+                if (match) {
+                    const inner = match[1].trimEnd();  // 닫는 == 앞의 공백은 형광펜에 넣지 않는다
+                    return { type: "highlight", raw: match[0], text: inner, tokens: this.lexer.inlineTokens(inner) };
+                }
+            },
+            renderer: function (token) {
+                return "<mark>" + this.parser.parseInline(token.tokens) + "</mark>";
+            },
+        }],
+    });
+}
+
+function renderNoteMarkdown() {
+    notesRead.replaceChildren();
+    const parts = splitFrontmatter(notesText.value);
+
+    if (parts.front !== null) {
+        const details = document.createElement("details");
+        details.className = "note-properties";
+        const summary = document.createElement("summary");
+        summary.textContent = "속성";
+        const pre = document.createElement("pre");
+        pre.textContent = parts.front;
+        details.append(summary, pre);
+        notesRead.appendChild(details);
+    }
+
+    const body = document.createElement("div");
+    if (typeof marked === "undefined" || typeof DOMPurify === "undefined") {
+        // 라이브러리를 못 불러왔을 때는 서식 없이 글자 그대로 보여준다
+        body.className = "note-plain";
+        body.textContent = parts.body;
+    } else {
+        // breaks: true → 줄바꿈 한 번도 줄바꿈으로 (Obsidian의 기본 모양과 같다). sanitize: 스크립트 같은 위험한 부분을 지운다
+        body.innerHTML = DOMPurify.sanitize(marked.parse(parts.body, { gfm: true, breaks: true }));
+        linkWikilinks(body);
+    }
+    notesRead.appendChild(body);
+}
+
+// 읽기 화면의 링크: [[노트 링크]]는 그 노트를 열고, 웹 주소는 컴퓨터의 기본 브라우저로 연다.
+// 이 창 안에서 이동해 버리면 StudyFlow 화면이 사라지므로 모든 링크의 기본 동작을 막는다
+notesRead.addEventListener("click", function (e) {
+    const link = e.target.closest("a");
+    if (!link) {
+        return;
+    }
+    e.preventDefault();
+    if (link.dataset.path) {
+        openNote(link.dataset.path);
+        return;
+    }
+    const href = link.getAttribute("href") || "";
+    if (/^https?:\/\//i.test(href)) {
+        notesRequest("/api/open-external", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: href }),
+        }).catch(function (error) {
+            showToast("링크를 열지 못했습니다: " + error.message);
+        });
+    }
+});
+
+// ----- 저장 -----
+
+// 노트를 저장한다. keepalive가 true면 창이 닫히는 중에도 요청이 끝까지 가도록 한다
+async function saveNote(keepalive) {
+    clearTimeout(note.saveTimer);
+    if (!note.path || !note.dirty || note.conflict) {
+        return;
+    }
+    if (note.saving) {
+        note.saveAgain = true;  // 지금 저장이 끝나면 그 사이의 수정을 한 번 더 저장한다
+        return;
+    }
+    note.saving = true;
+    setNoteStatus("저장 중…");
+    const path = note.path;
+    const content = notesText.value;
+    try {
+        const response = await fetch("/api/notes/content", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: path, content: content, baseMtime: note.mtime }),
+            keepalive: Boolean(keepalive),
+        });
+        if (response.status === 409) {
+            // 읽은 뒤에 파일이 다른 곳에서 바뀌었다. 덮어쓰지 않고 사용자에게 묻는다
+            const body = await response.json();
+            showConflict(body.mtime);
+            return;
+        }
+        if (!response.ok) {
+            throw new Error(await errorMessageFrom(response));
+        }
+        const data = await response.json();
+        if (note.path === path) {
+            note.mtime = data.mtime;
+            if (notesText.value === content) {
+                note.dirty = false;
+                setNoteStatus("저장됨");
+            } else {
+                note.saveAgain = true;  // 저장하는 사이에 더 고쳤다
+            }
+        }
+    } catch (error) {
+        setNoteStatus("저장 실패", true);
+        showToast("노트를 저장하지 못했습니다: " + error.message);
+        note.saveTimer = setTimeout(saveNote, 5000);  // 5초 뒤 다시 시도한다
+    } finally {
+        note.saving = false;
+        if (note.saveAgain) {
+            note.saveAgain = false;
+            saveNote();
+        }
+    }
+}
+
+// 아직 저장 안 한 수정이 있으면 저장하고, 진행 중인 저장이 끝날 때까지 기다린다. 노트나 탭을 옮기기 전에 부른다
+async function flushNote() {
+    clearTimeout(note.saveTimer);
+    if (note.dirty && !note.conflict) {
+        await saveNote();
+    }
+    while (note.saving) {
+        await new Promise(function (resolve) {
+            setTimeout(resolve, 50);
+        });
+    }
+}
+
+notesText.addEventListener("input", function () {
+    note.dirty = true;
+    if (!note.conflict) {
+        setNoteStatus("수정 중…");
+        clearTimeout(note.saveTimer);
+        note.saveTimer = setTimeout(saveNote, NOTE_SAVE_DELAY_MS);
+    }
+});
+
+// Ctrl+S: 기다리지 않고 바로 저장
+notesText.addEventListener("keydown", function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        flushNote();
+    }
+});
+
+// 창이 가려지거나 닫히기 직전에 저장 안 된 수정이 있으면 서둘러 저장한다.
+// 반대로 최소화했던 창이 다시 보이면, 그 사이에 Obsidian에서 바뀐 것이 있는지 4초를 기다리지 않고 바로 확인한다
+// (창이 가려져 있는 동안은 pollNote가 일부러 확인을 건너뛴다)
+document.addEventListener("visibilitychange", function () {
+    if (document.hidden) {
+        if (note.dirty) {
+            saveNote(true);
+        }
+    } else {
+        pollNote();
+    }
+});
+window.addEventListener("pagehide", function () {
+    if (note.dirty) {
+        saveNote(true);
+    }
+});
+
+// ----- Obsidian에서 바뀐 것 알아채기 / 충돌 -----
+
+function showConflict(diskMtime) {
+    note.conflict = true;
+    note.diskMtime = diskMtime;
+    clearTimeout(note.saveTimer);
+    notesConflictText.textContent = note.dirty
+        ? "이 노트가 Obsidian(또는 다른 곳)에서도 바뀌었어요. 내가 고친 내용과 합칠 수 없어서 저장을 멈췄어요."
+        : "이 노트가 Obsidian(또는 다른 곳)에서 바뀌었어요.";
+    notesConflict.hidden = false;
+    setNoteStatus("저장 안 됨", true);
+}
+
+document.getElementById("notes-conflict-overwrite").addEventListener("click", function () {
+    // 지금 파일의 수정 시각을 기준으로 삼아서, 내 내용으로 덮어쓴다 (덮어쓰기 직전의 파일은 notes_backup에 복사돼 있다)
+    note.mtime = note.diskMtime;
+    hideConflict();
+    saveNote();
+});
+
+document.getElementById("notes-conflict-reload").addEventListener("click", async function () {
+    try {
+        await loadNoteFromDisk(note.path);
+        setNoteStatus("바뀐 내용을 불러왔어요");
+        showReadOrEdit();
+    } catch (error) {
+        showToast("노트를 불러오지 못했습니다: " + error.message);
+    }
+});
+
+// 열어 둔 노트가 밖에서 바뀌었는지 몇 초마다 확인한다 (수정 시각만 묻는 가벼운 요청이다)
+async function pollNote() {
+    if (!isNotesTabActive() || !note.path || note.saving || note.conflict || document.hidden) {
+        return;
+    }
+    const path = note.path;
+    try {
+        const response = await fetch(noteUrl("/api/notes/stat", path));
+        if (path !== note.path || note.saving) {
+            return;  // 확인하는 사이에 다른 노트로 옮겼거나 저장이 시작됐다
+        }
+        if (response.status === 404) {
+            setNoteStatus("파일을 찾을 수 없어요 (Obsidian에서 지우거나 이름을 바꿨을 수 있어요)", true);
+            return;
+        }
+        if (!response.ok) {
+            return;
+        }
+        const data = await response.json();
+        if (data.mtime === note.mtime) {
+            return;
+        }
+        if (note.dirty) {
+            showConflict(data.mtime);
+        } else {
+            await loadNoteFromDisk(path);
+            showReadOrEdit();
+            setNoteStatus("Obsidian에서 바뀐 내용을 불러왔어요");
+        }
+    } catch (error) {
+        // 서버(내 컴퓨터)에 잠깐 못 닿은 것이므로 다음 번에 다시 확인한다
+    }
+}
+setInterval(pollNote, NOTE_POLL_INTERVAL_MS);
+
+// ----- 새 노트 -----
+
+document.getElementById("notes-new").addEventListener("click", function () {
+    // 지금 열어 둔 노트의 폴더를 미리 적어 둔다 ("학업/" 같은 모양)
+    const folder = note.path && note.path.includes("/") ? note.path.slice(0, note.path.lastIndexOf("/") + 1) : "";
+    noteNameInput.value = folder;
+    noteErrorElement.textContent = "";
+    noteDialog.showModal();
+    noteNameInput.focus();
+});
+
+document.getElementById("note-cancel").addEventListener("click", function () {
+    noteDialog.close();
+});
+
+async function createNote() {
+    try {
+        const created = await notesRequest("/api/notes", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: noteNameInput.value }),
+        });
+        noteDialog.close();
+        notesSearch.value = "";
+        notesQuery = "";
+        await loadNotesList();
+        await openNote(created.path, { edit: true });
+    } catch (error) {
+        noteErrorElement.textContent = error.message;
+    }
+}
+
+document.getElementById("note-create").addEventListener("click", createNote);
+noteNameInput.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") {
+        createNote();
+    }
+});
+
+// ----- 탭을 열 때 -----
+
+// 노트 탭을 열 때마다 목록을 새로 받고, 열어 둔 노트가 없으면 지난번에 보던 노트를 연다
+async function openNotesTab() {
+    try {
+        await settingsReady;  // vault 경로와 지난번 노트가 설정에 들어 있으므로 설정을 먼저 불러온 상태여야 한다
+        const data = await loadNotesList();
+        if (!data.configured || data.error) {
+            return;
+        }
+        if (!note.path && settings.lastNote && notesList.some(function (item) {
+            return item.path === settings.lastNote;
+        })) {
+            await openNote(settings.lastNote);
+        }
+    } catch (error) {
+        showToast("노트 목록을 불러오지 못했습니다: " + error.message);
+    }
+}
+
+// ----- 설정 탭의 vault 경로 칸 -----
+
+function showVaultStatus(text, isError) {
+    vaultPathStatus.textContent = text;
+    vaultPathStatus.classList.toggle("error", Boolean(isError));
+}
+
+vaultPathInput.addEventListener("change", async function () {
+    await flushNote();  // 폴더를 바꾸기 전에 열어 둔 노트의 수정을 원래 폴더에 저장한다
+    settings.vaultPath = vaultPathInput.value.trim();
+    settings.lastNote = "";
+    await saveSettings();
+
+    // 다른 vault로 바뀌었으니 열어 둔 노트를 닫는다
+    note.path = null;
+    note.dirty = false;
+    hideConflict();
+    notesEditor.hidden = true;
+    notesEmpty.hidden = false;
+    openFolders.clear();
+
+    try {
+        const data = await loadNotesList();
+        if (!data.configured) {
+            showVaultStatus("폴더 경로를 지웠어요. 노트 탭을 쓰려면 경로를 적어 주세요.");
+        } else if (data.error) {
+            showVaultStatus(data.error, true);
+        } else {
+            showVaultStatus("✓ 노트 " + data.notes.length + "개를 찾았어요.");
+        }
+    } catch (error) {
+        showVaultStatus("확인하지 못했어요: " + error.message, true);
+    }
+});
+
 // ---------- 설정 탭 ----------
 
 // 현재 설정값. 서버에서 불러오기 전에도 코드가 안전하도록 최소한의 모양을 미리 만들어 둔다
@@ -2186,6 +2893,7 @@ async function loadSettings() {
         });
 
         pomodoroSoundCheckbox.checked = settings.pomodoroSound !== false;
+        vaultPathInput.value = settings.vaultPath || "";
 
         // 혹시 이미 있던 슬라이더를 비우고, 화면 크기 슬라이더와 Pomodoro 슬라이더를 각자의 칸에 만든다
         sliderListElement.innerHTML = "";

@@ -13,6 +13,10 @@ import threading
 # 시간을 재는 도구. 캘린더 목록을 기억해둔 지 얼마나 됐는지 계산하는 데 쓴다
 import time
 
+# 웹 주소를 분해해서 http/https인지 확인하는 도구, 그리고 주소를 컴퓨터의 기본 브라우저로 여는 도구 (노트 안의 링크용)
+import urllib.parse
+import webbrowser
+
 # 여러 일을 동시에 시키는 도구. 캘린더 8개를 한꺼번에 조회하는 데 쓴다
 from concurrent.futures import ThreadPoolExecutor
 
@@ -32,6 +36,8 @@ import event_cache
 
 # 화면 설정값을 settings.json에 읽고 쓰는 함수들
 import settings_store
+# Obsidian vault의 노트(.md 파일)를 읽고 쓰는 함수들
+import notes_store
 
 # 할 일을 studyflow.db에 읽고 쓰는 함수들
 import database
@@ -512,6 +518,93 @@ def api_get_settings():
 def api_save_settings():
     saved = settings_store.save_settings(request.get_json())
     return jsonify(saved)
+
+
+# ---------- 노트 (Obsidian vault) ----------
+
+def vault_path():
+    """설정 탭에 적힌 Obsidian vault 폴더 경로 (안 정했으면 빈 글자)"""
+    return settings_store.load_settings()[settings_store.VAULT_PATH_KEY]
+
+
+def note_error_response(error):
+    """NoteError를 화면이 이해하는 응답으로 바꾼다. 충돌이면 지금 파일의 수정 시각(mtime)도 함께 알려준다."""
+    body = {"error": str(error)}
+    if isinstance(error, notes_store.NoteConflict):
+        body["conflict"] = True
+        body["mtime"] = error.mtime
+    return jsonify(body), error.status
+
+
+# 노트 목록. vault를 아직 안 정했거나 폴더를 못 찾는 것은 "오류 상태"가 아니라 화면이 안내를 보여줄 정상 응답(200)으로 준다
+@app.route("/api/notes")
+def api_list_notes():
+    path = vault_path()
+    if not path:
+        return jsonify({"configured": False, "notes": []})
+    try:
+        notes, truncated = notes_store.list_notes(path)
+    except notes_store.NoteError as error:
+        return jsonify({"configured": True, "error": str(error), "notes": []})
+    return jsonify({"configured": True, "vault": path, "notes": notes, "truncated": truncated})
+
+
+# 노트 한 개 읽기: ?path=폴더/이름.md
+@app.route("/api/notes/content")
+def api_read_note():
+    try:
+        return jsonify(notes_store.read_note(vault_path(), request.args.get("path", "")))
+    except notes_store.NoteError as error:
+        return note_error_response(error)
+
+
+# 노트 수정 시각만 확인 (Obsidian에서 바뀌었는지 보려고 화면이 몇 초마다 부른다)
+@app.route("/api/notes/stat")
+def api_stat_note():
+    try:
+        return jsonify({"mtime": notes_store.stat_note(vault_path(), request.args.get("path", ""))})
+    except notes_store.NoteError as error:
+        return note_error_response(error)
+
+
+# 노트 저장. baseMtime은 화면이 노트를 읽었을 때 받은 수정 시각이다 (그 사이에 파일이 바뀌었으면 409로 거절한다)
+@app.route("/api/notes/content", methods=["PUT"])
+def api_save_note():
+    data = request.get_json(silent=True) or {}
+    error_response = missing_key(data, ("path", "content", "baseMtime"))
+    if error_response:
+        return error_response
+    try:
+        mtime = notes_store.save_note(vault_path(), data["path"], data["content"], data["baseMtime"])
+    except notes_store.NoteError as error:
+        return note_error_response(error)
+    return jsonify({"mtime": mtime})
+
+
+# 새 노트 만들기 (POST)
+@app.route("/api/notes", methods=["POST"])
+def api_create_note():
+    data = request.get_json(silent=True) or {}
+    error_response = missing_key(data, ("path",))
+    if error_response:
+        return error_response
+    try:
+        created = notes_store.create_note(vault_path(), data["path"])
+    except notes_store.NoteError as error:
+        return note_error_response(error)
+    return jsonify(created), 201
+
+
+# 노트 안의 웹 주소(링크)를 눌렀을 때 이 창 대신 컴퓨터의 기본 브라우저로 연다.
+# 이 창 안에서 이동해 버리면 StudyFlow 화면이 사라지기 때문이다. http/https 주소만 연다
+@app.route("/api/open-external", methods=["POST"])
+def api_open_external():
+    data = request.get_json(silent=True) or {}
+    url = data.get("url")
+    if not isinstance(url, str) or urllib.parse.urlparse(url).scheme not in ("http", "https"):
+        return jsonify({"error": "웹 주소(http, https)만 열 수 있습니다."}), 400
+    webbrowser.open(url)
+    return jsonify({"ok": True})
 
 
 def valid_date(text):

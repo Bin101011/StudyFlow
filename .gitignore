@@ -18,3 +18,5 @@ settings.json.tmp
 events_cache.json
 events_cache.json.tmp
 studyflow.log
+# 노트 탭이 수정 전에 한 번씩 복사해 두는 노트 백업 (내 노트 내용이 들어 있다)
+notes_backup/

@@ -43,6 +43,11 @@ WRAP_ALL_DAY_KEY = "wrapAllDay"
 # 4) Pomodoro 타이머가 끝났을 때 알림 소리를 낼지 (True/False)
 POMODORO_SOUND_KEY = "pomodoroSound"
 
+# 노트 탭(13단계): Obsidian vault 폴더의 경로, 마지막으로 연 노트(vault 안의 상대 경로)
+VAULT_PATH_KEY = "vaultPath"
+LAST_NOTE_KEY = "lastNote"
+MAX_SETTING_TEXT = 500  # 경로 글자 수 한계 (이상한 값이 와도 설정 파일이 부풀지 않게)
+
 # 5) 사용자가 끌어서 옮겨 둔 타이머 위젯의 위치 ({"x": 왼쪽에서, "y": 위에서}, 단위 px). None이면 원래 자리(상단 바 가운데)
 POMODORO_POSITION_KEY = "pomodoroPosition"
 # 이상한 값이 들어와도 화면 밖 아주 먼 곳으로 가지 않게 하는 한계. 실제 화면 안으로 맞추는 일은 화면(app.js)이 한다
@@ -60,6 +65,8 @@ def default_settings():
     settings[WRAP_ALL_DAY_KEY] = True
     settings[POMODORO_SOUND_KEY] = True
     settings[POMODORO_POSITION_KEY] = None
+    settings[VAULT_PATH_KEY] = ""
+    settings[LAST_NOTE_KEY] = ""
     return settings
 
 
@@ -99,6 +106,11 @@ def clean_settings(raw):
         # 숫자(bool 제외)이고 한계 안일 때만 인정한다. nan, 무한대는 비교가 거짓이 되어 걸러진다
         if all(isinstance(v, (int, float)) and not isinstance(v, bool) and -MAX_POSITION <= v <= MAX_POSITION for v in (x, y)):
             settings[POMODORO_POSITION_KEY] = {"x": round(x), "y": round(y)}
+
+    for key in (VAULT_PATH_KEY, LAST_NOTE_KEY):
+        text = raw.get(key)
+        if isinstance(text, str) and len(text) <= MAX_SETTING_TEXT:
+            settings[key] = text.strip()
     return settings
 
 
