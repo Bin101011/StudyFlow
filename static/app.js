@@ -34,6 +34,7 @@ tabButtons.forEach(function (button) {
         //    (숨겨져 있는 동안은 크기를 잴 수 없어서 달력이 찌그러질 수 있다)
         if (tabName === "calendar") {
             calendar.updateSize();
+            refreshCalendarTasks();  // 다른 탭에서 할 일을 끝내거나 추가했을 수 있다
         }
 
         // 5. 오늘 탭을 열 때마다 일정과 할 일을 새로 불러온다. (날짜가 바뀌었거나, 폰에서 일정을 바꿨을 수 있다)
@@ -72,6 +73,14 @@ const hiddenCalendarIds = new Set();
 
 // 달력이 그려질 빈 칸(index.html의 id="calendar-view")을 찾는다
 const calendarElement = document.getElementById("calendar-view");
+
+// ----- 캘린더에 "할 일" 표시 (일정 아래에 구분선과 한 줄 요약) -----
+// 날짜별 할 일 개수를 달력 칸의 일정 아래에 "할 일 6개 · 5 남음"으로 보여준다. 마우스를 올리면 목록이 뜨고, 누르면 오늘 탭의 그 날짜로 간다.
+// 아래 변수들은 달력을 만드는 순간(calendar.render)에 불려 가는 함수들이 쓰므로, 달력보다 먼저 선언해 둔다.
+let calendarTaskDays = {};      // 날짜 "2026-10-27" → 그날의 할 일들 [{id, content, done, project_name, project_color}]
+let calendarTaskRange = null;   // 지금 받아 둔 기간 { start, end } (end는 포함하지 않는 날짜)
+let calendarTaskRequest = 0;    // 가장 최근에 보낸 요청의 번호. 달을 빠르게 넘길 때 늦게 온 옛 응답을 버리려는 것이다
+let calendarTaskRenderPending = false;  // 요약을 다시 붙이는 일이 이미 예약되어 있는지 (칸이 한꺼번에 여러 개 그려질 때 한 번만 하려는 것)
 
 // FullCalendar 달력 객체를 만든다. 두 번째 칸에 설정을 적는다
 const calendar = new FullCalendar.Calendar(calendarElement, {
@@ -128,6 +137,23 @@ const calendar = new FullCalendar.Calendar(calendarElement, {
         hoveredEvent = null;
     },
 
+    // 보이는 기간이 바뀔 때(달/주/일을 넘기거나 보기를 바꿀 때)마다 그 기간의 할 일을 받아 온다
+    datesSet: function (info) {
+        loadCalendarTasks(info.startStr.slice(0, 10), info.endStr.slice(0, 10));
+    },
+    // 일정이 다시 그려지거나 창 크기가 바뀌면 FullCalendar가 칸 안쪽을 다시 만들 수 있으므로, 할 일 요약을 다시 붙인다
+    eventsSet: function () {
+        renderCalendarTaskFooters();
+    },
+    windowResize: function () {
+        renderCalendarTaskFooters();
+    },
+    // 날짜 칸이 새로 그려질 때마다(보기를 바꾼 직후 주간 보기의 "종일" 줄 칸 등) 요약을 붙인다.
+    // 할 일 데이터가 칸보다 먼저 도착하는 경우가 있어서, 데이터가 올 때만 붙이면 빠지는 칸이 생긴다
+    dayCellDidMount: function () {
+        scheduleCalendarTaskFooters();
+    },
+
     // 일정이 필요할 때마다 FullCalendar가 이 함수를 불러준다.
     // info: 지금 화면에 보이는 기간 정보, successCallback: 일정을 넘겨줄 때 부르는 함수
     events: async function (info, successCallback, failureCallback) {
@@ -165,6 +191,173 @@ const calendar = new FullCalendar.Calendar(calendarElement, {
 
 // 준비한 달력을 실제로 화면에 그린다
 calendar.render();
+
+// 서버에서 이 기간의 날짜별 할 일을 받아 와서 달력에 붙인다. 실패해도 일정은 멀쩡히 보여야 하므로 조용히 넘어간다(콘솔에만 남김)
+async function loadCalendarTasks(start, end) {
+    calendarTaskRange = { start: start, end: end };
+    const requestNumber = ++calendarTaskRequest;
+    try {
+        const response = await fetch("/api/task-days?start=" + start + "&end=" + end);
+        if (!response.ok) {
+            throw new Error(await errorMessageFrom(response));
+        }
+        const days = await response.json();
+        if (requestNumber !== calendarTaskRequest) {
+            return;  // 그 사이에 다른 달로 넘어갔다. 이 응답은 낡은 것이다
+        }
+        calendarTaskDays = days;
+        renderCalendarTaskFooters();
+    } catch (error) {
+        console.error("달력에 보여줄 할 일을 불러오지 못했습니다:", error);
+    }
+}
+
+// 칸이 여러 개 그려질 때 칸마다 부르지 않고, 화면을 그리기 직전에 한 번만 요약을 붙인다
+function scheduleCalendarTaskFooters() {
+    if (calendarTaskRenderPending) {
+        return;
+    }
+    calendarTaskRenderPending = true;
+    requestAnimationFrame(function () {
+        calendarTaskRenderPending = false;
+        renderCalendarTaskFooters();
+    });
+}
+
+// 지금 보고 있는 기간의 할 일을 다시 받는다 (다른 탭에서 할 일을 끝내거나 추가했을 수 있어서, 캘린더 탭을 열 때 부른다)
+function refreshCalendarTasks() {
+    if (calendarTaskRange) {
+        loadCalendarTasks(calendarTaskRange.start, calendarTaskRange.end);
+    }
+}
+
+// 한 날짜의 요약 글자와 상태. 끝낸 것까지 모두 세고, 안 끝낸 것이 남아 있는지로 모양을 정한다
+function summarizeTaskDay(tasks, dateText) {
+    const remaining = tasks.filter(function (task) {
+        return task.done !== 1;
+    }).length;
+    const today = toDateText(new Date());
+    return {
+        text: remaining > 0
+            ? "할 일 " + tasks.length + "개 · " + remaining + " 남음"
+            : "할 일 " + tasks.length + "개 · 완료",
+        allDone: remaining === 0,
+        overdue: remaining > 0 && dateText < today,  // 지난 날짜에 아직 못 끝낸 것이 있다
+    };
+}
+
+// 달력의 모든 날짜 칸(월간 칸, 주간/일간 보기 위쪽의 "종일" 줄 칸)에 요약을 붙이거나 고치거나 지운다.
+// 칸의 .fc-daygrid-day-bottom은 FullCalendar가 일정들 바로 아래에 만들어 두는 자리다. 일정이 많아져도 그 아래로 밀려난다
+function renderCalendarTaskFooters() {
+    calendarElement.querySelectorAll(".fc-daygrid-day[data-date]").forEach(function (cell) {
+        const dateText = cell.dataset.date;
+        const tasks = calendarTaskDays[dateText];
+        const slot = cell.querySelector(".fc-daygrid-day-bottom");
+        let footer = cell.querySelector(".cal-task-footer");
+        if (!slot || !tasks || tasks.length === 0) {
+            if (footer) {
+                footer.remove();
+            }
+            return;
+        }
+        if (!footer) {
+            footer = document.createElement("div");
+            footer.className = "cal-task-footer";
+            slot.appendChild(footer);
+            attachCalendarTaskFooterEvents(footer);
+        }
+        const summary = summarizeTaskDay(tasks, dateText);
+        footer.dataset.date = dateText;
+        footer.textContent = summary.text;
+        footer.classList.toggle("all-done", summary.allDone);
+        footer.classList.toggle("overdue", summary.overdue);
+    });
+}
+
+// 말풍선: 마우스를 올리면 그날의 할 일 목록을 보여준다. 하나만 만들어 두고 계속 쓴다
+const calendarTaskTip = document.createElement("div");
+calendarTaskTip.className = "cal-task-tip";
+calendarTaskTip.hidden = true;
+document.body.appendChild(calendarTaskTip);
+const CALENDAR_TIP_MAX_ITEMS = 12;  // 이보다 많으면 "외 N개"로 줄인다
+
+function showCalendarTaskTip(footer) {
+    const dateText = footer.dataset.date;
+    const tasks = calendarTaskDays[dateText] || [];
+    calendarTaskTip.replaceChildren();
+
+    const [year, month, day] = dateText.split("-").map(Number);
+    const title = document.createElement("div");
+    title.className = "cal-task-tip-title";
+    title.textContent = month + "월 " + day + "일 할 일";
+    calendarTaskTip.appendChild(title);
+
+    tasks.slice(0, CALENDAR_TIP_MAX_ITEMS).forEach(function (task) {
+        const row = document.createElement("div");
+        row.className = "cal-task-tip-row" + (task.done === 1 ? " done" : "");
+        const dot = document.createElement("span");
+        dot.className = "cal-task-tip-dot";
+        dot.style.backgroundColor = task.project_color || "#9aa4b2";
+        const name = document.createElement("span");
+        name.className = "cal-task-tip-name";
+        name.textContent = task.content;
+        row.append(dot, name);
+        if (task.project_name) {
+            const project = document.createElement("span");
+            project.className = "cal-task-tip-project";
+            project.textContent = task.project_name;
+            row.appendChild(project);
+        }
+        calendarTaskTip.appendChild(row);
+    });
+    if (tasks.length > CALENDAR_TIP_MAX_ITEMS) {
+        const more = document.createElement("div");
+        more.className = "cal-task-tip-more";
+        more.textContent = "외 " + (tasks.length - CALENDAR_TIP_MAX_ITEMS) + "개";
+        calendarTaskTip.appendChild(more);
+    }
+    const hint = document.createElement("div");
+    hint.className = "cal-task-tip-hint";
+    hint.textContent = "누르면 오늘 탭에서 이 날짜를 봅니다";
+    calendarTaskTip.appendChild(hint);
+
+    calendarTaskTip.hidden = false;
+    // 요약 줄 바로 위에 띄운다. 위가 모자라면 아래로, 가로는 화면 안으로
+    const rect = footer.getBoundingClientRect();
+    let top = rect.top - calendarTaskTip.offsetHeight - 6;
+    if (top < 8) {
+        top = rect.bottom + 6;
+    }
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - calendarTaskTip.offsetWidth - 8));
+    calendarTaskTip.style.left = left + "px";
+    calendarTaskTip.style.top = top + "px";
+}
+
+function hideCalendarTaskTip() {
+    calendarTaskTip.hidden = true;
+}
+
+function attachCalendarTaskFooterEvents(footer) {
+    footer.addEventListener("mouseenter", function () {
+        showCalendarTaskTip(footer);
+    });
+    footer.addEventListener("mouseleave", hideCalendarTaskTip);
+    // FullCalendar는 "click"이 아니라 마우스를 누르고(mousedown) 떼는 동작으로 날짜 클릭을 알아챈다.
+    // 그래서 시작 단계인 mousedown(터치는 touchstart)을 여기서 막아야 요약을 눌렀을 때 새 일정 창이 같이 열리지 않는다
+    ["mousedown", "touchstart"].forEach(function (type) {
+        footer.addEventListener(type, function (event) {
+            event.stopPropagation();
+        });
+    });
+    // 요약을 누르면 오늘 탭의 그 날짜로 간다
+    footer.addEventListener("click", function (event) {
+        event.stopPropagation();
+        hideCalendarTaskTip();
+        openTodayOn(footer.dataset.date);
+    });
+}
+// 달력이 스크롤되거나 다른 곳을 누르면 말풍선이 어긋나므로 닫는다
+window.addEventListener("scroll", hideCalendarTaskTip, true);
 
 // ---------- 일정 추가 / 수정 / 삭제 / 드래그 ----------
 
@@ -1067,6 +1260,14 @@ const dayTodayButton = document.getElementById("day-today");
 let todayText = toDateText(new Date());
 // 지금 화면이 보여주는 날짜. 탭을 처음 열면 오늘이고, ◀ ▶로 바꿀 수 있다. 일정, 할 일, 새 할 일 추가가 모두 이 날짜를 따른다
 let viewedDate = todayText;
+// 달력에서 할 일 요약을 눌러 "이 날짜로 오늘 탭을 열어 달라"고 했을 때, 탭이 열리면서 그 날짜를 보여주도록 잠깐 담아 두는 곳
+let pendingTodayDate = null;
+
+// 오늘 탭을 열고 dateText(예: "2026-10-25")의 일정과 할 일을 보여준다
+function openTodayOn(dateText) {
+    pendingTodayDate = dateText;
+    document.querySelector("[data-tab=today]").click();
+}
 
 // 목록(<ul>)에 "내용이 없을 때" 보여줄 회색 안내 문장 한 줄을 넣는다
 function showEmptyMessage(listElement, message) {
@@ -1521,7 +1722,9 @@ async function loadToday() {
     // 숨길 캘린더 목록(hiddenCalendarIds)이 설정에서 불러와진 뒤에 일정을 걸러야 한다
     await settingsReady;
 
-    showDay(todayText);
+    // 달력에서 특정 날짜를 보려고 온 것이면 그 날짜를, 아니면 오늘을 보여준다 (탭을 열 때마다 오늘로 돌아오는 원래 동작은 그대로)
+    showDay(pendingTodayDate || todayText);
+    pendingTodayDate = null;
 
     // 할 일 입력줄의 프로젝트 선택 칸도 최신 프로젝트 목록으로 채운다
     loadProjects().catch(function (error) {

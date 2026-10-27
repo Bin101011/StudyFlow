@@ -137,6 +137,21 @@ def list_tasks(date):
     return rows
 
 
+def list_tasks_between(start, end):
+    """start 이상, end 미만 날짜로 잡혀 있는 할 일들을 날짜, 안 끝낸 것 먼저, 만든 순서로 돌려준다. (캘린더 탭에 날짜별로 보여주려는 것)
+    그 날짜에 "하려고 정한" 할 일(date)만 센다. 날짜 없는 프로젝트 단계나 마감일(deadline)은 여기에 나오지 않는다.
+    하위 단계를 가진 단계는 제목 역할이라서 오늘 탭 목록과 같이 뺀다(NO_CHILDREN). 끝낸 할 일도 포함한다(끝낸 개수를 보여주려고).
+    t.date >= ? AND t.date < ?: "2026-10-19" 같은 글자는 글자 순서가 곧 날짜 순서라서 그대로 비교할 수 있다"""
+    rows, _ = run(
+        "SELECT t.id, t.content, t.date, t.done, p.name AS project_name, p.color AS project_color "
+        "FROM tasks t LEFT JOIN projects p ON p.id = t.project_id "
+        f"WHERE t.date >= ? AND t.date < ? AND {NO_CHILDREN} "
+        "ORDER BY t.date, t.done, t.id",
+        (start, end),
+    )
+    return rows
+
+
 def list_overdue_tasks(today):
     """오늘 이전 날짜에 잡혀 있는데 끝내지 못한 할 일을 돌려준다. 날짜 순서대로.
     날짜가 없는(NULL) 프로젝트 단계는 "날짜 < 오늘"이 성립하지 않으므로 여기에 나오지 않는다."""

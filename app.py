@@ -653,6 +653,28 @@ def parse_priority(data):
     return {"importance": values[0], "urgency": values[1]}, None
 
 
+# 캘린더 탭에 날짜별로 보여줄 할 일: ?start=2026-10-01&end=2026-11-12 (start 이상, end 미만).
+# 돌려주는 모양은 {"2026-10-27": [할 일, 할 일, ...], ...}이고 할 일이 없는 날짜는 빠진다.
+# 한 번에 너무 긴 기간을 요구하지 못하게 막는다(월간 보기가 42일이라 넉넉하게 100일)
+MAX_TASK_DAYS_RANGE = 100
+
+
+@app.route("/api/task-days")
+def api_task_days():
+    start = request.args.get("start", "")
+    end = request.args.get("end", "")
+    if not valid_date(start) or not valid_date(end):
+        return jsonify({"error": "'start'와 'end'는 2026-10-19 같은 날짜여야 합니다."}), 400
+    span = (datetime.date.fromisoformat(end) - datetime.date.fromisoformat(start)).days
+    if span <= 0 or span > MAX_TASK_DAYS_RANGE:
+        return jsonify({"error": f"기간은 1일 이상 {MAX_TASK_DAYS_RANGE}일 이하여야 합니다."}), 400
+
+    days = {}
+    for task in database.list_tasks_between(start, end):
+        days.setdefault(task["date"], []).append(task)
+    return jsonify(days)
+
+
 # 할 일 추가 (POST)
 @app.route("/api/tasks", methods=["POST"])
 def api_create_task():

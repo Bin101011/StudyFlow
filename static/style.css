@@ -994,7 +994,7 @@ input.color-dot::-webkit-color-swatch {
 }
 
 .task-actions button {
-    padding: 3px 9px;
+    padding: 3px 6px;
     font-size: 12px;
 }
 
@@ -1074,7 +1074,7 @@ input.color-dot::-webkit-color-swatch {
 }
 
 .project-card-head button {
-    padding: 3px 10px;
+    padding: 3px 14px;
     font-size: 12px;
 }
 
@@ -1127,6 +1127,14 @@ input.color-dot::-webkit-color-swatch {
 }
 
 /* 하위 단계 묶음: 상위 단계 아래에서 오른쪽으로 들여쓴다. 왼쪽에 가는 선을 그어 "이 단계의 일부"임을 보여준다 */
+/* 프로젝트 카드의 단계 목록: 카드 안쪽 여백(18px)에 줄 안쪽 여백(10px)이 겹쳐 동그라미가 카드 가장자리에서 너무 멀었다.
+   목록을 양옆으로 11px씩 넓혀서 왼쪽 동그라미와 오른쪽 마감일/날짜가 모두 11px씩 가장자리에 가까워지게 한다(처음 8px, 사용자 요청으로 3px 더).
+   (하위 단계 목록은 이 안에 들어 있어서 따로 넓히지 않는다 → 직접 자식(>)만)*/
+.project-card > .today-list {
+    margin-left: -11px;
+    margin-right: -11px;
+}
+
 .sub-wrapper {
     margin-left: 18px;
     padding-left: 10px;
@@ -1147,7 +1155,7 @@ input.color-dot::-webkit-color-swatch {
 
 /* 마감일 글자 (오늘 탭 등에서 글자로만 보이는 것): 연한 주황 알약 */
 .task-deadline {
-    padding: 1px 8px;
+    padding: 1px 5px;
     border-radius: 999px;
     background-color: var(--warn-soft);
     color: var(--warn);
@@ -1193,7 +1201,7 @@ input.color-dot::-webkit-color-swatch {
 
 /* 마감일이 정해져 있을 때 줄에 항상 보이는 마감일 버튼: 버튼 모양을 지우고 연한 주황 알약처럼 보이게 한다 */
 .task-row > .deadline-control button:not(.clear) {
-    padding: 1px 8px;
+    padding: 1px 5px;
     border: none;
     border-radius: 999px;
     background-color: var(--warn-soft);
@@ -2357,4 +2365,96 @@ body.priority-dragging * {
     border-color: var(--accent);
     color: var(--accent);
     font-weight: 600;
+}
+
+/* ===== 캘린더 탭: 날짜 칸의 할 일 요약 ===== */
+/* 일정들 아래에 가는 구분선을 긋고 한 줄 요약을 둔다. 누르면 오늘 탭의 그 날짜로 간다 */
+.cal-task-footer {
+    margin: 4px 4px 3px;
+    padding: 3px 3px 0;
+    border-top: 1px solid var(--border-strong);
+    font-size: 0.82em;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+}
+
+.cal-task-footer:hover {
+    color: var(--accent);
+}
+
+.cal-task-footer.all-done {
+    color: var(--ok);
+}
+
+/* 지난 날짜에 아직 못 끝낸 할 일이 남아 있을 때 */
+.cal-task-footer.overdue {
+    color: var(--warn);
+    font-weight: 600;
+}
+
+/* 마우스를 올렸을 때 뜨는 할 일 목록 말풍선 */
+.cal-task-tip {
+    position: fixed;
+    z-index: 130;
+    max-width: 300px;
+    padding: 9px 12px;
+    background-color: #2b3340;
+    color: #ffffff;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-md);
+    font-size: 12.5px;
+    pointer-events: none;  /* 말풍선이 마우스를 가로채서 깜박이지 않게 */
+}
+
+.cal-task-tip-title {
+    margin-bottom: 6px;
+    font-weight: 600;
+}
+
+.cal-task-tip-row {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    padding: 1px 0;
+}
+
+.cal-task-tip-dot {
+    width: 8px;
+    height: 8px;
+    flex-shrink: 0;
+    align-self: center;
+    border-radius: 50%;
+}
+
+.cal-task-tip-name {
+    overflow-wrap: anywhere;
+}
+
+.cal-task-tip-row.done .cal-task-tip-name {
+    color: #aab3c0;
+    text-decoration: line-through;
+}
+
+.cal-task-tip-project {
+    margin-left: auto;
+    padding-left: 8px;
+    color: #aab3c0;
+    font-size: 11.5px;
+    white-space: nowrap;
+}
+
+.cal-task-tip-more {
+    margin-top: 2px;
+    color: #aab3c0;
+}
+
+.cal-task-tip-hint {
+    margin-top: 7px;
+    padding-top: 6px;
+    border-top: 1px solid #465061;
+    color: #aab3c0;
+    font-size: 11.5px;
 }
