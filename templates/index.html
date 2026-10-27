@@ -102,9 +102,10 @@
         <div class="tab-content" id="projects">
             <div class="projects-header">
                 <h1>프로젝트</h1>
+                <button id="folder-add-button">+ 새 폴더</button>
                 <button id="project-add-button" class="primary">+ 새 프로젝트</button>
             </div>
-            <!-- 프로젝트 카드들은 app.js가 /api/projects에서 받아 여기에 만든다 (마감일이 가까운 순) -->
+            <!-- 폴더와 프로젝트 카드들은 app.js가 /api/folders, /api/projects에서 받아 여기에 만든다 (폴더 안에서는 마감일이 가까운 순) -->
             <div id="project-list"></div>
         </div>
         <div class="tab-content" id="priority">
@@ -185,34 +186,16 @@
         <div class="tab-content" id="settings">
             <h1>설정</h1>
 
+            <!-- 설정 구역들: 화면이 넓으면 2열로 놓인다 (style.css의 .settings-grid) -->
+            <div class="settings-grid">
+            <!-- 구역 순서: 화면 크기, 일정 표시, 일정 추가 / Pomodoro, 노트, 프로젝트 탭. CSS 다단은 앞에서부터 한 열을 채우므로,
+                두 열의 높이가 비슷해지도록 이 순서로 놓았다 -->
             <section class="settings-section">
                 <h2>화면 크기</h2>
                 <p class="settings-hint">슬라이더를 움직이면 캘린더에 바로 반영되고, 자동으로 저장됩니다.</p>
                 <!-- 슬라이더들은 app.js가 서버(/api/settings)에서 정의를 받아 여기에 만든다 -->
                 <div id="slider-list"></div>
                 <button id="settings-reset">기본값으로</button>
-            </section>
-
-            <section class="settings-section">
-                <h2>노트 (Obsidian)</h2>
-                <p class="settings-hint">Obsidian vault 폴더(노트가 들어 있는 폴더, 안에 <b>.obsidian</b> 폴더가 있습니다)의 경로를 적으면 "노트" 탭에서 그 폴더의 .md 노트를 보고 고칠 수 있습니다. 고친 내용은 vault의 파일에 바로 저장되어 Obsidian에서도 보입니다.</p>
-                <label class="settings-row">
-                    <span class="settings-label">vault 폴더 경로</span>
-                    <input type="text" id="vault-path-input" placeholder="예: C:\Users\이름\문서\Obsidian Vault">
-                </label>
-                <p id="vault-path-status" class="settings-hint"></p>
-            </section>
-
-            <section class="settings-section">
-                <h2>Pomodoro 타이머</h2>
-                <p class="settings-hint">집중과 휴식을 번갈아 하는 타이머입니다. 상단 바 가운데에 있고 마우스로 끌어서 아무 곳에나 옮길 수 있습니다. 진행 중인 단계의 시간은 바꿔도 그대로 이어집니다.</p>
-                <!-- 슬라이더들은 app.js가 서버(/api/settings)에서 정의를 받아 여기에 만든다 -->
-                <div id="pomodoro-slider-list"></div>
-                <label class="settings-row">
-                    <input type="checkbox" id="pomodoro-sound-checkbox">
-                    <span>단계가 끝나면 소리로 알려주기</span>
-                </label>
-                <button id="pomodoro-position-reset">타이머 위치 원래대로</button>
             </section>
 
             <section class="settings-section">
@@ -235,6 +218,40 @@
                     </select>
                 </label>
             </section>
+
+            <section class="settings-section">
+                <h2>Pomodoro 타이머</h2>
+                <p class="settings-hint">집중과 휴식을 번갈아 하는 타이머입니다. 상단 바 가운데에 있고 마우스로 끌어서 아무 곳에나 옮길 수 있습니다. 진행 중인 단계의 시간은 바꿔도 그대로 이어집니다.</p>
+                <!-- 슬라이더들은 app.js가 서버(/api/settings)에서 정의를 받아 여기에 만든다 -->
+                <div id="pomodoro-slider-list"></div>
+                <label class="settings-row">
+                    <input type="checkbox" id="pomodoro-sound-checkbox">
+                    <span>단계가 끝나면 소리로 알려주기</span>
+                </label>
+                <button id="pomodoro-position-reset">타이머 위치 원래대로</button>
+            </section>
+
+            <section class="settings-section">
+                <h2>노트 (Obsidian)</h2>
+                <p class="settings-hint">Obsidian vault 폴더(노트가 들어 있는 폴더, 안에 <b>.obsidian</b> 폴더가 있습니다)의 경로를 적으면 "노트" 탭에서 그 폴더의 .md 노트를 보고 고칠 수 있습니다. 고친 내용은 vault의 파일에 바로 저장되어 Obsidian에서도 보입니다.</p>
+                <label class="settings-row">
+                    <span class="settings-label">vault 폴더 경로</span>
+                    <input type="text" id="vault-path-input" placeholder="예: C:\Users\이름\문서\Obsidian Vault">
+                </label>
+                <p id="vault-path-status" class="settings-hint"></p>
+            </section>
+
+            <section class="settings-section">
+                <h2>프로젝트 탭</h2>
+                <p class="settings-hint">프로젝트 카드를 몇 열로 늘어놓을지 정합니다. 카드는 위아래로 빈틈 없이 쌓입니다. 창이 좁으면(900px 미만) 자동으로 1열이 됩니다.</p>
+                <div class="settings-row">
+                    <span class="settings-label">카드 열 수</span>
+                    <label class="settings-choice"><input type="radio" name="project-columns" value="2"> 2열</label>
+                    <label class="settings-choice"><input type="radio" name="project-columns" value="3"> 3열</label>
+                    <label class="settings-choice"><input type="radio" name="project-columns" value="4"> 4열</label>
+                </div>
+            </section>
+            </div>
         </div>
     </main>
 
@@ -255,11 +272,31 @@
         </label>
         <div class="dialog-row"><span class="dialog-label">시작</span>
             <input type="date" id="event-start-date">
-            <input type="time" id="event-start-time">
+            <!-- 시간칸: 누르면 바로 타이핑할 수 있고("1430", "2:30pm" 등), 시계 아이콘을 누르면 5분 단위 선택창이 열린다 (app.js의 "시간 입력칸") -->
+            <span class="time-field">
+                <input type="text" id="event-start-time" inputmode="numeric" autocomplete="off" placeholder="09:00">
+                <button type="button" class="time-picker-button" title="시간 고르기" aria-label="시간 고르기"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+            </span>
         </div>
         <div class="dialog-row"><span class="dialog-label">끝</span>
             <input type="date" id="event-end-date">
-            <input type="time" id="event-end-time">
+            <!-- 시간칸: 누르면 바로 타이핑할 수 있고("1430", "2:30pm" 등), 시계 아이콘을 누르면 5분 단위 선택창이 열린다 (app.js의 "시간 입력칸") -->
+            <span class="time-field">
+                <input type="text" id="event-end-time" inputmode="numeric" autocomplete="off" placeholder="09:00">
+                <button type="button" class="time-picker-button" title="시간 고르기" aria-label="시간 고르기"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+            </span>
+        </div>
+
+        <!-- 길이: 누르면 "시작 시간 + 길이"로 끝 시간이 자동으로 정해진다 (종일 일정에서는 숨는다) -->
+        <div class="dialog-row duration-row"><span class="dialog-label">길이</span>
+            <div class="duration-chips" id="event-duration-chips">
+                <button type="button" class="duration-chip" data-minutes="15">15분</button>
+                <button type="button" class="duration-chip" data-minutes="30">30분</button>
+                <button type="button" class="duration-chip" data-minutes="60">1시간</button>
+                <button type="button" class="duration-chip" data-minutes="90">1시간 30분</button>
+                <button type="button" class="duration-chip" data-minutes="120">2시간</button>
+                <button type="button" class="duration-chip" data-minutes="180">3시간</button>
+            </div>
         </div>
 
         <!-- 입력이 잘못됐거나 Google이 거절했을 때 이유를 보여주는 줄 -->
@@ -280,6 +317,10 @@
 
         <label class="dialog-row"><span class="dialog-label">이름</span>
             <input type="text" id="project-name">
+        </label>
+        <label class="dialog-row"><span class="dialog-label">폴더</span>
+            <!-- 선택지는 app.js가 폴더 목록으로 채운다 -->
+            <select id="project-folder"></select>
         </label>
         <div class="dialog-row"><span class="dialog-label">마감일</span>
             <input type="date" id="project-deadline">
@@ -304,6 +345,25 @@
             <span class="spacer"></span>
             <button id="project-cancel">취소</button>
             <button id="project-save" class="primary">저장</button>
+        </div>
+    </dialog>
+
+    <!-- 폴더 만들기/이름 바꾸기 창. 폴더를 지워도 안의 프로젝트는 지워지지 않고 "폴더 없음"으로 나온다 -->
+    <dialog id="folder-dialog">
+        <h2 id="folder-dialog-title">새 폴더</h2>
+
+        <label class="dialog-row"><span class="dialog-label">이름</span>
+            <input type="text" id="folder-name" placeholder="예: 2학기">
+        </label>
+
+        <p id="folder-error" class="dialog-error"></p>
+
+        <div class="dialog-buttons">
+            <!-- 삭제 버튼은 폴더를 수정할 때만 보인다 -->
+            <button id="folder-delete" class="danger" hidden>삭제</button>
+            <span class="spacer"></span>
+            <button id="folder-cancel">취소</button>
+            <button id="folder-save" class="primary">저장</button>
         </div>
     </dialog>
 

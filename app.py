@@ -793,6 +793,7 @@ def project_json(project, tasks):
         "color": project["color"],
         "progressMode": project["progress_mode"],
         "manualPercent": project["manual_percent"],
+        "folderId": project["folder_id"],
         "total": project["total"],
         "doneCount": project["done_count"],
         "percent": percent,
@@ -827,6 +828,13 @@ def parse_project_fields(data):
         if data["progressMode"] not in ("auto", "manual"):
             return None, (jsonify({"error": "진행률 방식은 auto 또는 manual이어야 합니다."}), 400)
         fields["progress_mode"] = data["progressMode"]
+
+    if "folderId" in data:
+        folder_id = data["folderId"]
+        # null이면 "폴더 없음". 숫자면 실제로 있는 폴더여야 한다 (bool은 파이썬에서 정수의 한 종류라서 따로 거른다)
+        if folder_id is not None and (isinstance(folder_id, bool) or not isinstance(folder_id, int) or not database.get_folder(folder_id)):
+            return None, (jsonify({"error": "그 폴더를 찾을 수 없습니다."}), 400)
+        fields["folder_id"] = folder_id
 
     if "manualPercent" in data:
         try:
@@ -870,6 +878,7 @@ def api_create_project():
         color,
         fields.get("progress_mode", "auto"),
         fields.get("manual_percent", 0),
+        fields.get("folder_id"),
     )
     return jsonify(project), 201
 
@@ -892,6 +901,76 @@ def api_update_project(project_id):
 def api_delete_project(project_id):
     if not database.delete_project(project_id):
         return jsonify({"error": "그 프로젝트를 찾을 수 없습니다."}), 404
+    return jsonify({"ok": True})
+
+
+# ---------- 프로젝트 폴더 ----------
+
+MAX_FOLDER_NAME_LENGTH = 60
+
+
+def parse_folder_fields(data):
+    """화면이 보낸 폴더 값을 검사해서, DB 칸 이름 → 값 딕셔너리로 바꿔 돌려준다. 보낸 값만 담는다.
+    잘못된 값이 있으면 (None, 오류 응답)을 돌려준다."""
+    fields = {}
+    if "name" in data:
+        name = str(data["name"]).strip()
+        if not name:
+            return None, (jsonify({"error": "폴더 이름을 입력하세요."}), 400)
+        if len(name) > MAX_FOLDER_NAME_LENGTH:
+            return None, (jsonify({"error": f"폴더 이름은 {MAX_FOLDER_NAME_LENGTH}글자 이하여야 합니다."}), 400)
+        fields["name"] = name
+    if "collapsed" in data:
+        if not isinstance(data["collapsed"], bool):
+            return None, (jsonify({"error": "'collapsed'는 true 또는 false여야 합니다."}), 400)
+        fields["collapsed"] = 1 if data["collapsed"] else 0  # SQLite에는 true/false 대신 1/0으로 저장한다
+    return fields, None
+
+
+def folder_json(folder):
+    return {
+        "id": folder["id"],
+        "name": folder["name"],
+        "collapsed": bool(folder["collapsed"]),
+        "projectCount": folder.get("project_count", 0),
+    }
+
+
+# 폴더 목록 (만든 순서). 각 폴더에 든 프로젝트 수와 접힘 여부가 들어 있다
+@app.route("/api/folders")
+def api_get_folders():
+    return jsonify([folder_json(folder) for folder in database.list_folders()])
+
+
+# 폴더 만들기 (POST)
+@app.route("/api/folders", methods=["POST"])
+def api_create_folder():
+    fields, error_response = parse_folder_fields(request.get_json(silent=True) or {})
+    if error_response:
+        return error_response
+    if "name" not in fields:
+        return jsonify({"error": "'name' 값이 없습니다."}), 400
+    return jsonify(folder_json(database.add_folder(fields["name"]))), 201
+
+
+# 폴더 이름 바꾸기, 접기/펴기 (PATCH). 보낸 것만 바꾼다
+@app.route("/api/folders/<int:folder_id>", methods=["PATCH"])
+def api_update_folder(folder_id):
+    fields, error_response = parse_folder_fields(request.get_json(silent=True) or {})
+    if error_response:
+        return error_response
+    if not fields:
+        return jsonify({"error": "바꿀 값이 없습니다."}), 400
+    if not database.update_folder(folder_id, fields):
+        return jsonify({"error": "그 폴더를 찾을 수 없습니다."}), 404
+    return jsonify({"ok": True})
+
+
+# 폴더 지우기 (DELETE): 안의 프로젝트는 지워지지 않고 "폴더 없음"으로 나온다
+@app.route("/api/folders/<int:folder_id>", methods=["DELETE"])
+def api_delete_folder(folder_id):
+    if not database.delete_folder(folder_id):
+        return jsonify({"error": "그 폴더를 찾을 수 없습니다."}), 404
     return jsonify({"ok": True})
 
 

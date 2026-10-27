@@ -280,10 +280,356 @@ async function sendRequest(url, method, body) {
     }
 }
 
-// 종일이면 시간 칸을 숨긴다
+// ---------- 시간 입력칸 (직접 타이핑 + 5분 단위 선택창) ----------
+// 브라우저 기본 시간칸(<input type="time">)은 "오전/오후 → 시 → 분" 칸이 따로 나뉘어 있어서, 칸을 누르면 맨 앞의 "오전"이 선택되고
+// 숫자를 쳐도 아무 일도 안 일어난다. 그리고 시계 아이콘의 선택창은 분이 1분 단위로 나온다. 그래서 직접 만들었다:
+//  - 입력 칸: 누르면 글자 전체가 선택되어 바로 타이핑할 수 있다. "1430", "930", "2:30pm", "오후 2시 30분" 어느 쪽으로 써도 "14:30"으로 정리된다
+//  - 시계 아이콘: "시" 열과 "분" 열(00, 05, 10 … 55)이 있는 선택창을 연다
+//  - ↑/↓ 키: 5분씩 (Shift를 같이 누르면 1시간씩)
+
+function padTwo(number) {
+    return String(number).padStart(2, "0");
+}
+
+// 글자로 쓴 시간을 "14:30" 모양(24시간)으로 바꾼다. 읽을 수 없으면 null
+function parseTimeText(text) {
+    let s = String(text).trim().toLowerCase();
+
+    // 오전/오후(또는 am/pm)가 있으면 따로 떼어 둔다
+    let meridiem = null;
+    const meridiemMatch = /(오전|오후|a\.?m\.?|p\.?m\.?)/.exec(s);
+    if (meridiemMatch) {
+        meridiem = meridiemMatch[1] === "오후" || meridiemMatch[1][0] === "p" ? "pm" : "am";
+        s = s.replace(meridiemMatch[0], "");
+    }
+
+    // 공백을 없애고, "시", ".", 전각 콜론을 ":"로 통일하고, "분"은 지운다. 예: "3시 30분" → "3:30"
+    s = s.replace(/\s+/g, "").replace(/[시：.]/g, ":").replace(/분/g, "");
+
+    let hour;
+    let minute;
+    let match;
+    if ((match = /^(\d{1,2}):(\d{1,2})$/.exec(s))) {
+        hour = Number(match[1]);  // "14:30", "9:5"
+        minute = Number(match[2]);
+    } else if ((match = /^(\d{1,2}):?$/.exec(s))) {
+        hour = Number(match[1]);  // "14", "9시"
+        minute = 0;
+    } else if ((match = /^(\d{1,2})(\d{2})$/.exec(s))) {
+        hour = Number(match[1]);  // 세네 자리 숫자: "930", "1430"
+        minute = Number(match[2]);
+    } else {
+        return null;
+    }
+
+    // 오전/오후가 붙어 있고 시가 12 이하일 때만 12시간제로 계산한다 ("오후 14:00"처럼 이미 24시간제 값이면 그대로)
+    if (meridiem && hour <= 12) {
+        hour = meridiem === "pm" ? (hour % 12) + 12 : hour % 12;
+    }
+    if (hour > 23 || minute > 59) {
+        return null;
+    }
+    return padTwo(hour) + ":" + padTwo(minute);
+}
+
+// 입력 칸의 글자를 "14:30" 모양으로 정리한다. 읽을 수 없으면 글자는 그대로 두고 칸 테두리를 빨갛게 한다
+function normalizeTimeInput(input) {
+    const parsed = parseTimeText(input.value);
+    if (parsed) {
+        input.value = parsed;
+    }
+    input.classList.toggle("invalid", !parsed);
+    return parsed;
+}
+
+// 시간칸의 값을 확정한다: 글자를 "14:30" 모양으로 정리하고, 마지막으로 알린 값과 달라졌으면 change를 알린다.
+// (브라우저가 직접 타이핑에는 칸을 떠날 때 change를 알려 주지만, Enter로 확정하거나 코드가 값을 바꾼 경우에는 우리가 알려야 한다.
+// 같은 값으로 두 번 알려도 해가 없다. 읽는 쪽이 값이 같으면 같은 결과를 내기 때문이다)
+function fireTimeChange(input) {
+    input.dataset.committed = input.value;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function commitTimeInput(input) {
+    const parsed = normalizeTimeInput(input);
+    if (parsed && parsed !== input.dataset.committed) {
+        fireTimeChange(input);
+    }
+    return parsed;
+}
+
+// 선택창은 일정 창 안에 하나만 만들어 두고 두 시간칸(시작, 끝)이 같이 쓴다. (모달 창 밖에 만들면 창 뒤에 가려진다)
+const timePopup = document.createElement("div");
+timePopup.className = "time-popup";
+timePopup.hidden = true;
+const timeHourColumn = makeTimeColumn("시", Array.from({ length: 24 }, function (_, h) {
+    return { label: padTwo(h), key: "hour", value: h };
+}));
+const timeMinuteColumn = makeTimeColumn("분", Array.from({ length: 12 }, function (_, i) {
+    return { label: padTwo(i * 5), key: "minute", value: i * 5 };  // 0, 5, 10 … 55
+}));
+timePopup.append(timeHourColumn, timeMinuteColumn);
+eventDialog.appendChild(timePopup);
+let timePopupInput = null;  // 선택창이 지금 어느 시간칸에 붙어 있는지 (닫혀 있으면 null)
+
+function makeTimeColumn(title, options) {
+    const column = document.createElement("div");
+    column.className = "time-column";
+    const heading = document.createElement("div");
+    heading.className = "time-column-title";
+    heading.textContent = title;
+    column.appendChild(heading);
+    options.forEach(function (option) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "time-option";
+        button.textContent = option.label;
+        button.dataset[option.key] = option.value;
+        column.appendChild(button);
+    });
+    return column;
+}
+
+// 지금 칸의 시간에 맞는 시/분 항목을 강조하고, 그 항목이 보이게 열을 스크롤한다
+function refreshTimePopup() {
+    if (!timePopupInput) {
+        return;
+    }
+    const parsed = parseTimeText(timePopupInput.value);
+    const [hour, minute] = parsed ? parsed.split(":").map(Number) : [null, null];
+    [[timeHourColumn, "hour", hour], [timeMinuteColumn, "minute", minute]].forEach(function (entry) {
+        const column = entry[0];
+        let selected = null;
+        column.querySelectorAll(".time-option").forEach(function (option) {
+            const isSelected = Number(option.dataset[entry[1]]) === entry[2];
+            option.classList.toggle("selected", isSelected);
+            if (isSelected) {
+                selected = option;
+            }
+        });
+        if (selected) {
+            column.scrollTop = selected.offsetTop - column.clientHeight / 2 + selected.offsetHeight / 2;
+        }
+    });
+}
+
+function openTimePopup(input) {
+    timePopupInput = input;
+    timePopup.hidden = false;
+    // 시간칸 바로 아래에 띄운다. 화면 아래가 모자라면 위로 띄운다
+    const rect = input.closest(".time-field").getBoundingClientRect();
+    const height = timePopup.offsetHeight;
+    let top = rect.bottom + 4;
+    if (top + height > window.innerHeight - 8) {
+        top = Math.max(8, rect.top - height - 4);
+    }
+    timePopup.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - timePopup.offsetWidth - 8)) + "px";
+    timePopup.style.top = top + "px";
+    refreshTimePopup();
+}
+
+function closeTimePopup() {
+    timePopup.hidden = true;
+    timePopupInput = null;
+}
+
+// 선택창의 항목을 눌렀을 때: 시를 누르면 시만, 분을 누르면 분만 바꾼다. 분을 고르면 선택이 끝난 것이라 창을 닫는다
+timePopup.addEventListener("click", function (event) {
+    const option = event.target.closest(".time-option");
+    if (!option || !timePopupInput) {
+        return;
+    }
+    const [hour, minute] = (parseTimeText(timePopupInput.value) || "09:00").split(":").map(Number);
+    const isHour = option.dataset.hour !== undefined;
+    timePopupInput.value = padTwo(isHour ? Number(option.dataset.hour) : hour) + ":" + padTwo(isHour ? minute : Number(option.dataset.minute));
+    timePopupInput.classList.remove("invalid");
+    fireTimeChange(timePopupInput);  // 끝 시간이 따라 움직이도록 알린다
+    refreshTimePopup();
+    if (!isHour) {
+        closeTimePopup();
+    }
+});
+
+// 선택창을 눌러도 시간칸이 포커스를 잃지 않게 한다 (포커스를 잃으면 칸의 글자가 정리되면서 선택창이 어긋난다)
+timePopup.addEventListener("mousedown", function (event) {
+    event.preventDefault();
+});
+
+// 선택창 밖을 누르면 닫는다 (시계 아이콘은 스스로 열고 닫으므로 제외)
+document.addEventListener("pointerdown", function (event) {
+    if (!timePopup.hidden && !timePopup.contains(event.target) && !event.target.closest(".time-picker-button")) {
+        closeTimePopup();
+    }
+}, true);
+eventDialog.addEventListener("close", closeTimePopup);
+
+// 시간칸 하나를 쓸 수 있게 만든다
+function setupTimeField(input) {
+    const button = input.closest(".time-field").querySelector(".time-picker-button");
+    let justFocused = false;
+
+    // 칸을 누르면 글자 전체가 선택되어서 바로 새로 타이핑할 수 있다.
+    // (포커스 직후 마우스를 떼면 브라우저가 선택을 풀어 버리므로, 그 첫 mouseup만 막는다)
+    input.addEventListener("focus", function () {
+        justFocused = true;
+        input.select();
+    });
+    input.addEventListener("mouseup", function (event) {
+        if (justFocused) {
+            event.preventDefault();
+            justFocused = false;
+        }
+    });
+    input.addEventListener("blur", function () {
+        justFocused = false;
+        commitTimeInput(input);
+    });
+    input.addEventListener("input", function () {
+        input.classList.remove("invalid");
+        if (timePopupInput === input) {
+            refreshTimePopup();
+        }
+    });
+
+    input.addEventListener("keydown", function (event) {
+        if (event.isComposing) {
+            return;
+        }
+        if (event.key === "Enter") {
+            // Enter = 이 시간을 확정한다. 확정되면 타이핑 모드에서 나온다(포커스를 내려놓는다). 그러면 다음 Enter는 "일정 저장"이 된다.
+            // 읽을 수 없는 글자면 칸에 남아서 빨간 테두리로 알리고, 고칠 수 있게 한다
+            event.preventDefault();
+            closeTimePopup();
+            if (commitTimeInput(input)) {
+                input.blur();
+            }
+        } else if (event.key === "Escape" && timePopupInput === input) {
+            // 선택창이 열려 있을 때의 Esc는 선택창만 닫는다 (일정 창까지 닫히지 않게)
+            event.preventDefault();
+            event.stopPropagation();
+            closeTimePopup();
+        } else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+            // ↑/↓: 5분씩, Shift와 함께면 1시간씩. 하루를 넘어가면 반대쪽 끝으로 돌아온다
+            event.preventDefault();
+            const [hour, minute] = (parseTimeText(input.value) || "09:00").split(":").map(Number);
+            const step = (event.shiftKey ? 60 : 5) * (event.key === "ArrowUp" ? 1 : -1);
+            const total = (((hour * 60 + minute + step) % 1440) + 1440) % 1440;
+            input.value = padTwo(Math.floor(total / 60)) + ":" + padTwo(total % 60);
+            input.classList.remove("invalid");
+            fireTimeChange(input);
+            refreshTimePopup();
+        }
+    });
+
+    // 시계 아이콘: 선택창을 열고 닫는다
+    button.addEventListener("mousedown", function (event) {
+        event.preventDefault();  // 아이콘을 눌러도 시간칸의 포커스가 그대로 있게 한다
+    });
+    button.addEventListener("click", function () {
+        if (timePopupInput === input) {
+            closeTimePopup();
+            return;
+        }
+        normalizeTimeInput(input);
+        input.focus({ preventScroll: true });
+        openTimePopup(input);
+    });
+}
+setupTimeField(eventStartTime);
+setupTimeField(eventEndTime);
+
+// ---------- 시작 시간을 바꾸면 끝 시간도 같이 움직이기 / 길이 버튼 ----------
+// Google Calendar처럼, 시작 날짜나 시간을 바꾸면 "일정의 길이"는 그대로 두고 끝도 같이 옮긴다.
+// 예: 9시~10시(1시간)에서 시작을 11시로 바꾸면 끝이 12시가 된다. 끝을 직접 고치면 그 새 길이를 기억해서 다음에 시작을 바꿀 때 쓴다.
+// "길이" 줄의 버튼(15분, 30분, 1시간 …)을 누르면 시작 + 그 길이로 끝이 정해진다.
+
+let eventDurationMs = 60 * 60 * 1000;  // 지금 일정의 길이(끝 − 시작). 종일 일정은 "며칠"을 밀리초로 바꿔 둔 값이다
+const durationChips = document.querySelectorAll(".duration-chip");
+
+// 날짜 칸과 시간 칸을 읽어 Date로 만든다. 종일 일정은 날짜만 본다. 비었거나 읽을 수 없으면 null
+function readEventDateTime(dateInput, timeInput) {
+    if (!dateInput.value) {
+        return null;
+    }
+    const [year, month, day] = dateInput.value.split("-").map(Number);
+    if (eventAllDayCheckbox.checked) {
+        return new Date(year, month - 1, day);
+    }
+    const time = parseTimeText(timeInput.value);
+    if (!time) {
+        return null;
+    }
+    const [hour, minute] = time.split(":").map(Number);
+    return new Date(year, month - 1, day, hour, minute);
+}
+
+// 지금 끝 − 시작과 같은 길이의 버튼을 강조한다
+function updateDurationChips() {
+    const start = readEventDateTime(eventStartDate, eventStartTime);
+    const end = readEventDateTime(eventEndDate, eventEndTime);
+    const actual = start && end ? end - start : null;
+    durationChips.forEach(function (chip) {
+        chip.classList.toggle("active", actual !== null && actual === Number(chip.dataset.minutes) * 60000);
+    });
+}
+
+// 끝(날짜, 시간)을 직접 고쳤거나 창을 막 열었을 때: 지금의 끝 − 시작을 "일정의 길이"로 기억한다.
+// 끝이 시작보다 빠르거나 읽을 수 없는 동안에는 기억해 둔 길이를 그대로 둔다
+function updateDurationFromFields() {
+    const start = readEventDateTime(eventStartDate, eventStartTime);
+    const end = readEventDateTime(eventEndDate, eventEndTime);
+    if (start && end) {
+        if (eventAllDayCheckbox.checked) {
+            if (end >= start) {
+                eventDurationMs = Math.round((end - start) / 86400000) * 86400000;  // 서머타임 같은 1시간 오차는 반올림이 지운다
+            }
+        } else if (end > start) {
+            eventDurationMs = end - start;
+        }
+    }
+    updateDurationChips();
+}
+
+// 시작이 바뀌었을 때: 끝 = 시작 + 기억해 둔 길이
+function moveEndWithStart() {
+    const start = readEventDateTime(eventStartDate, eventStartTime);
+    if (!start) {
+        return;  // 시작이 비었거나 읽을 수 없는 동안에는 끝을 건드리지 않는다
+    }
+    if (eventAllDayCheckbox.checked) {
+        eventEndDate.value = addDaysToText(eventStartDate.value, Math.round(eventDurationMs / 86400000));
+    } else {
+        const end = new Date(start.getTime() + eventDurationMs);
+        eventEndDate.value = toDateText(end);   // 자정을 넘기면 끝 날짜도 다음 날로 바뀐다
+        eventEndTime.value = toTimeText(end);
+        eventEndTime.classList.remove("invalid");
+    }
+    updateDurationChips();
+}
+
+eventStartDate.addEventListener("change", moveEndWithStart);
+eventStartTime.addEventListener("change", moveEndWithStart);
+eventEndDate.addEventListener("change", updateDurationFromFields);
+eventEndTime.addEventListener("change", updateDurationFromFields);
+
+durationChips.forEach(function (chip) {
+    chip.addEventListener("click", function () {
+        if (!readEventDateTime(eventStartDate, eventStartTime)) {
+            eventError.textContent = "시작 날짜와 시간을 먼저 입력하세요.";
+            return;
+        }
+        eventError.textContent = "";
+        eventDurationMs = Number(chip.dataset.minutes) * 60000;
+        moveEndWithStart();
+    });
+});
+
+// 종일이면 시간 칸과 길이 버튼을 숨긴다
 function updateTimeInputs() {
-    eventStartTime.hidden = eventAllDayCheckbox.checked;
-    eventEndTime.hidden = eventAllDayCheckbox.checked;
+    eventStartTime.closest(".time-field").hidden = eventAllDayCheckbox.checked;
+    eventEndTime.closest(".time-field").hidden = eventAllDayCheckbox.checked;
+    document.querySelector(".duration-row").hidden = eventAllDayCheckbox.checked;
+    updateDurationFromFields();  // 종일 ↔ 시간 있는 일정을 오가면 길이를 그 방식으로 다시 읽는다
 }
 eventAllDayCheckbox.addEventListener("change", updateTimeInputs);
 
@@ -299,6 +645,11 @@ function showEventDialog(values) {
     eventAllDayCheckbox.checked = values.allDay;
     eventStartDate.value = values.startDate;
     eventStartTime.value = values.startTime;
+    eventStartTime.dataset.committed = values.startTime;
+    eventEndTime.dataset.committed = values.endTime;
+    eventStartTime.classList.remove("invalid");
+    eventEndTime.classList.remove("invalid");
+    closeTimePopup();
     eventEndDate.value = values.endDate;
     eventEndTime.value = values.endTime;
     // 수정할 때는 일정이 속한 캘린더로 고정하고 바꾸지 못하게 한다.
@@ -389,11 +740,17 @@ function readTimeFields() {
         return { allDay: true, start: startDate, end: addDaysToText(endDate, 1) };
     }
 
-    if (!eventStartTime.value || !eventEndTime.value) {
+    // 칸에 쓴 글자를 "14:30" 모양으로 읽는다 (칸을 떠나기 전에 바로 저장 버튼을 눌러도 안전하도록 여기서도 한 번 더 읽는다)
+    const startTime = normalizeTimeInput(eventStartTime);
+    const endTime = normalizeTimeInput(eventEndTime);
+    if (!eventStartTime.value.trim() || !eventEndTime.value.trim()) {
         throw new Error("시간을 입력하세요.");
     }
-    const start = startDate + "T" + eventStartTime.value;
-    const end = endDate + "T" + eventEndTime.value;
+    if (!startTime || !endTime) {
+        throw new Error("시간을 읽을 수 없습니다. 14:30 처럼 적어 주세요.");
+    }
+    const start = startDate + "T" + startTime;
+    const end = endDate + "T" + endTime;
     // 같은 형식의 글자끼리는 글자 순서가 곧 시간 순서라서 그대로 비교할 수 있다
     if (end <= start) {
         throw new Error("끝 시간이 시작 시간보다 늦어야 합니다.");
@@ -475,9 +832,31 @@ eventDeleteButton.addEventListener("click", deleteEvent);
 eventCancelButton.addEventListener("click", function () {
     eventDialog.close();
 });
-// 제목 칸에서 Enter를 누르면 저장한다
-eventTitleInput.addEventListener("keydown", function (e) {
-    if (e.key === "Enter") {
+// 일정 창에서 Enter를 누르면:
+//  - 제목 칸: 일정을 저장하고 창을 닫는다 (다른 입력 창들과 같다)
+//  - 시간 칸: 그 시간을 확정하고 타이핑 모드에서 나온다 (시간칸 자신의 처리. 위의 setupTimeField)
+//  - 날짜 칸: 마찬가지로 입력을 확정하고 타이핑 모드에서 나온다
+//  - 버튼, 선택 칸(캘린더)에서: 그 버튼/선택 칸 본래의 동작
+//  - 그 밖에, 어느 칸에서도 타이핑하고 있지 않을 때(종일 체크 뒤나 빈 곳 등): 일정을 저장하고 창을 닫는다
+// 그래서 "시간 입력 → Enter(확정) → Enter(저장)"으로 이어진다.
+// 한글을 조합하는 중의 Enter는 글자를 확정하는 키라서 건드리지 않는다 (제목의 마지막 글자를 확정하다가 저장돼 버리지 않게)
+document.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" || e.isComposing || e.repeat || !eventDialog.open) {
+        return;
+    }
+    const target = e.target;
+    if (target.closest && target.closest(".time-field")) {
+        return;  // 시간칸과 시계 아이콘은 자기 처리가 있다
+    }
+    if (["BUTTON", "SELECT", "TEXTAREA"].includes(target.tagName)) {
+        return;
+    }
+    e.preventDefault();
+    if (target.tagName === "INPUT" && target.type === "date") {
+        target.blur();  // 날짜 입력을 확정하고 타이핑 모드에서 나온다
+        return;
+    }
+    if (!eventSaveButton.disabled) {  // 저장/삭제 요청이 진행 중일 때 Enter를 또 눌러도 중복으로 저장하지 않는다
         saveEvent();
     }
 });
@@ -846,6 +1225,7 @@ function makeTaskRow(task, options) {
         input.select();
     }
     content.addEventListener("dblclick", startEditing);
+    content.title = "두 번 클릭해서 이름 고치기";
 
     if (options.countText) {
         const count = document.createElement("span");
@@ -863,12 +1243,6 @@ function makeTaskRow(task, options) {
     // 버튼이 줄마다 항상 늘어서 있으면 화면이 복잡해서, 평소에는 숨겨두고 필요할 때만 보이게 한다
     const actions = document.createElement("span");
     actions.className = "task-actions";
-
-    const editButton = document.createElement("button");
-    editButton.textContent = "수정";
-    editButton.title = "이름 고치기 (이름을 두 번 클릭해도 됩니다)";
-    editButton.addEventListener("click", startEditing);
-    actions.appendChild(editButton);
 
     // 마감일: 프로젝트 카드에서는 눌러서 바꿀 수 있는 버튼, 그 밖에서는 글자로만 보여준다.
     // 마감일이 정해져 있으면 줄에 항상 보이고, 아직 없으면 "마감일" 버튼이 마우스를 올렸을 때만 뜬다
@@ -1372,12 +1746,20 @@ const projectDeadlineInput = document.getElementById("project-deadline");
 const projectColorInput = document.getElementById("project-color");
 const projectError = document.getElementById("project-error");
 const projectDeleteButton = document.getElementById("project-delete");
+const projectFolderSelect = document.getElementById("project-folder");
+const folderDialog = document.getElementById("folder-dialog");
+const folderDialogTitle = document.getElementById("folder-dialog-title");
+const folderNameInput = document.getElementById("folder-name");
+const folderError = document.getElementById("folder-error");
+const folderDeleteButton = document.getElementById("folder-delete");
 
 // 새 프로젝트 창에 미리 골라둘 색들 (서버의 PROJECT_COLORS와 같은 목록). 프로젝트 수에 따라 차례로 쓴다
 const PROJECT_COLORS = ["#4a7cff", "#e8590c", "#2f9e44", "#ae3ec9", "#d6336c", "#1098ad", "#f08c00"];
 
 // 마지막으로 서버에서 받은 프로젝트 목록 (마감일 순). 화면을 다시 그리거나 선택 칸을 채울 때 쓴다
 let projectsCache = [];
+// 마지막으로 서버에서 받은 폴더 목록 (만든 순서). 프로젝트는 folderId로 어느 폴더에 들어 있는지 알려준다 (폴더 없음은 null)
+let foldersCache = [];
 // 수정 중인 프로젝트. null이면 "새 프로젝트" 모드다
 let editingProject = null;
 // 삭제 버튼을 한 번 눌러서 "정말 삭제?" 확인을 기다리는 중인지
@@ -1392,11 +1774,16 @@ let subToFocus = null;
 // 서버에서 프로젝트 목록(진행률과 단계 포함)을 받아와서 화면을 다시 그린다.
 // 오늘 탭의 할 일 줄이나 프로젝트 카드에서 할 일을 바꾼 뒤에도 이 함수로 새로고침한다
 async function loadProjects() {
-    const response = await fetch("/api/projects");
-    if (!response.ok) {
-        throw new Error("서버 오류: " + response.status);
+    // 프로젝트와 폴더를 동시에 받는다
+    const [projectsResponse, foldersResponse] = await Promise.all([fetch("/api/projects"), fetch("/api/folders")]);
+    if (!projectsResponse.ok) {
+        throw new Error("서버 오류: " + projectsResponse.status);
     }
-    projectsCache = await response.json();
+    if (!foldersResponse.ok) {
+        throw new Error("서버 오류: " + foldersResponse.status);
+    }
+    projectsCache = await projectsResponse.json();
+    foldersCache = await foldersResponse.json();
     renderProjects();
     fillProjectSelect();
 }
@@ -1406,8 +1793,25 @@ function fillProjectSelect() {
     const previous = taskProjectSelect.value;
     taskProjectSelect.innerHTML = "";
     taskProjectSelect.add(new Option("프로젝트 없음", ""));
-    projectsCache.forEach(function (project) {
+    // 폴더에 없는 프로젝트를 먼저 놓고, 폴더에 든 프로젝트는 폴더 이름의 묶음(optgroup)으로 보여준다
+    projectsCache.filter(function (project) {
+        return project.folderId === null;
+    }).forEach(function (project) {
         taskProjectSelect.add(new Option(project.name, project.id));
+    });
+    foldersCache.forEach(function (folder) {
+        const inside = projectsCache.filter(function (project) {
+            return project.folderId === folder.id;
+        });
+        if (inside.length === 0) {
+            return;
+        }
+        const group = document.createElement("optgroup");
+        group.label = folder.name;
+        inside.forEach(function (project) {
+            group.appendChild(new Option(project.name, project.id));
+        });
+        taskProjectSelect.appendChild(group);
     });
     taskProjectSelect.value = previous;
     // 그 사이 지워진 프로젝트였다면 아무것도 선택되지 않은 상태가 되므로 "프로젝트 없음"으로 돌린다
@@ -1445,6 +1849,7 @@ function describeDeadline(deadline) {
 function makeProjectCard(project) {
     const card = document.createElement("div");
     card.className = "project-card";
+    card.dataset.projectId = project.id;  // 카드가 어느 열에 있었는지 기억할 때 쓰는 이름표 (아래 "프로젝트 카드 배치")
     card.style.borderLeftColor = project.color;
 
     // 맨 윗줄: 이름, 마감일, 수정 버튼
@@ -1517,7 +1922,7 @@ function makeProjectCard(project) {
         });
         detail.append("직접 입력 ", slider);
     } else {
-        detail.textContent = "단계 " + project.doneCount + " / " + project.total + " 완료 (연결된 할 일 기준)";
+        detail.textContent = "단계 " + project.doneCount + " / " + project.total + " 완료";
     }
     card.appendChild(detail);
 
@@ -1652,23 +2057,246 @@ function makeAddRow(placeholder, onAdd) {
     return { row: row, input: input };
 }
 
-// 프로젝트 카드들을 모두 다시 그린다
+// ----- 프로젝트 카드 배치: 열 수와 "빈틈 없이 쌓기" -----
+// 카드는 높이가 제각각이라, 격자(행과 열)로 놓으면 키가 큰 카드 옆에 빈 자리가 크게 남는다. 그래서 열(세로줄)마다 카드를 위에서부터
+// 차곡차곡 쌓는다(벽돌 쌓기 모양). 새 카드는 그 순간 가장 짧은 열에 놓는다.
+// 카드를 고칠 때마다 화면을 다시 그리는데, 그때마다 카드가 다른 열로 튀면 어지러우므로 카드가 있던 열은 기억해서 그대로 둔다
+// (열 수나 창 폭이 바뀌면 처음부터 다시 쌓는다). 한 열 안에서는 항상 원래 순서(마감일 순)를 지킨다.
+
+let projectGrids = [];                    // 지금 화면에 있는 카드 묶음들 [{ grid, cards }]. renderProjects가 채운다
+const projectColumnMemory = new Map();    // 프로젝트 번호 → 마지막으로 놓인 열 번호
+let lastProjectColumnCount = 0;
+
+// 지금 몇 열로 놓을지. 창이 900px보다 좁으면 설정과 상관없이 1열이다
+function projectColumnCount() {
+    if (window.innerWidth < 900) {
+        return 1;
+    }
+    return [2, 3, 4].includes(settings.projectColumns) ? settings.projectColumns : 2;
+}
+
+// 프로젝트 카드들을 한 줄에 몇 개씩 늘어놓을 상자를 만든다. 실제로 열에 나눠 놓는 일은 layoutProjectGrids가 한다
+function makeProjectGrid(projects) {
+    const grid = document.createElement("div");
+    grid.className = "project-grid";
+    const cards = projects.map(makeProjectCard);
+    projectGrids.push({ grid: grid, cards: cards });
+    return grid;
+}
+
+// 화면에 있는 모든 카드 묶음을 열에 나눠 쌓는다. 화면에 붙은 뒤에 불러야 높이를 잴 수 있다
+function layoutProjectGrids() {
+    const count = projectColumnCount();
+    if (count !== lastProjectColumnCount) {
+        projectColumnMemory.clear();  // 열 수가 바뀌었으니 처음부터 다시 쌓는다
+        lastProjectColumnCount = count;
+    }
+    projectGrids.forEach(function (entry) {
+        const grid = entry.grid;
+        grid.replaceChildren();
+        const columns = [];
+        for (let i = 0; i < count; i++) {
+            const column = document.createElement("div");
+            column.className = "project-column";
+            grid.appendChild(column);
+            columns.push(column);
+        }
+
+        // 탭이 숨겨져 있으면(오늘 탭에서 목록을 새로 받는 경우 등) 높이를 잴 수 없다. 그때는 번갈아 놓기만 하고 기억하지 않는다.
+        // 프로젝트 탭을 열면 목록을 다시 받아서 그때 제대로 쌓는다
+        if (grid.clientWidth === 0) {
+            entry.cards.forEach(function (card, index) {
+                columns[index % count].appendChild(card);
+            });
+            return;
+        }
+
+        const columnOf = new Map();  // 카드 → 열 번호
+        // 1단계: 기억해 둔 자리가 있는 카드는 그 열에 둔다
+        const fresh = [];
+        entry.cards.forEach(function (card) {
+            const remembered = projectColumnMemory.get(card.dataset.projectId);
+            if (remembered !== undefined && remembered < count) {
+                columns[remembered].appendChild(card);
+                columnOf.set(card, remembered);
+            } else {
+                fresh.push(card);
+            }
+        });
+        // 2단계: 새 카드는 그 순간 가장 짧은 열에 둔다 (높이는 실제로 놓아 보고 잰다)
+        fresh.forEach(function (card) {
+            let shortest = 0;
+            columns.forEach(function (column, index) {
+                if (column.offsetHeight < columns[shortest].offsetHeight) {
+                    shortest = index;
+                }
+            });
+            columns[shortest].appendChild(card);
+            columnOf.set(card, shortest);
+        });
+        // 3단계: 각 열 안에서 원래 순서(마감일 순)로 다시 줄 세우고, 자리를 기억해 둔다
+        entry.cards.forEach(function (card) {
+            columns[columnOf.get(card)].appendChild(card);  // 이미 붙어 있는 요소를 다시 붙이면 맨 아래로 옮겨진다
+            projectColumnMemory.set(card.dataset.projectId, columnOf.get(card));
+        });
+    });
+}
+
+// 창 크기가 바뀌면 다시 쌓는다 (폭이 바뀌면 카드 높이가 달라지고, 900px 경계를 넘으면 열 수가 바뀐다). 프로젝트 탭을 보고 있을 때만
+let projectResizeTimer = null;
+window.addEventListener("resize", function () {
+    clearTimeout(projectResizeTimer);
+    projectResizeTimer = setTimeout(function () {
+        if (document.getElementById("projects").classList.contains("active")) {
+            layoutProjectGrids();
+        }
+    }, 150);
+});
+
+// 폴더 하나의 구역을 만든다: 머리글(접기/펴기, 이름, 요약, 버튼들)과, 펼쳐져 있으면 그 안의 프로젝트 카드들
+function makeFolderSection(folder, projects) {
+    const section = document.createElement("section");
+    section.className = "folder-section" + (folder.collapsed ? " collapsed" : "");
+    section.dataset.folderId = folder.id;
+
+    const head = document.createElement("div");
+    head.className = "folder-head";
+    head.tabIndex = 0;
+    head.setAttribute("role", "button");
+    head.setAttribute("aria-expanded", String(!folder.collapsed));
+
+    const arrow = document.createElement("span");
+    arrow.className = "folder-arrow";
+    arrow.textContent = folder.collapsed ? "▸" : "▾";
+
+    const name = document.createElement("span");
+    name.className = "folder-name";
+    name.textContent = folder.name;
+
+    // 요약: "프로젝트 5개 · 평균 62% · 임박 2". 접어 두어도 이 한 줄로 상황을 알 수 있다
+    const summary = document.createElement("span");
+    summary.className = "folder-summary";
+    if (projects.length === 0) {
+        summary.textContent = "비어 있음";
+    } else {
+        const average = Math.round(projects.reduce(function (sum, project) {
+            return sum + project.percent;
+        }, 0) / projects.length);
+        summary.textContent = "프로젝트 " + projects.length + "개 · 평균 " + average + "%";
+        // 마감이 7일 이내이거나 지났는데 아직 안 끝난 프로젝트의 수
+        const urgentCount = projects.filter(function (project) {
+            return project.deadline && project.percent < 100 && describeDeadline(project.deadline).urgent;
+        }).length;
+        if (urgentCount > 0) {
+            const urgent = document.createElement("span");
+            urgent.className = "folder-urgent";
+            urgent.textContent = "임박 " + urgentCount;
+            summary.append(" · ", urgent);
+        }
+    }
+
+    const addButton = document.createElement("button");
+    addButton.textContent = "+ 프로젝트";
+    addButton.title = "이 폴더에 새 프로젝트 만들기";
+    addButton.addEventListener("click", function (e) {
+        e.stopPropagation();  // 머리글 전체를 누르면 접히는데, 버튼을 누른 것은 접기가 아니다
+        openProjectDialog(null, { folderId: folder.id });
+    });
+    const editButton = document.createElement("button");
+    editButton.textContent = "수정";
+    editButton.title = "폴더 이름 바꾸기, 삭제";
+    editButton.addEventListener("click", function (e) {
+        e.stopPropagation();
+        openFolderDialog(folder);
+    });
+    head.append(arrow, name, summary, addButton, editButton);
+
+    function toggle() {
+        toggleFolder(folder);
+    }
+    head.addEventListener("click", toggle);
+    head.addEventListener("keydown", function (e) {
+        // 머리글 안의 버튼에서 누른 Enter/Space는 그 버튼의 일이다
+        if ((e.key === "Enter" || e.key === " ") && e.target === head) {
+            e.preventDefault();
+            toggle();
+        }
+    });
+    section.appendChild(head);
+
+    if (!folder.collapsed) {
+        if (projects.length > 0) {
+            const body = makeProjectGrid(projects);
+            body.classList.add("folder-body");
+            section.appendChild(body);
+        } else {
+            const empty = document.createElement("p");
+            empty.className = "folder-empty";
+            empty.textContent = "이 폴더에는 프로젝트가 없습니다. '+ 프로젝트'로 만들거나, 프로젝트 수정 창에서 이 폴더를 골라 주세요.";
+            section.appendChild(empty);
+        }
+    }
+    return section;
+}
+
+// 폴더를 접거나 편다. 화면에는 먼저 반영하고, 저장에 실패하면 알린다
+function toggleFolder(folder) {
+    folder.collapsed = !folder.collapsed;
+    renderProjects();
+    sendRequest("/api/folders/" + folder.id, "PATCH", { collapsed: folder.collapsed }).catch(function (error) {
+        showToast("폴더 상태를 저장하지 못했습니다: " + error.message);
+    });
+}
+
+// 폴더와 프로젝트 카드들을 모두 다시 그린다.
+// 폴더가 하나도 없으면 예전처럼 카드만 늘어놓고, 폴더가 있으면 폴더 구역들 뒤에 "폴더 없음" 구역을 둔다
 function renderProjects() {
     projectListElement.innerHTML = "";
-    if (projectsCache.length === 0) {
+    projectGrids = [];
+    if (projectsCache.length === 0 && foldersCache.length === 0) {
         const empty = document.createElement("p");
         empty.className = "today-empty";
         empty.textContent = "아직 프로젝트가 없습니다. 위의 '+ 새 프로젝트'로 만들어 보세요.";
         projectListElement.appendChild(empty);
         return;
     }
-    projectsCache.forEach(function (project) {
-        projectListElement.appendChild(makeProjectCard(project));
+
+    const loose = projectsCache.filter(function (project) {
+        return project.folderId === null;
     });
+    if (foldersCache.length === 0) {
+        projectListElement.appendChild(makeProjectGrid(loose));
+        layoutProjectGrids();
+        return;
+    }
+
+    foldersCache.forEach(function (folder) {
+        const inside = projectsCache.filter(function (project) {
+            return project.folderId === folder.id;
+        });
+        projectListElement.appendChild(makeFolderSection(folder, inside));
+    });
+    if (loose.length > 0) {
+        const section = document.createElement("section");
+        section.className = "folder-section loose";
+        const head = document.createElement("div");
+        head.className = "folder-head static";
+        const name = document.createElement("span");
+        name.className = "folder-name";
+        name.textContent = "폴더 없음";
+        const summary = document.createElement("span");
+        summary.className = "folder-summary";
+        summary.textContent = "프로젝트 " + loose.length + "개";
+        head.append(name, summary);
+        section.append(head, makeProjectGrid(loose));
+        section.lastChild.classList.add("folder-body");
+        projectListElement.appendChild(section);
+    }
+    layoutProjectGrids();  // 모두 화면에 붙인 뒤에 열에 나눠 쌓는다
 }
 
-// 프로젝트 추가/수정 창을 연다. project가 없으면 새 프로젝트
-function openProjectDialog(project) {
+// 프로젝트 추가/수정 창을 연다. project가 없으면 새 프로젝트. options.folderId는 새 프로젝트를 미리 넣어 둘 폴더다
+function openProjectDialog(project, options) {
     editingProject = project || null;
     projectDeleteArmed = false;
     projectDeleteButton.textContent = "삭제";
@@ -1676,6 +2304,14 @@ function openProjectDialog(project) {
     projectDialogTitle.textContent = editingProject ? "프로젝트 수정" : "새 프로젝트";
 
     projectNameInput.value = editingProject ? editingProject.name : "";
+    // 폴더 선택 칸: "폴더 없음" + 폴더들. 수정이면 지금 들어 있는 폴더, 새 프로젝트면 미리 정해진 폴더(없으면 폴더 없음)
+    projectFolderSelect.innerHTML = "";
+    projectFolderSelect.add(new Option("폴더 없음", ""));
+    foldersCache.forEach(function (folder) {
+        projectFolderSelect.add(new Option(folder.name, folder.id));
+    });
+    const folderId = editingProject ? editingProject.folderId : (options && options.folderId !== undefined ? options.folderId : null);
+    projectFolderSelect.value = folderId === null || folderId === undefined ? "" : String(folderId);
     projectDeadlineInput.value = editingProject && editingProject.deadline ? editingProject.deadline : "";
     projectColorInput.value = editingProject
         ? editingProject.color
@@ -1703,6 +2339,7 @@ async function saveProject() {
         deadline: projectDeadlineInput.value,  // 비어 있으면 서버가 "마감일 없음"으로 저장한다
         color: projectColorInput.value,
         progressMode: mode,
+        folderId: projectFolderSelect.value ? Number(projectFolderSelect.value) : null,
     };
     // 자동 → 직접으로 바꾸면 슬라이더가 0%에서 시작하지 않고, 지금 보이던 진행률에서 시작하게 한다
     if (editingProject && mode === "manual" && editingProject.progressMode !== "manual") {
@@ -1741,6 +2378,76 @@ async function deleteProject() {
 
 projectAddButton.addEventListener("click", function () {
     openProjectDialog(null);
+});
+
+// ----- 폴더 만들기 / 이름 바꾸기 / 지우기 -----
+
+// 수정 중인 폴더. null이면 "새 폴더" 모드다
+let editingFolder = null;
+let folderDeleteArmed = false;
+
+function openFolderDialog(folder) {
+    editingFolder = folder || null;
+    folderDeleteArmed = false;
+    folderDeleteButton.textContent = "삭제";
+    folderDeleteButton.hidden = !editingFolder;
+    folderDialogTitle.textContent = editingFolder ? "폴더 수정" : "새 폴더";
+    folderNameInput.value = editingFolder ? editingFolder.name : "";
+    folderError.textContent = "";
+    folderDialog.showModal();
+    folderNameInput.focus();
+    folderNameInput.select();
+}
+
+async function saveFolder() {
+    const name = folderNameInput.value.trim();
+    if (!name) {
+        folderError.textContent = "폴더 이름을 입력하세요.";
+        return;
+    }
+    try {
+        folderError.textContent = "저장하는 중...";
+        if (editingFolder) {
+            await sendRequest("/api/folders/" + editingFolder.id, "PATCH", { name: name });
+        } else {
+            await sendRequest("/api/folders", "POST", { name: name });
+        }
+        folderDialog.close();
+        await loadProjects();
+    } catch (error) {
+        folderError.textContent = error.message;
+    }
+}
+
+// 폴더 삭제: 두 번 눌러야 지워진다. 안의 프로젝트는 지워지지 않고 "폴더 없음"으로 나온다
+async function deleteFolder() {
+    if (!folderDeleteArmed) {
+        folderDeleteArmed = true;
+        folderDeleteButton.textContent = "정말 삭제? (프로젝트는 '폴더 없음'으로 남음)";
+        return;
+    }
+    try {
+        await sendRequest("/api/folders/" + editingFolder.id, "DELETE");
+        folderDialog.close();
+        await loadProjects();
+    } catch (error) {
+        folderError.textContent = error.message;
+    }
+}
+
+document.getElementById("folder-add-button").addEventListener("click", function () {
+    openFolderDialog(null);
+});
+document.getElementById("folder-save").addEventListener("click", saveFolder);
+document.getElementById("folder-cancel").addEventListener("click", function () {
+    folderDialog.close();
+});
+folderDeleteButton.addEventListener("click", deleteFolder);
+folderNameInput.addEventListener("keydown", function (e) {
+    // 한글 조합 중의 Enter는 무시한다 (다른 입력 칸과 같은 이유)
+    if (e.key === "Enter" && !e.isComposing) {
+        saveFolder();
+    }
 });
 document.getElementById("project-save").addEventListener("click", saveProject);
 document.getElementById("project-cancel").addEventListener("click", function () {
@@ -2960,6 +3667,7 @@ async function loadSettings() {
         });
 
         pomodoroSoundCheckbox.checked = settings.pomodoroSound !== false;
+        document.querySelector('input[name="project-columns"][value="' + ([2, 3, 4].includes(settings.projectColumns) ? settings.projectColumns : 2) + '"]').checked = true;
         vaultPathInput.value = settings.vaultPath || "";
 
         // 혹시 이미 있던 슬라이더를 비우고, 화면 크기 슬라이더와 Pomodoro 슬라이더를 각자의 칸에 만든다
@@ -3012,6 +3720,18 @@ wrapAllDayCheckbox.addEventListener("change", function () {
     settings.wrapAllDay = wrapAllDayCheckbox.checked;
     applySettings();
     saveSettings();
+});
+
+// 설정 탭에서 프로젝트 카드 열 수(2/3/4열)를 골랐을 때: 카드를 처음부터 다시 쌓고, 저장한다
+document.querySelectorAll('input[name="project-columns"]').forEach(function (radio) {
+    radio.addEventListener("change", function () {
+        if (radio.checked) {
+            settings.projectColumns = Number(radio.value);
+            projectColumnMemory.clear();
+            renderProjects();
+            saveSettings();
+        }
+    });
 });
 
 // 설정 탭에서 타이머 소리 스위치를 눌렀을 때: 저장만 하면 된다 (소리를 낼 때마다 설정을 읽는다)

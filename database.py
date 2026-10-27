@@ -74,6 +74,15 @@ def init_db():
         )
     """)
 
+    # 프로젝트 폴더: 프로젝트가 많아졌을 때 묶어서 보려는 한 단계짜리 폴더. 폴더 안에 폴더는 없다
+    run("""
+        CREATE TABLE IF NOT EXISTS folders (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            name      TEXT NOT NULL,                  -- 폴더 이름 "2학기"
+            collapsed INTEGER NOT NULL DEFAULT 0      -- 접어 둔 폴더인지. 0이면 펼침, 1이면 접힘
+        )
+    """)
+
     # 마이그레이션: 이미 만들어진 studyflow.db의 tasks 테이블에는 나중에 추가한 칸이 없을 수 있다.
     # CREATE TABLE IF NOT EXISTS는 테이블이 이미 있으면 아무것도 안 하므로, 없는 칸만 따로 덧붙인다.
     # PRAGMA table_info: 테이블에 어떤 칸들이 있는지 알려주는 SQLite 명령
@@ -84,6 +93,11 @@ def init_db():
                               ("importance", "INTEGER"), ("urgency", "INTEGER")):
         if name not in existing:
             run(f"ALTER TABLE tasks ADD COLUMN {name} {column_type}")
+
+    # projects 표에도 folder_id(들어 있는 폴더, 없으면 NULL)를 덧붙인다
+    columns, _ = run("PRAGMA table_info(projects)")
+    if "folder_id" not in [column["name"] for column in columns]:
+        run("ALTER TABLE projects ADD COLUMN folder_id INTEGER")
 
     # 범위가 줄어들기 전(-5~5)에 평가해 둔 값이 있으면 새 범위 안으로 맞춘다. MAX/MIN은 두 값 중 큰/작은 쪽을 고른다.
     # 이미 범위 안인 값은 그대로이고, 평가 안 한(NULL) 할 일은 건드리지 않는다
@@ -256,20 +270,20 @@ def get_project(project_id):
     return rows[0] if rows else None
 
 
-def add_project(name, deadline, color, progress_mode, manual_percent):
-    """프로젝트를 하나 추가하고, 만들어진 프로젝트(번호 포함)를 돌려준다."""
+def add_project(name, deadline, color, progress_mode, manual_percent, folder_id=None):
+    """프로젝트를 하나 추가하고, 만들어진 프로젝트(번호 포함)를 돌려준다. folder_id는 넣을 폴더(없으면 None)다."""
     with contextlib.closing(connect()) as connection:
         with connection:
             cursor = connection.execute(
-                "INSERT INTO projects (name, deadline, color, progress_mode, manual_percent) VALUES (?, ?, ?, ?, ?)",
-                (name, deadline, color, progress_mode, manual_percent),
+                "INSERT INTO projects (name, deadline, color, progress_mode, manual_percent, folder_id) VALUES (?, ?, ?, ?, ?, ?)",
+                (name, deadline, color, progress_mode, manual_percent, folder_id),
             )
             row = connection.execute("SELECT * FROM projects WHERE id = ?", (cursor.lastrowid,)).fetchone()
             return dict(row)
 
 
 # 프로젝트에서 고칠 수 있는 칸들 (EDITABLE_COLUMNS와 같은 이유로 고정된 목록)
-EDITABLE_PROJECT_COLUMNS = ("name", "deadline", "color", "progress_mode", "manual_percent")
+EDITABLE_PROJECT_COLUMNS = ("name", "deadline", "color", "progress_mode", "manual_percent", "folder_id")
 
 
 def update_project(project_id, changes):
@@ -292,6 +306,53 @@ def delete_project(project_id):
                 "UPDATE tasks SET project_id = NULL, parent_id = NULL WHERE project_id = ?", (project_id,)
             )
             cursor = connection.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+            return cursor.rowcount > 0
+
+
+# ---------- 프로젝트 폴더 ----------
+
+def list_folders():
+    """모든 폴더를 만든 순서대로 돌려준다. 폴더마다 안에 든 프로젝트 수(project_count)도 센다.
+    LEFT JOIN: 프로젝트가 하나도 없는 빈 폴더도 줄이 남는다"""
+    rows, _ = run(
+        "SELECT f.*, COUNT(p.id) AS project_count "
+        "FROM folders f LEFT JOIN projects p ON p.folder_id = f.id "
+        "GROUP BY f.id ORDER BY f.id"
+    )
+    return rows
+
+
+def get_folder(folder_id):
+    """폴더 하나를 돌려준다. 없으면 None."""
+    rows, _ = run("SELECT * FROM folders WHERE id = ?", (folder_id,))
+    return rows[0] if rows else None
+
+
+def add_folder(name):
+    """폴더를 하나 추가하고, 만들어진 폴더(번호 포함)를 돌려준다."""
+    with contextlib.closing(connect()) as connection:
+        with connection:
+            cursor = connection.execute("INSERT INTO folders (name) VALUES (?)", (name,))
+            row = connection.execute("SELECT * FROM folders WHERE id = ?", (cursor.lastrowid,)).fetchone()
+            return dict(row)
+
+
+# 폴더에서 고칠 수 있는 칸들 (다른 EDITABLE_* 목록과 같은 이유로 고정된 목록)
+EDITABLE_FOLDER_COLUMNS = ("name", "collapsed")
+
+
+def update_folder(folder_id, changes):
+    """폴더의 changes에 든 칸만 고친다. 그 번호의 폴더가 없으면 False."""
+    return update_row("folders", EDITABLE_FOLDER_COLUMNS, folder_id, changes)
+
+
+def delete_folder(folder_id):
+    """폴더를 지운다. 없으면 False. 안에 든 프로젝트는 지우지 않고 "폴더 없음"으로 돌려놓는다(folder_id를 비운다).
+    두 문장이 모두 성공하거나 모두 취소되도록 한 번의 거래(transaction)로 묶는다."""
+    with contextlib.closing(connect()) as connection:
+        with connection:
+            connection.execute("UPDATE projects SET folder_id = NULL WHERE folder_id = ?", (folder_id,))
+            cursor = connection.execute("DELETE FROM folders WHERE id = ?", (folder_id,))
             return cursor.rowcount > 0
 
 
