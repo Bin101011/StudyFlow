@@ -165,6 +165,18 @@ select {
     border-radius: var(--radius-sm);
 }
 
+/* 드롭다운(<select>)의 화살표. 브라우저 기본 화살표는 칸 맨 오른쪽 끝에 붙어서 어색해, 기본 모양을 지우고(appearance: none)
+   작은 화살표 그림(SVG)을 오른쪽 끝에서 안쪽(34px)으로 들여서 직접 그린다. 글자가 화살표 밑으로 들어가지 않도록 오른쪽 안쪽 여백을 넉넉히 둔다 */
+select {
+    appearance: none;
+    padding-right: 54px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23667085' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 34px center;
+    background-size: 12px 8px;
+    cursor: pointer;
+}
+
 input::placeholder {
     color: var(--text-faint);
 }
@@ -390,6 +402,7 @@ main {
 .calendar-layout {
     display: flex;
     gap: 24px;
+    margin-left: -12px;  /* "내 캘린더" 목록이 화면 왼쪽에서 너무 멀어서 12px 왼쪽으로 당긴다 (달력도 그만큼 넓어진다) */
 }
 
 /* 왼쪽 캘린더 목록의 폭. 설정 탭의 슬라이더로 바꾼다 */
@@ -403,6 +416,72 @@ main {
     font-size: 12px;
     font-weight: 600;
     color: var(--text-muted);
+}
+
+/* "내 캘린더" 제목 줄: 제목 오른쪽 끝에 새 캘린더 만들기(+) 버튼 */
+.calendar-list-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+#calendar-list button#calendar-add-button {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    margin-right: 6px;
+    font-size: 16px;
+    line-height: 1;
+    color: var(--text-muted);
+    background-color: transparent;
+    border-color: transparent;
+}
+
+#calendar-list button#calendar-add-button:hover:not(:disabled) {
+    background-color: var(--surface-strong);
+    border-color: transparent;
+    color: var(--text);
+}
+
+/* 캘린더 이름은 남는 폭을 차지해서, 줄 오른쪽 끝의 지우기(✕) 버튼을 밀어낸다 */
+#calendar-list .calendar-name {
+    flex: 1;
+    min-width: 0;
+}
+
+/* 지우기(✕) 버튼: 줄에 마우스를 올렸을 때(또는 키보드로 닿았을 때)만 보인다 */
+#calendar-list button.calendar-remove {
+    flex-shrink: 0;
+    padding: 0 6px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-faint);
+    background-color: transparent;
+    border-color: transparent;
+    opacity: 0;
+}
+
+#calendar-list label:hover button.calendar-remove,
+#calendar-list label:focus-within button.calendar-remove {
+    opacity: 1;
+}
+
+#calendar-list button.calendar-remove:hover:not(:disabled) {
+    color: var(--danger);
+    background-color: transparent;
+    border-color: transparent;
+}
+
+.calendar-list-error {
+    margin: 4px 8px;
+}
+
+/* 캘린더 지우기 확인 창의 안내 글 */
+.calendar-remove-message {
+    margin: 0 0 8px;
+    max-width: 360px;
+    line-height: 1.6;
+    white-space: pre-line;
 }
 
 /* 캘린더 목록의 체크박스 한 줄 */
@@ -891,7 +970,9 @@ input.color-dot::-webkit-color-swatch {
 }
 
 .task-add select {
-    max-width: 140px;
+    max-width: 170px;
+    padding-right: 46px;  /* 좁은 칸이라 화살표를 조금만(28px) 들여서 글자 자리를 지킨다 */
+    background-position: right 28px center;
     border: none;
     box-shadow: none;
     background-color: var(--surface);
@@ -1315,7 +1396,9 @@ input.color-dot::-webkit-color-swatch {
 #project-dialog,
 #dday-dialog,
 #note-dialog,
-#folder-dialog {
+#folder-dialog,
+#calendar-add-dialog,
+#calendar-remove-dialog {
     width: 400px;
     padding: 24px;
     color: var(--text);
@@ -1329,7 +1412,9 @@ input.color-dot::-webkit-color-swatch {
 #project-dialog::backdrop,
 #dday-dialog::backdrop,
 #note-dialog::backdrop,
-#folder-dialog::backdrop {
+#folder-dialog::backdrop,
+#calendar-add-dialog::backdrop,
+#calendar-remove-dialog::backdrop {
     background-color: rgba(16, 24, 40, 0.4);
 }
 
@@ -1337,7 +1422,9 @@ input.color-dot::-webkit-color-swatch {
 #project-dialog h2,
 #dday-dialog h2,
 #note-dialog h2,
-#folder-dialog h2 {
+#folder-dialog h2,
+#calendar-add-dialog h2,
+#calendar-remove-dialog h2 {
     margin: 0 0 18px;
     font-size: 18px;
     font-weight: 600;

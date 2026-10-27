@@ -845,10 +845,9 @@ function showEventDialog(values) {
     closeTimePopup();
     eventEndDate.value = values.endDate;
     eventEndTime.value = values.endTime;
-    // 수정할 때는 일정이 속한 캘린더로 고정하고 바꾸지 못하게 한다.
+    // 수정할 때는 일정이 속한 캘린더가 선택되어 있고, 다른 캘린더를 고르면 저장할 때 그 캘린더로 옮겨진다.
     // 새 일정은 기본 캘린더가 미리 선택되고, 직접 바꿀 수 있다
     eventCalendarSelect.value = values.calendarId || defaultCalendarId;
-    eventCalendarSelect.disabled = !!editingEvent;
     eventError.textContent = "";
     updateTimeInputs();
 
@@ -972,11 +971,20 @@ async function saveEvent() {
         eventError.textContent = "저장하는 중...";
 
         if (editingEvent) {
-            await sendRequest("/api/events/" + encodeURIComponent(editingEvent.id), "PATCH", {
+            const body = {
                 calendarId: editingEvent.extendedProps.calendarId,
                 title: title,
                 ...timeFields,
-            });
+            };
+            // 다른 캘린더를 골랐으면 서버가 내용을 고친 뒤 그 캘린더로 옮긴다
+            const moved = eventCalendarSelect.value && eventCalendarSelect.value !== editingEvent.extendedProps.calendarId;
+            if (moved) {
+                body.destinationCalendarId = eventCalendarSelect.value;
+            }
+            await sendRequest("/api/events/" + encodeURIComponent(editingEvent.id), "PATCH", body);
+            if (moved) {
+                showToast("'" + title + "' 일정을 '" + eventCalendarSelect.selectedOptions[0].textContent + "' 캘린더로 옮겼습니다");
+            }
         } else {
             await sendRequest("/api/events", "POST", {
                 calendarId: eventCalendarSelect.value,
@@ -4646,10 +4654,19 @@ function applyCalendarColor(calendarId, color) {
     });
 }
 
-// 왼쪽 캘린더 목록(체크박스)을 만든다
+// 왼쪽 캘린더 목록(체크박스)을 만든다. 처음 한 번과, 캘린더를 만들거나 뺀 뒤에 다시 부른다 (그때마다 목록과 선택 칸을 비우고 새로 채운다)
 async function loadCalendarList() {
     // index.html에서 만들어둔 빈 칸(<aside id="calendar-list">)
     const listElement = document.getElementById("calendar-list");
+
+    listElement.querySelectorAll("label, .calendar-list-error").forEach(function (element) {
+        element.remove();
+    });
+    eventCalendarSelect.innerHTML = "";
+    while (defaultCalendarSelect.options.length > 1) {
+        defaultCalendarSelect.remove(1);  // 맨 위 "자동" 항목만 남긴다
+    }
+    editableCalendars.length = 0;
 
     try {
         // Flask의 /api/calendars에 캘린더 목록을 요청한다
@@ -4710,8 +4727,32 @@ async function loadCalendarList() {
                 editableCalendars.push({ id: cal.id, primary: cal.primary });
             }
 
+            // 이름은 span에 넣어서 남는 폭을 차지하게 한다 (오른쪽 끝에 지우기 버튼이 올 자리)
+            const nameText = document.createElement("span");
+            nameText.className = "calendar-name";
+            nameText.textContent = cal.name;
+
             // label 안에 체크박스, 색 점, 이름 글자를 차례로 넣는다
-            label.append(checkbox, dot, cal.name);
+            label.append(checkbox, dot, nameText);
+
+            // 내 기본 캘린더는 지울 수 없다. 나머지는 줄 오른쪽에 ✕ 버튼이 있다:
+            //  - StudyFlow에서 만든(내 소유의) 캘린더는 "삭제" = Google에서 완전히 지운다
+            //  - 그 밖의 캘린더(공휴일, 공유받은 것, Google에서 직접 만든 것)는 "목록에서 빼기" = 내 목록에서만 뺀다
+            if (!cal.primary) {
+                const created = !!cal.owner && (settings.createdCalendarIds || []).includes(cal.id);
+                const removeButton = document.createElement("button");
+                removeButton.type = "button";
+                removeButton.className = "calendar-remove";
+                removeButton.textContent = "✕";
+                removeButton.title = created ? "이 캘린더 삭제" : "내 목록에서 빼기";
+                removeButton.addEventListener("click", function (e) {
+                    // 버튼은 label 안에 있어서, 막지 않으면 이 줄의 체크박스가 눌린다
+                    e.preventDefault();
+                    e.stopPropagation();
+                    openCalendarRemoveDialog(cal, created);
+                });
+                label.appendChild(removeButton);
+            }
             // 만든 한 줄을 목록 칸에 붙인다
             listElement.appendChild(label);
 
@@ -4753,9 +4794,138 @@ async function loadCalendarList() {
         updateDefaultCalendar();
     } catch (error) {
         console.error("캘린더 목록을 불러오지 못했습니다:", error);
-        listElement.append("캘린더 목록을 불러오지 못했습니다.");
+        const message = document.createElement("p");
+        message.className = "calendar-list-error";
+        message.textContent = "캘린더 목록을 불러오지 못했습니다.";
+        listElement.appendChild(message);
     }
 }
+
+// ----- 캘린더 만들기 / 지우기 -----
+// "내 캘린더" 제목 옆의 + 로 Google에 새 캘린더를 만들고, 줄 끝의 ✕로 지운다. 폰과 웹의 Google Calendar에도 똑같이 반영된다.
+// 지우기는 두 가지다. StudyFlow에서 만든 캘린더는 "삭제"(일정까지 완전히 지움, 되돌릴 수 없음), 그 밖의 캘린더는 "목록에서 빼기"(캘린더와 일정은 그대로).
+// 이 구분은 Google의 권한 범위(calendar.app.created = 이 앱이 만든 캘린더만)와 같아서, 실수로 다른 캘린더를 지울 수 없다.
+// 어떤 캘린더를 StudyFlow가 만들었는지는 만들 때 id를 설정(createdCalendarIds)에 적어 둬서 안다.
+
+const calendarAddButton = document.getElementById("calendar-add-button");
+const calendarAddDialog = document.getElementById("calendar-add-dialog");
+const calendarNameInput = document.getElementById("calendar-name");
+const calendarColorInput = document.getElementById("calendar-color");
+const calendarAddError = document.getElementById("calendar-add-error");
+const calendarAddSave = document.getElementById("calendar-add-save");
+const calendarRemoveDialog = document.getElementById("calendar-remove-dialog");
+const calendarRemoveTitle = document.getElementById("calendar-remove-title");
+const calendarRemoveMessage = document.getElementById("calendar-remove-message");
+const calendarRemoveError = document.getElementById("calendar-remove-error");
+const calendarRemoveConfirm = document.getElementById("calendar-remove-confirm");
+let removingCalendar = null;  // 지우기 창이 열려 있는 동안만 값이 있다: { calendar: 목록의 캘린더, permanent: 완전히 지우는가 }
+
+// 캘린더 목록을 새로 받아 다시 그리고, 일정도 다시 불러온다
+async function refreshAfterCalendarChange() {
+    await loadCalendarList();
+    reloadVisibleEvents();
+}
+
+calendarAddButton.addEventListener("click", function () {
+    calendarNameInput.value = "";
+    calendarAddError.textContent = "";
+    calendarAddSave.disabled = false;
+    calendarAddDialog.showModal();
+    calendarNameInput.focus();
+});
+document.getElementById("calendar-add-cancel").addEventListener("click", function () {
+    calendarAddDialog.close();
+});
+
+async function createCalendar() {
+    const name = calendarNameInput.value.trim();
+    if (!name) {
+        calendarAddError.textContent = "캘린더 이름을 입력하세요.";
+        return;
+    }
+    calendarAddError.textContent = "만드는 중...";
+    calendarAddSave.disabled = true;  // 두 번 눌러 같은 캘린더가 둘 생기지 않게 한다
+    try {
+        const response = await fetch("/api/calendars", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: name, color: calendarColorInput.value }),
+        });
+        if (!response.ok) {
+            throw new Error(await errorMessageFrom(response));
+        }
+        const created = await response.json();
+        // 이 캘린더는 StudyFlow가 만들었다고 기억해 둔다 (그래서 "삭제"를 보여 줄 수 있다)
+        settings.createdCalendarIds = (settings.createdCalendarIds || []).concat(created.id);
+        saveSettings();
+        calendarAddDialog.close();
+        showToast("'" + name + "' 캘린더를 만들었습니다");
+        await refreshAfterCalendarChange();
+    } catch (error) {
+        calendarAddError.textContent = error.message;
+    } finally {
+        calendarAddSave.disabled = false;
+    }
+}
+calendarAddSave.addEventListener("click", createCalendar);
+calendarNameInput.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.isComposing) {  // 한글 조합 중의 Enter는 글자를 확정하는 키라서 무시한다
+        e.preventDefault();
+        createCalendar();
+    }
+});
+
+// 지우기 확인 창을 연다. permanent가 true면 완전히 지우기, false면 목록에서 빼기
+function openCalendarRemoveDialog(cal, permanent) {
+    removingCalendar = { calendar: cal, permanent: permanent };
+    calendarRemoveError.textContent = "";
+    calendarRemoveConfirm.disabled = false;
+    if (permanent) {
+        calendarRemoveTitle.textContent = "캘린더 삭제";
+        calendarRemoveMessage.textContent = "'" + cal.name + "' 캘린더를 삭제할까요?\n이 캘린더의 일정이 모두 지워지고, 폰과 웹의 Google Calendar에서도 사라집니다. 되돌릴 수 없습니다.";
+        calendarRemoveConfirm.textContent = "삭제";
+        calendarRemoveConfirm.className = "danger";
+    } else {
+        calendarRemoveTitle.textContent = "목록에서 빼기";
+        calendarRemoveMessage.textContent = "'" + cal.name + "' 캘린더를 내 목록에서 뺄까요?\n캘린더와 그 안의 일정은 지워지지 않습니다. Google Calendar에서 다시 추가할 수 있습니다.";
+        calendarRemoveConfirm.textContent = "목록에서 빼기";
+        calendarRemoveConfirm.className = "";
+    }
+    calendarRemoveDialog.showModal();
+}
+document.getElementById("calendar-remove-cancel").addEventListener("click", function () {
+    calendarRemoveDialog.close();
+});
+
+calendarRemoveConfirm.addEventListener("click", async function () {
+    if (!removingCalendar) {
+        return;
+    }
+    const cal = removingCalendar.calendar;
+    const mode = removingCalendar.permanent ? "delete" : "unsubscribe";
+    calendarRemoveError.textContent = "처리하는 중...";
+    calendarRemoveConfirm.disabled = true;
+    try {
+        await sendRequest("/api/calendars?calendarId=" + encodeURIComponent(cal.id) + "&mode=" + mode, "DELETE");
+        // 이 캘린더를 가리키던 설정(만든 캘린더 기록, 숨김 목록, 기본 캘린더)을 정리한다
+        settings.createdCalendarIds = (settings.createdCalendarIds || []).filter(function (id) {
+            return id !== cal.id;
+        });
+        hiddenCalendarIds.delete(cal.id);
+        settings.hiddenCalendarIds = Array.from(hiddenCalendarIds);
+        if (settings.defaultCalendarId === cal.id) {
+            settings.defaultCalendarId = "";
+        }
+        saveSettings();
+        calendarRemoveDialog.close();
+        showToast("'" + cal.name + "' 캘린더를 " + (mode === "delete" ? "삭제했습니다" : "목록에서 뺐습니다"));
+        await refreshAfterCalendarChange();
+    } catch (error) {
+        calendarRemoveError.textContent = error.message;
+    } finally {
+        calendarRemoveConfirm.disabled = false;
+    }
+});
 
 // 위 함수들을 실행한다 (함수는 만들기만 하면 실행되지 않고, 이렇게 불러야 실행된다)
 // 설정과 캘린더 목록을 동시에 불러온다. loadCalendarList는 settingsReady(설정 불러오기가 끝났다는 약속)를 기다린다

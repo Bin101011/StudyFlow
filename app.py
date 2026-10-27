@@ -123,6 +123,12 @@ def get_calendar_list():
         return _calendar_cache["data"]
 
 
+def forget_calendar_list():
+    """기억해 둔 캘린더 목록을 오래된 것으로 만든다. 캘린더를 만들거나 뺀 뒤, 다음 요청 때 Google에서 새로 받게 한다."""
+    with _calendar_lock:
+        _calendar_cache["time"] = 0
+
+
 def get_thread_service():
     """지금 실행 중인 스레드 전용 Google 연결을 돌려준다. 없으면 한 번 만들고, 이후엔 재사용한다."""
     service = getattr(_thread_data, "service", None)
@@ -311,8 +317,96 @@ def api_calendars():
             "color": calendar.get("backgroundColor", "#3788d8"),  # Google에서 정한 색. 없으면 기본 파랑
             "canEdit": can_edit(calendar),  # 일정을 추가/수정할 수 있는 캘린더인가 (공휴일 캘린더 등은 False)
             "primary": calendar.get("primary", False),  # 내 기본 캘린더인가
+            "owner": calendar.get("accessRole") == "owner",  # 내가 소유한 캘린더인가 (소유한 것만 완전히 지울 수 있다)
         })
     return jsonify(result)
+
+
+# 캘린더 만들기 (POST): {"name": "스터디", "color": "#4a7cff"(없어도 됨)}. Google에 새 보조 캘린더를 만든다 (내 폰과 웹에도 똑같이 생긴다)
+MAX_CALENDAR_NAME = 100
+
+
+@app.route("/api/calendars", methods=["POST"])
+def api_create_calendar():
+    data = request.get_json(silent=True) or {}
+    name = str(data.get("name", "")).strip()
+    if not name:
+        return jsonify({"error": "캘린더 이름을 입력하세요."}), 400
+    if len(name) > MAX_CALENDAR_NAME:
+        return jsonify({"error": f"캘린더 이름은 {MAX_CALENDAR_NAME}글자 이하여야 합니다."}), 400
+    color = data.get("color")
+    if color is not None and (not isinstance(color, str) or not COLOR_PATTERN.match(color)):
+        return jsonify({"error": "색은 #rrggbb 형식이어야 합니다."}), 400
+
+    # 새 캘린더의 시간대는 내 기본 캘린더와 같게 한다. 목록을 못 가져와도 만들기는 계속한다(Google이 정한다)
+    time_zone = None
+    try:
+        for existing in get_calendar_list():
+            if existing.get("primary"):
+                time_zone = existing.get("timeZone")
+    except Exception:
+        pass
+
+    created = []
+    error_response = run_google_write("캘린더를 만들지 못했습니다.", lambda service: created.append(
+        google_calendar.create_calendar(service, name, time_zone)
+    ))
+    if error_response:
+        return error_response
+
+    calendar_id = created[0]["id"]
+    forget_calendar_list()  # 목록이 바뀌었으니 다음에 Google에서 새로 받는다
+    if color:
+        # 색은 덤이다. 실패해도 캘린더는 만들어졌으므로 오류로 돌려주지 않는다 (Google이 정한 색으로 남는다)
+        run_google_write("캘린더 색을 바꾸지 못했습니다.", lambda service: google_calendar.set_calendar_color(service, calendar_id, color.lower()))
+        forget_calendar_list()
+    return jsonify({"id": calendar_id, "name": name}), 201
+
+
+# 캘린더 지우기 (DELETE): ?calendarId=...&mode=delete 또는 mode=unsubscribe
+#   delete: Google에서 캘린더를 완전히 지운다(일정도 모두). StudyFlow가 만든 캘린더만 가능하다
+#   unsubscribe: 내 캘린더 목록에서만 뺀다. 캘린더와 일정은 그대로 남는다
+# 캘린더 id에는 @, # 같은 글자가 있어서 주소 경로가 아니라 ?뒤의 값으로 받는다 (일정 지우기와 같다)
+@app.route("/api/calendars", methods=["DELETE"])
+def api_delete_calendar():
+    calendar_id = request.args.get("calendarId", "")
+    mode = request.args.get("mode", "")
+    if not calendar_id:
+        return jsonify({"error": "'calendarId' 값이 없습니다."}), 400
+    if mode not in ("delete", "unsubscribe"):
+        return jsonify({"error": "'mode'는 delete 또는 unsubscribe여야 합니다."}), 400
+
+    try:
+        target = next((c for c in get_calendar_list() if c["id"] == calendar_id), None)
+    except Exception as error:
+        print(f"[캘린더 목록 실패] {error}")
+        return jsonify({"error": "캘린더 목록을 불러오지 못했습니다. 인터넷 연결을 확인하세요."}), 502
+    if target is None:
+        return jsonify({"error": "그 캘린더를 찾을 수 없습니다."}), 404
+    if target.get("primary"):
+        return jsonify({"error": "내 기본 캘린더는 지울 수 없습니다."}), 400
+    if mode == "delete" and target.get("accessRole") != "owner":
+        return jsonify({"error": "내가 소유한 캘린더만 지울 수 있습니다. 다른 캘린더는 목록에서 뺄 수 있습니다."}), 400
+
+    if mode == "delete":
+        error_response = run_google_write(
+            "캘린더를 지우지 못했습니다. StudyFlow가 만든 캘린더만 지울 수 있습니다.",
+            lambda service: google_calendar.delete_calendar(service, calendar_id),
+        )
+    else:
+        error_response = run_google_write(
+            "캘린더를 목록에서 빼지 못했습니다.",
+            lambda service: google_calendar.unsubscribe_calendar(service, calendar_id),
+        )
+    if error_response:
+        return error_response
+
+    # 기억해 둔 목록에서도 바로 뺀다. 안 그러면 최대 10분 동안 지운 캘린더의 일정을 계속 불러오려 한다
+    with _calendar_lock:
+        if _calendar_cache["data"] is not None:
+            _calendar_cache["data"] = [c for c in _calendar_cache["data"] if c["id"] != calendar_id]
+            event_store.save_calendars(_calendar_cache["data"])
+    return jsonify({"ok": True})
 
 
 # 주소 "/api/events"로 요청이 오면 일정들을 JSON으로 돌려준다
@@ -384,7 +478,7 @@ def run_google_write(failure_message, operation, calendar_id=None):
     성공하면 None, 실패하면 화면에 보여줄 오류 응답을 돌려준다.
     failure_message: 실패했을 때 화면에 보여줄 문장 (예: "일정을 추가하지 못했습니다.")
     operation: service를 받아서 Google 요청을 보내는 함수
-    calendar_id: 일정이 바뀌는 캘린더. 성공하면 그 캘린더에 기억해둔 일정을 오래된 것으로 바꾼다 (색 변경은 필요 없다)"""
+    calendar_id: 일정이 바뀌는 캘린더(하나, 또는 일정을 옮길 때처럼 둘 이상이면 리스트). 성공하면 그 캘린더에 기억해둔 일정을 오래된 것으로 바꾼다 (색 변경은 필요 없다)"""
 
     def job():
         # 작업자 스레드 안에서 실행되므로, 그 스레드 전용 Google 연결을 쓴다
@@ -407,10 +501,11 @@ def run_google_write(failure_message, operation, calendar_id=None):
         return jsonify({"error": f"Google에 {failure_message} (인터넷 연결을 확인하세요.)"}), 502
 
     if calendar_id is not None:
-        # 이 캘린더에 기억해둔 일정은 이제 틀린 내용이다. 화면이 곧바로 일정을 다시 불러오므로, 응답을 보내기 전에 먼저 표시해둔다
-        event_store.invalidate(calendar_id)
-        # 이 변화를 "다른 곳에서 바뀐 것"으로 오해하지 않도록, 뒤에서 책갈피(syncToken)를 앞으로 옮겨둔다
-        _background_pool.submit(event_store.absorb_own_write, calendar_id, get_thread_service)
+        for changed_id in (calendar_id if isinstance(calendar_id, (list, tuple)) else [calendar_id]):
+            # 이 캘린더에 기억해둔 일정은 이제 틀린 내용이다. 화면이 곧바로 일정을 다시 불러오므로, 응답을 보내기 전에 먼저 표시해둔다
+            event_store.invalidate(changed_id)
+            # 이 변화를 "다른 곳에서 바뀐 것"으로 오해하지 않도록, 뒤에서 책갈피(syncToken)를 앞으로 옮겨둔다
+            _background_pool.submit(event_store.absorb_own_write, changed_id, get_thread_service)
     return None
 
 
@@ -444,12 +539,35 @@ def api_update_event(event_id):
     if error_response:
         return error_response
 
+    # destinationCalendarId가 있고 지금 캘린더와 다르면, 내용을 고친 뒤 일정을 그 캘린더로 옮긴다
+    destination = data.get("destinationCalendarId")
+    if destination == data["calendarId"]:
+        destination = None
+    if destination is not None:
+        try:
+            target = next((c for c in get_calendar_list() if c["id"] == destination), None)
+        except Exception as error:
+            print(f"[캘린더 목록 실패] {error}")
+            return jsonify({"error": "캘린더 목록을 불러오지 못했습니다. 인터넷 연결을 확인하세요."}), 502
+        # 옮겨 갈 캘린더가 없거나 일정을 쓸 수 없는 캘린더(공휴일 등)이면, 아무것도 고치기 전에 거절한다
+        if target is None or not can_edit(target):
+            return jsonify({"error": "그 캘린더로는 일정을 옮길 수 없습니다."}), 400
+
     error_response = run_google_write("일정을 수정하지 못했습니다.", lambda service: google_calendar.update_event(
         service, data["calendarId"], event_id, data["allDay"], data["start"], data["end"],
         title=data.get("title"),
     ), data["calendarId"])
     if error_response:
         return error_response
+
+    if destination is not None:
+        error_response = run_google_write(
+            "일정 내용은 저장했지만 캘린더를 옮기지 못했습니다. (반복 일정의 일부처럼 다른 캘린더로 옮길 수 없는 일정도 있습니다.)",
+            lambda service: google_calendar.move_event(service, data["calendarId"], event_id, destination),
+            [data["calendarId"], destination],
+        )
+        if error_response:
+            return error_response
 
     return jsonify({"ok": True})
 

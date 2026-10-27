@@ -48,7 +48,10 @@
             <div class="calendar-layout">
                 <!-- 왼쪽: 캘린더 목록. 체크박스들은 app.js가 여기에 채워 넣는다 -->
                 <aside id="calendar-list">
-                    <h2>내 캘린더</h2>
+                    <div class="calendar-list-head">
+                        <h2>내 캘린더</h2>
+                        <button id="calendar-add-button" title="새 캘린더 만들기">+</button>
+                    </div>
                 </aside>
                 <!-- 오른쪽: 달력이 그려질 빈 칸. FullCalendar가 이 안에 달력을 만든다 -->
                 <!-- wrap-all-day: 종일 일정의 긴 제목을 줄바꿈한다. 설정 탭의 스위치에 따라 app.js가 붙였다 뗀다 -->
@@ -364,6 +367,40 @@
             <span class="spacer"></span>
             <button id="project-cancel">취소</button>
             <button id="project-save" class="primary">저장</button>
+        </div>
+    </dialog>
+
+    <!-- 새 캘린더 만들기 창. Google에 보조 캘린더를 만든다(폰과 웹의 Google Calendar에도 똑같이 생긴다) -->
+    <dialog id="calendar-add-dialog">
+        <h2>새 캘린더</h2>
+
+        <label class="dialog-row"><span class="dialog-label">이름</span>
+            <input type="text" id="calendar-name" placeholder="예: 스터디 모임" maxlength="100">
+        </label>
+        <label class="dialog-row"><span class="dialog-label">색</span>
+            <input type="color" id="calendar-color" value="#4a7cff">
+        </label>
+
+        <p id="calendar-add-error" class="dialog-error"></p>
+
+        <div class="dialog-buttons">
+            <span class="spacer"></span>
+            <button id="calendar-add-cancel">취소</button>
+            <button id="calendar-add-save" class="primary">만들기</button>
+        </div>
+    </dialog>
+
+    <!-- 캘린더 지우기/목록에서 빼기 확인 창. 문구와 버튼 글자는 app.js가 상황에 맞게 바꾼다 -->
+    <dialog id="calendar-remove-dialog">
+        <h2 id="calendar-remove-title">캘린더 삭제</h2>
+        <p id="calendar-remove-message" class="calendar-remove-message"></p>
+
+        <p id="calendar-remove-error" class="dialog-error"></p>
+
+        <div class="dialog-buttons">
+            <span class="spacer"></span>
+            <button id="calendar-remove-cancel">취소</button>
+            <button id="calendar-remove-confirm" class="danger">삭제</button>
         </div>
     </dialog>
 

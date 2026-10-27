@@ -58,6 +58,10 @@ PROJECT_FOLDER_COLUMNS_KEY = "projectFolderColumns"
 PROJECT_FOLDER_COLUMNS_ALLOWED = (1, 2)
 PROJECT_FOLDER_COLUMNS_DEFAULT = 1
 
+# StudyFlow에서 만든 캘린더의 id들. 이것만 "완전히 지우기"를 보여 준다(다른 캘린더는 "목록에서 빼기"). 이 컴퓨터에서 만든 것만 기억한다
+CREATED_CALENDARS_KEY = "createdCalendarIds"
+MAX_CREATED_CALENDARS = 200
+
 # 5) 사용자가 끌어서 옮겨 둔 타이머 위젯의 위치 ({"x": 왼쪽에서, "y": 위에서}, 단위 px). None이면 원래 자리(상단 바 가운데)
 POMODORO_POSITION_KEY = "pomodoroPosition"
 # 이상한 값이 들어와도 화면 밖 아주 먼 곳으로 가지 않게 하는 한계. 실제 화면 안으로 맞추는 일은 화면(app.js)이 한다
@@ -79,6 +83,7 @@ def default_settings():
     settings[LAST_NOTE_KEY] = ""
     settings[PROJECT_COLUMNS_KEY] = PROJECT_COLUMNS_DEFAULT
     settings[PROJECT_FOLDER_COLUMNS_KEY] = PROJECT_FOLDER_COLUMNS_DEFAULT
+    settings[CREATED_CALENDARS_KEY] = []
     return settings
 
 
@@ -127,6 +132,11 @@ def clean_settings(raw):
     folder_columns = raw.get(PROJECT_FOLDER_COLUMNS_KEY)
     if isinstance(folder_columns, int) and not isinstance(folder_columns, bool) and folder_columns in PROJECT_FOLDER_COLUMNS_ALLOWED:
         settings[PROJECT_FOLDER_COLUMNS_KEY] = folder_columns
+
+    created = raw.get(CREATED_CALENDARS_KEY)
+    if isinstance(created, list):
+        # 글자로 된 id만, 너무 길거나 많지 않게 남긴다 (설정 파일이 부풀지 않게)
+        settings[CREATED_CALENDARS_KEY] = [item for item in created if isinstance(item, str) and 0 < len(item) <= MAX_SETTING_TEXT][:MAX_CREATED_CALENDARS]
 
     for key in (VAULT_PATH_KEY, LAST_NOTE_KEY):
         text = raw.get(key)

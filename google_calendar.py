@@ -23,10 +23,13 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CREDENTIALS_PATH = os.path.join(BASE_DIR, "credentials.json")  # Google에서 받은 앱 신분증
 TOKEN_PATH = os.path.join(BASE_DIR, "token.json")  # 로그인 결과를 저장하는 파일
 
-# 앱이 요청할 권한(스코프). Google Cloud 콘솔에 등록한 두 개와 같아야 한다
+# 앱이 요청할 권한(스코프). Google Cloud 콘솔에 등록한 세 개와 같아야 한다
 SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",  # 일정 읽기/쓰기
-    "https://www.googleapis.com/auth/calendar.calendarlist",  # 캘린더 목록 읽기/쓰기 (캘린더 색 변경에 필요)
+    "https://www.googleapis.com/auth/calendar.calendarlist",  # 캘린더 목록 읽기/쓰기 (캘린더 색 변경, 목록에서 빼기에 필요)
+    # StudyFlow가 만든 보조 캘린더를 만들고 지우는 권한. "이 앱이 만든 캘린더"로 범위가 한정되어 있어서,
+    # 다른 앱이나 내가 Google Calendar에서 직접 만든 캘린더는 이 권한으로 지울 수 없다 (실수로 소중한 캘린더를 지우는 일을 막아 준다)
+    "https://www.googleapis.com/auth/calendar.app.created",
 ]
 
 
@@ -223,6 +226,34 @@ def set_calendar_color(service, calendar_id, color):
     return service.calendarList().patch(
         calendarId=calendar_id, body=body, colorRgbFormat=True
     ).execute()
+
+
+def move_event(service, calendar_id, event_id, destination_calendar_id):
+    """일정을 다른 캘린더로 옮긴다 (일정 번호는 그대로이고, 원래 캘린더에서 없어지고 새 캘린더에 생긴다).
+    Google은 보통 일정만 옮기게 한다. 반복 일정의 일부, 생일 같은 특별한 일정은 거절한다(오류가 난다)."""
+    return service.events().move(
+        calendarId=calendar_id, eventId=event_id, destination=destination_calendar_id
+    ).execute()
+
+
+def create_calendar(service, name, time_zone=None):
+    """새 보조 캘린더를 만들고, Google이 돌려준 캘린더 정보(id 포함)를 돌려준다. 만든 캘린더는 내 캘린더 목록에 저절로 들어간다.
+    time_zone(예: "Asia/Seoul")을 안 주면 Google이 정하는데, 내 기본 캘린더와 같은 시간대를 쓰는 편이 일정 시각이 어긋나지 않는다."""
+    body = {"summary": name}
+    if time_zone:
+        body["timeZone"] = time_zone
+    return service.calendars().insert(body=body).execute()
+
+
+def delete_calendar(service, calendar_id):
+    """캘린더를 **완전히 지운다**(그 안의 일정도 모두, 폰과 웹에서도 사라지고 되돌릴 수 없다).
+    StudyFlow가 만든 캘린더만 지울 수 있다(calendar.app.created 권한). 다른 캘린더는 Google이 403으로 거절한다."""
+    service.calendars().delete(calendarId=calendar_id).execute()
+
+
+def unsubscribe_calendar(service, calendar_id):
+    """내 캘린더 목록에서 이 캘린더를 뺀다. 캘린더와 그 안의 일정은 지워지지 않아서(공휴일, 공유받은 캘린더 등) Google Calendar에서 다시 추가할 수 있다."""
+    service.calendarList().delete(calendarId=calendar_id).execute()
 
 
 def delete_event(service, calendar_id, event_id):
