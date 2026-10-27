@@ -780,18 +780,30 @@ input.color-dot::-webkit-color-swatch {
     font-weight: 500;
 }
 
-/* 왼쪽(일정)과 오른쪽(할 일)을 가로로 나란히 놓는다. 글자 크기는 설정 탭의 "글자 크기"를 따른다 */
+/* 일정 | 할 일 | 할 일 목록(수집함) 세 칸을 가로로 나란히 놓는다. 글자 크기는 설정 탭의 "글자 크기"를 따른다.
+   minmax(0, 1fr)의 0은 긴 글자가 칸을 밀어내지 않게 하는 것이고, 가운데(할 일) 칸이 조금 더 넓다 */
 .today-layout {
-    display: flex;
-    gap: 48px;
-    max-width: 1240px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr) minmax(0, 1fr);
+    gap: 40px;
+    align-items: start;
+    max-width: 1500px;
     font-size: var(--cal-font-size);
 }
 
-/* 두 칸이 같은 폭을 나눠 갖는다. min-width: 0은 긴 글자가 칸을 밀어내지 않게 하는 것 */
 .today-column {
-    flex: 1;
     min-width: 0;
+}
+
+/* 창이 좁으면(1100px 미만) 일정과 할 일을 위에, 할 일 목록을 그 아래 한 줄로 둔다 */
+@media (max-width: 1099px) {
+    .today-layout {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+    }
+
+    #inbox-column {
+        grid-column: 1 / -1;
+    }
 }
 
 /* 구역 제목: 작고 진한 회색 */
@@ -994,7 +1006,7 @@ input.color-dot::-webkit-color-swatch {
 }
 
 .task-actions button {
-    padding: 3px 6px;
+    padding: 3px 5px;
     font-size: 12px;
 }
 
@@ -1128,11 +1140,11 @@ input.color-dot::-webkit-color-swatch {
 
 /* 하위 단계 묶음: 상위 단계 아래에서 오른쪽으로 들여쓴다. 왼쪽에 가는 선을 그어 "이 단계의 일부"임을 보여준다 */
 /* 프로젝트 카드의 단계 목록: 카드 안쪽 여백(18px)에 줄 안쪽 여백(10px)이 겹쳐 동그라미가 카드 가장자리에서 너무 멀었다.
-   목록을 양옆으로 11px씩 넓혀서 왼쪽 동그라미와 오른쪽 마감일/날짜가 모두 11px씩 가장자리에 가까워지게 한다(처음 8px, 사용자 요청으로 3px 더).
+   목록을 양옆으로 13px씩 넓혀서 왼쪽 동그라미와 오른쪽 마감일/날짜가 모두 13px씩 가장자리에 가까워지게 한다(처음 8px, 사용자 요청으로 3px, 2px 더).
    (하위 단계 목록은 이 안에 들어 있어서 따로 넓히지 않는다 → 직접 자식(>)만)*/
 .project-card > .today-list {
-    margin-left: -11px;
-    margin-right: -11px;
+    margin-left: -13px;
+    margin-right: -13px;
 }
 
 .sub-wrapper {
@@ -1155,7 +1167,7 @@ input.color-dot::-webkit-color-swatch {
 
 /* 마감일 글자 (오늘 탭 등에서 글자로만 보이는 것): 연한 주황 알약 */
 .task-deadline {
-    padding: 1px 5px;
+    padding: 1px 4px;
     border-radius: 999px;
     background-color: var(--warn-soft);
     color: var(--warn);
@@ -1201,7 +1213,7 @@ input.color-dot::-webkit-color-swatch {
 
 /* 마감일이 정해져 있을 때 줄에 항상 보이는 마감일 버튼: 버튼 모양을 지우고 연한 주황 알약처럼 보이게 한다 */
 .task-row > .deadline-control button:not(.clear) {
-    padding: 1px 5px;
+    padding: 1px 4px;
     border: none;
     border-radius: 999px;
     background-color: var(--warn-soft);
@@ -2336,6 +2348,259 @@ body.priority-dragging * {
     margin-left: 4px;
     font-size: 13px;
     color: var(--text-muted);
+}
+
+/* ----- 오늘 탭의 작은 달력 ----- */
+.mini-calendar {
+    max-width: 300px;
+    margin-bottom: 26px;
+    user-select: none;
+}
+
+.mini-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+}
+
+.mini-title {
+    font-weight: 600;
+}
+
+/* 달 넘기는 ‹ › 버튼: 테두리 없는 작은 버튼 */
+.mini-calendar button.mini-nav {
+    padding: 2px 10px;
+    font-size: 16px;
+    line-height: 1.2;
+    background-color: transparent;
+    border-color: transparent;
+    color: var(--text-muted);
+}
+
+.mini-calendar button.mini-nav:hover:not(:disabled) {
+    background-color: var(--surface-strong);
+    border-color: transparent;
+}
+
+.mini-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 2px;
+}
+
+.mini-weekday {
+    padding: 2px 0 4px;
+    text-align: center;
+    font-size: 0.8em;
+    color: var(--text-faint);
+}
+
+/* 날짜 칸. 일반 버튼 모양(테두리, 안쪽 여백)을 지우고, 모든 상태를 직접 정한다 */
+.mini-calendar button.mini-day {
+    position: relative;
+    height: 32px;
+    padding: 0;
+    font-size: inherit;
+    color: var(--text);
+    background-color: transparent;
+    border: none;
+    border-radius: 8px;
+}
+
+.mini-calendar button.mini-day:hover:not(:disabled) {
+    background-color: var(--surface-strong);
+    border-color: transparent;
+}
+
+.mini-calendar button.mini-day.other-month {
+    color: var(--text-faint);
+}
+
+/* 오늘: 테두리 고리 */
+.mini-calendar button.mini-day.today {
+    font-weight: 700;
+    box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+/* 지금 보고 있는 날: 파란 바탕 */
+.mini-calendar button.mini-day.selected,
+.mini-calendar button.mini-day.selected:hover:not(:disabled) {
+    color: #ffffff;
+    background-color: var(--accent);
+}
+
+/* 그날에 할 일이 있다는 작은 점. 아직 안 끝낸 것이 있으면 파랑, 모두 끝냈으면 연한 회색 */
+.mini-dot {
+    position: absolute;
+    left: 50%;
+    bottom: 3px;
+    width: 4px;
+    height: 4px;
+    margin-left: -2px;
+    border-radius: 50%;
+    background-color: var(--accent);
+}
+
+.mini-dot.done {
+    background-color: var(--text-faint);
+}
+
+.mini-day.selected .mini-dot {
+    background-color: #ffffff;
+}
+
+/* 할 일 목록의 할 일을 끌어다 이 칸에 놓으면 그 날짜로 정해진다 */
+.mini-calendar button.mini-day.drop-hover {
+    outline: 2px dashed var(--accent);
+    outline-offset: -2px;
+    background-color: var(--accent-soft);
+}
+
+/* ----- 할 일 목록(수집함) ----- */
+.inbox-count {
+    margin-left: 4px;
+    font-weight: 400;
+    color: var(--text-faint);
+}
+
+.inbox-hint {
+    margin: -6px 0 12px;
+    font-size: 0.82em;
+    color: var(--text-faint);
+}
+
+/* 끌 수 있는 할 일 줄: 손 모양 커서. 끌기 시작 때 글자가 선택되지 않게 하되, 이름 고치기 입력 칸은 그대로 글자를 고를 수 있게 한다 */
+.task-row.task-draggable {
+    cursor: grab;
+    user-select: none;
+}
+
+.task-row.task-draggable .task-edit-input {
+    user-select: text;
+}
+
+.task-row.task-draggable button,
+.task-row.task-draggable input {
+    cursor: pointer;
+}
+
+.task-row.drag-source {
+    opacity: 0.4;
+}
+
+/* 마우스를 따라다니는 할 일 이름표 */
+.task-ghost {
+    position: fixed;
+    z-index: 200;
+    max-width: 280px;
+    padding: 7px 14px;
+    background-color: var(--bg);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    font-size: var(--cal-font-size);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;  /* 이름표 아래의 놓을 칸을 찾을 수 있게 */
+}
+
+body.task-dragging,
+body.task-dragging * {
+    cursor: grabbing !important;
+    user-select: none !important;
+}
+
+/* 놓을 수 있는 칸(가운데 할 일 / 오른쪽 할 일 목록): 점선 테두리와 옅은 바탕 */
+.today-column.drop-hover {
+    outline: 2px dashed var(--accent);
+    outline-offset: 10px;
+    border-radius: var(--radius);
+    background-color: var(--surface);
+}
+
+/* 날짜 고르는 버튼(할 일 목록의 "날짜…")에 겹쳐 두는 투명한 날짜 칸. 마감일 버튼(.deadline-control)과 같은 방식이다 */
+.date-pick {
+    position: relative;
+    display: inline-flex;
+}
+
+.date-pick input[type="date"] {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    pointer-events: none;  /* 버튼이 클릭을 받고, 창은 showPicker()가 연다 */
+}
+
+/* ----- 프로젝트를 폴더로 끌어다 놓기 ----- */
+/* 카드 맨 윗줄이 손잡이: 폴더가 있을 때만 끌 수 있으므로 그때만 손 모양. 글자가 선택되지 않게 한다 */
+.project-card.draggable > .project-card-head {
+    cursor: grab;
+    user-select: none;
+    touch-action: none;
+}
+
+.project-card.drag-source {
+    opacity: 0.4;
+}
+
+/* 마우스를 따라다니는 이름표 */
+.project-ghost {
+    position: fixed;
+    z-index: 200;
+    max-width: 260px;
+    padding: 6px 14px;
+    background-color: var(--bg);
+    border: 1px solid var(--border);
+    border-left: 5px solid var(--accent);  /* 색은 app.js가 프로젝트 색으로 덮어쓴다 */
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;  /* 이름표 아래의 폴더 구역을 찾을 수 있게 */
+}
+
+body.project-dragging,
+body.project-dragging * {
+    cursor: grabbing !important;
+    user-select: none !important;
+}
+
+/* 놓을 수 있는 폴더 구역: 점선 테두리와 옅은 바탕 */
+.folder-section.drop-hover {
+    outline: 2px dashed var(--accent);
+    outline-offset: 6px;
+    border-radius: var(--radius);
+    background-color: var(--surface);
+}
+
+/* 폴더 2열 배치 (설정: 카드 열 수 4일 때만): 폴더 구역들을 CSS 다단(column-count)으로 두 줄에 나눠 놓는다.
+   구역은 중간에서 끊기지 않고(break-inside: avoid), 브라우저가 두 줄의 높이가 비슷해지게 알아서 나눈다. 폴더 안 카드는 2열이 된다(4열 ÷ 폴더 2열) */
+#project-list.two-folder-columns {
+    display: block;
+    column-count: 2;
+    column-gap: 28px;
+}
+
+#project-list.two-folder-columns > .folder-section {
+    break-inside: avoid;
+    margin-bottom: 22px;
+}
+
+/* "폴더 2열"은 카드 열 수가 4일 때만 쓸 수 있다는 짧은 안내. 쓸 수 있을 때는 흐리게, 막혔을 때는 또렷하게 보여 이유를 알려 준다 */
+.settings-note {
+    font-size: 12.5px;
+    color: var(--text-muted);
+    opacity: 0.6;
+}
+
+.settings-note.muted-off {
+    opacity: 1;
 }
 
 /* 설정 탭의 1열/2열 선택 */

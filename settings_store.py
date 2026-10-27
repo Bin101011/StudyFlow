@@ -53,6 +53,11 @@ PROJECT_COLUMNS_KEY = "projectColumns"
 PROJECT_COLUMNS_ALLOWED = (2, 3, 4)
 PROJECT_COLUMNS_DEFAULT = 2
 
+# 프로젝트 탭의 폴더 배치: 폴더를 한 줄(1열)로 쌓을지, 두 줄(2열)로 나눠 놓을지. 2열은 카드 열 수가 4일 때만 화면이 적용한다
+PROJECT_FOLDER_COLUMNS_KEY = "projectFolderColumns"
+PROJECT_FOLDER_COLUMNS_ALLOWED = (1, 2)
+PROJECT_FOLDER_COLUMNS_DEFAULT = 1
+
 # 5) 사용자가 끌어서 옮겨 둔 타이머 위젯의 위치 ({"x": 왼쪽에서, "y": 위에서}, 단위 px). None이면 원래 자리(상단 바 가운데)
 POMODORO_POSITION_KEY = "pomodoroPosition"
 # 이상한 값이 들어와도 화면 밖 아주 먼 곳으로 가지 않게 하는 한계. 실제 화면 안으로 맞추는 일은 화면(app.js)이 한다
@@ -73,6 +78,7 @@ def default_settings():
     settings[VAULT_PATH_KEY] = ""
     settings[LAST_NOTE_KEY] = ""
     settings[PROJECT_COLUMNS_KEY] = PROJECT_COLUMNS_DEFAULT
+    settings[PROJECT_FOLDER_COLUMNS_KEY] = PROJECT_FOLDER_COLUMNS_DEFAULT
     return settings
 
 
@@ -117,6 +123,10 @@ def clean_settings(raw):
     # bool은 파이썬에서 정수의 한 종류(True == 1)라서 따로 걸러낸다
     if isinstance(columns, int) and not isinstance(columns, bool) and columns in PROJECT_COLUMNS_ALLOWED:
         settings[PROJECT_COLUMNS_KEY] = columns
+
+    folder_columns = raw.get(PROJECT_FOLDER_COLUMNS_KEY)
+    if isinstance(folder_columns, int) and not isinstance(folder_columns, bool) and folder_columns in PROJECT_FOLDER_COLUMNS_ALLOWED:
+        settings[PROJECT_FOLDER_COLUMNS_KEY] = folder_columns
 
     for key in (VAULT_PATH_KEY, LAST_NOTE_KEY):
         text = raw.get(key)

@@ -1255,6 +1255,12 @@ const tasksHeading = document.getElementById("tasks-heading");
 const dayPrevButton = document.getElementById("day-prev");
 const dayNextButton = document.getElementById("day-next");
 const dayTodayButton = document.getElementById("day-today");
+const tasksColumn = document.getElementById("tasks-column");
+const inboxColumn = document.getElementById("inbox-column");
+const inboxList = document.getElementById("inbox-tasks");
+const inboxInput = document.getElementById("inbox-input");
+const inboxAddButton = document.getElementById("inbox-add-button");
+const inboxCount = document.getElementById("inbox-count");
 
 // 진짜 오늘 날짜("2026-10-19"). 탭을 열 때마다 새로 구한다. 켜둔 채 자정을 넘길 수도 있기 때문이다
 let todayText = toDateText(new Date());
@@ -1352,9 +1358,17 @@ async function loadTodayEvents() {
 //   countText: 줄에 붙일 "2/3" 같은 하위 단계 진행 글자
 //   extraButtons: 삭제 버튼 앞에 더 넣을 버튼들의 리스트 (프로젝트 카드의 "+ 하위")
 //   unscheduleOnly: 오늘 탭에서 쓴다. 프로젝트에 연결된 할 일은 지우는 대신 "오늘에서만 빼기"(날짜 제거)로 바꾼다
+//   toInbox: 오늘 탭에서 쓴다. 프로젝트 없는 할 일에 "목록으로"(날짜를 빼서 할 일 목록으로 돌려보내기) 버튼을 둔다
+//   dragFrom: "inbox"(할 일 목록의 줄)나 "loose"(오늘 탭의 프로젝트 없는 할 일 줄)이면 그 줄을 끌어서 옮길 수 있다
 function makeTaskRow(task, options) {
     const item = document.createElement("li");
     item.className = "task-row";
+    if (options.dragFrom) {
+        item.classList.add("task-draggable");
+        item.addEventListener("pointerdown", function (e) {
+            beginTaskDrag(e, item, task, options.dragFrom);
+        });
+    }
 
     // 완료 체크박스. 체크하면 서버에 done을 저장하고 목록을 다시 불러온다 (끝낸 것은 아래로 내려간다)
     const checkbox = document.createElement("input");
@@ -1498,6 +1512,17 @@ function makeTaskRow(task, options) {
         return item;
     }
 
+    // 오늘 탭의 프로젝트 없는 할 일: 날짜를 빼서 "할 일 목록"으로 돌려보낸다(나중으로 미루기). 끝낸 것과 날짜 없는 것은 해당 없다
+    if (options.toInbox && !task.project_id && task.done !== 1 && task.date) {
+        const inboxButton = document.createElement("button");
+        inboxButton.textContent = "목록으로";
+        inboxButton.title = "날짜를 빼고 '할 일 목록'으로 돌려보냅니다";
+        inboxButton.addEventListener("click", function () {
+            updateTask(task.id, { date: null }, options.reload);
+        });
+        actions.appendChild(inboxButton);
+    }
+
     // 삭제 버튼: 일정 삭제와 같이 두 번 눌러야 지워진다. 한 번 누르고 3초 동안 안 누르면 원래대로 돌아간다
     const deleteButton = document.createElement("button");
     deleteButton.className = "danger";
@@ -1549,14 +1574,18 @@ async function loadTodayTasks() {
     }
     data.tasks.forEach(function (task) {
         todayTasksList.appendChild(makeTaskRow(task, {
-            reload: loadTodayTasks,
+            reload: reloadTodayAndInbox,
             moveLabel: isToday ? "내일로" : "다음 날로",
             moveDate: addDaysToText(date, 1),
             showDate: task.date !== date,
             showProject: true,
             unscheduleOnly: true,
+            toInbox: true,
+            dragFrom: !task.project_id && task.done !== 1 ? "loose" : null,  // 프로젝트 없는 할 일은 끌어서 "할 일 목록"으로 돌려보낼 수 있다
         }));
     });
+
+    loadMiniTaskDays();  // 할 일이 바뀌었을 수 있으니 작은 달력의 점도 새로 받는다
 
     // 밀린 할 일은 "오늘 기준"의 개념이라서 오늘을 볼 때만 보인다. 있을 때만 구역을 보이고, "오늘로" 버튼은 날짜를 오늘로 바꾼다
     overdueTasksList.innerHTML = "";
@@ -1564,12 +1593,14 @@ async function loadTodayTasks() {
     if (isToday) {
         data.overdue.forEach(function (task) {
             overdueTasksList.appendChild(makeTaskRow(task, {
-                reload: loadTodayTasks,
+                reload: reloadTodayAndInbox,
                 moveLabel: "오늘로",
                 moveDate: todayText,
                 showDate: true,
                 showProject: true,
                 unscheduleOnly: true,
+                toInbox: true,
+                dragFrom: !task.project_id ? "loose" : null,
             }));
         });
     }
@@ -1652,6 +1683,368 @@ function makeDeadlineControl(task, reload) {
     return wrapper;
 }
 
+// ----- 작은 달력 -----
+// 오늘 탭 왼쪽 위의 한 달짜리 달력. 날짜를 누르면 그날의 일정과 할 일로 넘어가서, ◀ ▶로 하루씩 넘기지 않고도 멀리 있는 날로 갈 수 있다.
+// 지금 보고 있는 날은 파란 바탕, 오늘은 테두리 고리, 할 일이 있는 날은 작은 점(안 끝낸 것이 있으면 파랑, 모두 끝냈으면 회색)으로 보인다.
+// 달을 넘기는 ‹ ›는 달력만 움직이고, 보고 있는 날은 바꾸지 않는다. ◀ ▶나 날짜 누르기로 날이 바뀌면 달력도 그 달로 따라간다.
+// 할 일 목록의 할 일을 끌어다 날짜 칸에 놓으면 그 날짜로 정해진다. FullCalendar는 쓰지 않고 직접 만든다(한 달 격자 하나면 되고, 오늘 탭의 날짜 이동과 한 몸으로 움직여야 해서)
+
+const miniCalendar = document.getElementById("mini-calendar");
+const MINI_WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];  // 큰 캘린더(한국어 설정)와 같이 일요일부터 시작한다
+let miniMonth = null;      // 지금 달력이 보여주는 달 { year, month(0~11) }
+let miniTaskDays = {};     // 날짜 → { open: 안 끝낸 개수, done: 끝낸 개수 }. 점을 찍으려고 서버에서 받아 둔다
+let miniRequest = 0;       // 가장 최근 요청의 번호. 늦게 도착한 옛 응답이 새 달을 덮지 않게 한다 (캘린더 탭의 할 일 요약과 같은 이유)
+
+// 보고 있는 날짜의 달로 달력을 맞춘다 (showDay가 부른다)
+function syncMiniCalendar() {
+    const [year, month] = viewedDate.split("-").map(Number);
+    miniMonth = { year: year, month: month - 1 };
+    renderMiniCalendar();
+}
+
+// 달력 상자를 다시 그린다: 머리줄(‹ 2026년 10월 ›), 요일 줄, 6주 × 7일 격자
+function renderMiniCalendar() {
+    if (!miniMonth) {
+        return;
+    }
+    miniCalendar.innerHTML = "";
+
+    const head = document.createElement("div");
+    head.className = "mini-head";
+    const prev = document.createElement("button");
+    prev.className = "mini-nav";
+    prev.textContent = "‹";
+    prev.title = "이전 달";
+    prev.addEventListener("click", function () {
+        moveMiniMonth(-1);
+    });
+    const next = document.createElement("button");
+    next.className = "mini-nav";
+    next.textContent = "›";
+    next.title = "다음 달";
+    next.addEventListener("click", function () {
+        moveMiniMonth(1);
+    });
+    const title = document.createElement("span");
+    title.className = "mini-title";
+    title.textContent = miniMonth.year + "년 " + (miniMonth.month + 1) + "월";
+    head.append(prev, title, next);
+
+    const grid = document.createElement("div");
+    grid.className = "mini-grid";
+    MINI_WEEKDAYS.forEach(function (name) {
+        const label = document.createElement("span");
+        label.className = "mini-weekday";
+        label.textContent = name;
+        grid.appendChild(label);
+    });
+
+    // 그 달 1일이 들어 있는 주의 일요일부터 6주(42일)를 그린다. 앞뒤 달의 날짜는 흐리게 보인다
+    const first = new Date(miniMonth.year, miniMonth.month, 1);
+    const start = addDays(first, -first.getDay());
+    for (let i = 0; i < 42; i++) {
+        const date = addDays(start, i);
+        const dateText = toDateText(date);
+        const button = document.createElement("button");
+        button.className = "mini-day";
+        button.dataset.date = dateText;
+        button.textContent = date.getDate();
+        button.title = (date.getMonth() + 1) + "월 " + date.getDate() + "일";
+        if (date.getMonth() !== miniMonth.month) {
+            button.classList.add("other-month");
+        }
+        if (dateText === todayText) {
+            button.classList.add("today");
+        }
+        if (dateText === viewedDate) {
+            button.classList.add("selected");
+        }
+        button.addEventListener("click", function () {
+            if (dateText !== viewedDate) {
+                showDay(dateText);
+            }
+        });
+        grid.appendChild(button);
+    }
+    miniCalendar.append(head, grid);
+    paintMiniDots();
+    loadMiniTaskDays();
+}
+
+// 달만 넘긴다(보고 있는 날은 그대로). 보고 있는 날이 다른 달에 있으면 달력에 파란 칸이 안 보일 뿐이다
+function moveMiniMonth(delta) {
+    const next = new Date(miniMonth.year, miniMonth.month + delta, 1);
+    miniMonth = { year: next.getFullYear(), month: next.getMonth() };
+    renderMiniCalendar();
+}
+
+// 보이는 42일의 할 일 개수를 서버에서 받아 점을 찍는다. 내 컴퓨터 DB만 읽으므로 빠르다. 할 일을 바꿀 때마다(loadTodayTasks) 다시 불러온다
+async function loadMiniTaskDays() {
+    const cells = miniCalendar.querySelectorAll(".mini-day");
+    if (cells.length === 0) {
+        return;
+    }
+    const start = cells[0].dataset.date;
+    const end = addDaysToText(cells[cells.length - 1].dataset.date, 1);  // end는 포함하지 않는 날짜
+    const request = ++miniRequest;
+    try {
+        const response = await fetch("/api/task-days?start=" + start + "&end=" + end);
+        if (!response.ok) {
+            return;
+        }
+        const days = await response.json();
+        if (request !== miniRequest) {
+            return;  // 그 사이 달이 또 바뀌었다면 이 응답은 버린다
+        }
+        miniTaskDays = {};
+        Object.keys(days).forEach(function (dateText) {
+            const tasks = days[dateText];
+            const done = tasks.filter(function (task) {
+                return task.done === 1;
+            }).length;
+            miniTaskDays[dateText] = { open: tasks.length - done, done: done };
+        });
+        paintMiniDots();
+    } catch (error) {
+        // 점은 덤이라서 실패해도 달력은 그대로 쓸 수 있다
+    }
+}
+
+// 받아 둔 개수대로 날짜 칸에 점을 붙였다 뗀다
+function paintMiniDots() {
+    miniCalendar.querySelectorAll(".mini-day").forEach(function (button) {
+        const old = button.querySelector(".mini-dot");
+        if (old) {
+            old.remove();
+        }
+        const info = miniTaskDays[button.dataset.date];
+        if (info) {
+            const dot = document.createElement("span");
+            dot.className = "mini-dot" + (info.open === 0 ? " done" : "");
+            button.appendChild(dot);
+            button.title = button.title.split(" · ")[0] + " · 할 일 " + (info.open + info.done) + "개" + (info.open > 0 ? " (" + info.open + " 남음)" : " (완료)");
+        }
+    });
+}
+
+// ----- 할 일 목록(수집함) -----
+// 날짜를 아직 정하지 않은 할 일(프로젝트 없는 것만)을 모아 두는 오른쪽 패널. 먼저 줄줄이 적어 두고, 나중에 날짜를 정해 준다.
+// 날짜를 정하는 방법은 둘이다: (1) 줄에 마우스를 올리면 나오는 [오늘] [내일] [날짜…] 버튼, (2) 줄을 가운데 "할 일" 칸으로 끌어다 놓기(보고 있는 날짜로 정해진다).
+// 반대로 오늘 탭의 프로젝트 없는 할 일을 이 칸으로 끌어다 놓거나 "목록으로" 버튼을 누르면 날짜가 빠져서 다시 이 목록으로 돌아온다
+
+// 오늘 탭의 할 일과 할 일 목록을 함께 다시 불러온다 (할 일이 이쪽 목록과 저쪽 목록 사이를 오가기 때문에 둘 다 맞춰야 한다)
+async function reloadTodayAndInbox() {
+    await Promise.all([loadTodayTasks(), loadInbox()]);
+}
+
+async function loadInbox() {
+    const response = await fetch("/api/inbox");
+    if (!response.ok) {
+        throw new Error("서버 오류: " + response.status);
+    }
+    const tasks = await response.json();
+    inboxList.innerHTML = "";
+    inboxCount.textContent = tasks.length > 0 ? "(" + tasks.length + ")" : "";
+    if (tasks.length === 0) {
+        showEmptyMessage(inboxList, "날짜를 정하지 않은 할 일이 없습니다.");
+    }
+    tasks.forEach(function (task) {
+        inboxList.appendChild(makeTaskRow(task, {
+            reload: reloadTodayAndInbox,
+            dragFrom: "inbox",
+            extraButtons: [
+                makeAssignButton("오늘", function () { return todayText; }, task),
+                makeAssignButton("내일", function () { return addDaysToText(todayText, 1); }, task),
+                makeDatePickButton(task),
+            ],
+        }));
+    });
+}
+
+// 할 일의 날짜를 정하고(PATCH) 두 목록을 다시 불러온다. 몇 월 며칠로 갔는지 알려 줘서, 가운데 목록에 안 보이는 날짜여도 잘 갔다는 것을 안다
+async function assignTaskDate(task, dateText) {
+    try {
+        await sendRequest("/api/tasks/" + task.id, "PATCH", { date: dateText });
+        const label = dateText === todayText ? "오늘" : dateText.slice(5).replace("-", "/");
+        showToast("'" + task.content + "'을(를) " + label + " 할 일로 정했습니다");
+    } catch (error) {
+        showToast("날짜를 정하지 못했습니다: " + error.message);
+    }
+    await reloadTodayAndInbox();
+}
+
+// [오늘] [내일] 같은 버튼. getDate는 누른 순간의 날짜를 돌려주는 함수다 (자정을 넘겨 켜 둬도 맞도록 미리 계산해 두지 않는다)
+function makeAssignButton(label, getDate, task) {
+    const button = document.createElement("button");
+    button.textContent = label;
+    button.title = "이 할 일을 " + label + "로 정하기";
+    button.addEventListener("click", function () {
+        assignTaskDate(task, getDate());
+    });
+    return button;
+}
+
+// [날짜…] 버튼: 누르면 날짜 고르는 창이 열리고, 고르면 그 날짜로 정한다. 마감일 버튼과 같은 방식(투명한 <input type="date">를 겹쳐 두고 showPicker()로 연다)
+function makeDatePickButton(task) {
+    const wrapper = document.createElement("span");
+    wrapper.className = "date-pick";
+    const input = document.createElement("input");
+    input.type = "date";
+    input.tabIndex = -1;
+    const button = document.createElement("button");
+    button.textContent = "날짜…";
+    button.title = "날짜를 골라서 정하기";
+    button.addEventListener("click", function () {
+        try {
+            input.showPicker();
+        } catch (error) {
+            input.style.pointerEvents = "auto";  // showPicker를 쓸 수 없는 환경이면 날짜 칸을 그대로 눌러서 고른다
+            input.style.opacity = "1";
+            input.focus();
+        }
+    });
+    input.addEventListener("change", function () {
+        if (input.value) {
+            assignTaskDate(task, input.value);
+        }
+    });
+    wrapper.append(input, button);
+    return wrapper;
+}
+
+// 입력 칸의 글자를 날짜 없는 할 일로 추가한다. 연달아 적을 수 있게 추가한 뒤에도 입력 칸에 커서를 둔다
+async function addInboxTask() {
+    const content = inboxInput.value.trim();
+    if (!content) {
+        return;
+    }
+    try {
+        await sendRequest("/api/tasks", "POST", { content: content, date: null, projectId: null });
+        inboxInput.value = "";
+        await loadInbox();
+    } catch (error) {
+        showToast("할 일을 추가하지 못했습니다: " + error.message);
+    }
+    inboxInput.focus();
+}
+
+inboxAddButton.addEventListener("click", addInboxTask);
+inboxInput.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.isComposing) {  // 한글 조합 중의 Enter는 글자를 확정하는 키라서 무시한다 (오늘 탭 입력칸과 같은 이유)
+        addInboxTask();
+    }
+});
+
+// ----- 할 일 끌어다 놓기 -----
+// 프로젝트 끌기, 우선순위 탭과 같은 포인터 이벤트 방식이다. 다만 줄이 다시 그려져도(다른 곳에서 목록을 새로 불러와도) 끌기가 끊기지 않게
+// 이벤트를 줄이 아니라 document에 건다. 줄 안의 체크박스, 버튼, 입력칸을 누른 것은 끌기가 아니고, 4px 넘게 움직여야 끌기로 본다.
+//   할 일 목록 → 가운데 "할 일" 칸: 보고 있는 날짜로 정한다
+//   오늘 탭의 프로젝트 없는 할 일 → 오른쪽 "할 일 목록" 칸: 날짜를 뺀다
+
+let taskDrag = null;  // 끄는 중에만 값이 있다: { task, item, from, startX, startY, ghost, hover }
+
+function beginTaskDrag(e, item, task, from) {
+    if (e.pointerType === "mouse" && e.button !== 0) {
+        return;
+    }
+    if (item.classList.contains("editing") || e.target.closest("button, input, select, .deadline-control, .date-pick")) {
+        return;
+    }
+    taskDrag = { task: task, item: item, from: from, startX: e.clientX, startY: e.clientY, ghost: null, hover: null };
+    document.addEventListener("pointermove", moveTaskDrag);
+    document.addEventListener("pointerup", endTaskDrag);
+    document.addEventListener("pointercancel", cancelTaskDrag);
+    document.addEventListener("keydown", cancelTaskDragOnEscape);
+}
+
+// 이 끌기에서 놓을 수 있는 칸: 목록에서 온 것은 가운데 칸, 오늘 탭에서 온 것은 오른쪽 목록 칸
+function taskDropTarget(x, y, from) {
+    const element = document.elementFromPoint(x, y);
+    if (!element) {
+        return null;
+    }
+    if (from === "inbox") {
+        // 작은 달력의 날짜 칸에 놓으면 그 날짜로, 가운데 칸에 놓으면 보고 있는 날짜로 정해진다
+        return element.closest(".mini-day") || element.closest("#tasks-column");
+    }
+    return element.closest("#inbox-column");
+}
+
+function moveTaskDrag(e) {
+    const drag = taskDrag;
+    if (!drag) {
+        return;
+    }
+    if (!drag.ghost) {
+        if (Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) < PROJECT_DRAG_THRESHOLD) {
+            return;
+        }
+        drag.ghost = document.createElement("div");
+        drag.ghost.className = "task-ghost";
+        drag.ghost.textContent = drag.task.content;
+        document.body.appendChild(drag.ghost);
+        drag.item.classList.add("drag-source");
+        document.body.classList.add("task-dragging");
+    }
+    drag.ghost.style.left = (e.clientX + 14) + "px";
+    drag.ghost.style.top = (e.clientY + 14) + "px";
+
+    const target = taskDropTarget(e.clientX, e.clientY, drag.from);
+    if (target !== drag.hover) {
+        if (drag.hover) {
+            drag.hover.classList.remove("drop-hover");
+        }
+        if (target) {
+            target.classList.add("drop-hover");
+        }
+        drag.hover = target;
+    }
+}
+
+// 끌기를 마무리한다. drop이 true이고 놓을 수 있는 칸 위였다면 날짜를 바꾼다
+function finishTaskDrag(drop) {
+    const drag = taskDrag;
+    if (!drag) {
+        return;
+    }
+    taskDrag = null;
+    document.removeEventListener("pointermove", moveTaskDrag);
+    document.removeEventListener("pointerup", endTaskDrag);
+    document.removeEventListener("pointercancel", cancelTaskDrag);
+    document.removeEventListener("keydown", cancelTaskDragOnEscape);
+    document.body.classList.remove("task-dragging");
+    drag.item.classList.remove("drag-source");
+    if (drag.ghost) {
+        drag.ghost.remove();
+    }
+    if (drag.hover) {
+        drag.hover.classList.remove("drop-hover");
+    }
+    if (!drop || !drag.hover || !drag.ghost) {
+        return;
+    }
+    const hoverDate = drag.hover.dataset ? drag.hover.dataset.date : null;
+    if (drag.from === "inbox") {
+        assignTaskDate(drag.task, hoverDate || viewedDate);  // 날짜 칸(data-date)이면 그 날짜, 아니면 보고 있는 날짜
+    } else {
+        updateTask(drag.task.id, { date: null }, reloadTodayAndInbox);
+    }
+}
+
+function endTaskDrag() {
+    finishTaskDrag(true);
+}
+
+function cancelTaskDrag() {
+    finishTaskDrag(false);
+}
+
+function cancelTaskDragOnEscape(e) {
+    if (e.key === "Escape") {
+        finishTaskDrag(false);
+    }
+}
+
 // 입력 칸의 글자를 지금 보고 있는 날의 할 일로 추가한다 (▶로 내일을 열고 적으면 내일 계획이 된다)
 async function addTask() {
     const content = taskInput.value.trim();
@@ -1694,6 +2087,7 @@ function showDay(dateText) {
     eventsHeading.textContent = isToday ? "오늘의 일정" : "일정";
     tasksHeading.textContent = isToday ? "오늘 할 일" : "할 일";
     dayTodayButton.hidden = isToday;
+    syncMiniCalendar();  // 작은 달력도 보고 있는 날짜의 달로 맞추고, 그날을 표시한다
 
     // 그날의 일정과 할 일은 내용이 바뀌기 전의 것이 남아 보이지 않게 먼저 비운다
     todayEventsList.innerHTML = "";
@@ -1725,6 +2119,11 @@ async function loadToday() {
     // 달력에서 특정 날짜를 보려고 온 것이면 그 날짜를, 아니면 오늘을 보여준다 (탭을 열 때마다 오늘로 돌아오는 원래 동작은 그대로)
     showDay(pendingTodayDate || todayText);
     pendingTodayDate = null;
+
+    // 오른쪽 "할 일 목록"(날짜 없는 할 일)도 새로 불러온다
+    loadInbox().catch(function (error) {
+        showToast("할 일 목록을 불러오지 못했습니다: " + error.message);
+    });
 
     // 할 일 입력줄의 프로젝트 선택 칸도 최신 프로젝트 목록으로 채운다
     loadProjects().catch(function (error) {
@@ -1976,7 +2375,7 @@ let subToFocus = null;
 
 // 서버에서 프로젝트 목록(진행률과 단계 포함)을 받아와서 화면을 다시 그린다.
 // 오늘 탭의 할 일 줄이나 프로젝트 카드에서 할 일을 바꾼 뒤에도 이 함수로 새로고침한다
-async function loadProjects() {
+async function loadProjects(options) {
     // 프로젝트와 폴더를 동시에 받는다
     const [projectsResponse, foldersResponse] = await Promise.all([fetch("/api/projects"), fetch("/api/folders")]);
     if (!projectsResponse.ok) {
@@ -1987,7 +2386,7 @@ async function loadProjects() {
     }
     projectsCache = await projectsResponse.json();
     foldersCache = await foldersResponse.json();
-    renderProjects();
+    renderProjects(options);  // options: 카드가 빠지거나 옮겨졌을 때의 "다시 쌓기 + 미끄러지는 움직임" 옵션 (renderProjects 설명 참고)
     fillProjectSelect();
 }
 
@@ -2058,6 +2457,13 @@ function makeProjectCard(project) {
     // 맨 윗줄: 이름, 마감일, 수정 버튼
     const head = document.createElement("div");
     head.className = "project-card-head";
+    // 카드의 맨 윗줄(이름이 있는 줄)을 잡고 끌면 폴더로 옮길 수 있다. 폴더가 하나도 없으면 옮길 곳이 없으니 끌기를 켜지 않는다
+    if (foldersCache.length > 0) {
+        card.classList.add("draggable");
+        head.addEventListener("pointerdown", function (e) {
+            beginProjectDrag(e, head, card, project);
+        });
+    }
 
     const name = document.createElement("span");
     name.className = "project-name";
@@ -2275,7 +2681,21 @@ function projectColumnCount() {
     if (window.innerWidth < 900) {
         return 1;
     }
-    return [2, 3, 4].includes(settings.projectColumns) ? settings.projectColumns : 2;
+    const total = [2, 3, 4].includes(settings.projectColumns) ? settings.projectColumns : 2;
+    return total / projectFolderColumns();  // 폴더를 2열로 놓으면 폴더 안의 카드 열은 그만큼 줄어든다 (4열 ÷ 2 = 2열)
+}
+
+// 폴더를 몇 열로 놓을지. 2열은 카드 열 수가 4일 때만, 폴더가 있고 창이 충분히 넓을 때만 적용된다
+function projectFolderColumns() {
+    if (window.innerWidth < 900 || foldersCache.length === 0) {
+        return 1;
+    }
+    return settings.projectFolderColumns === 2 && settings.projectColumns === 4 ? 2 : 1;
+}
+
+// 폴더 열 수에 맞춰 목록 상자에 표시(CSS 클래스)를 붙이거나 뗀다. 실제 두 줄 배치는 CSS가 한다
+function applyProjectListColumns() {
+    projectListElement.classList.toggle("two-folder-columns", projectFolderColumns() === 2);
 }
 
 // 프로젝트 카드들을 한 줄에 몇 개씩 늘어놓을 상자를 만든다. 실제로 열에 나눠 놓는 일은 layoutProjectGrids가 한다
@@ -2351,6 +2771,7 @@ window.addEventListener("resize", function () {
     clearTimeout(projectResizeTimer);
     projectResizeTimer = setTimeout(function () {
         if (document.getElementById("projects").classList.contains("active")) {
+            applyProjectListColumns();  // 900px 경계를 넘으면 폴더 열 수도 달라진다
             layoutProjectGrids();
         }
     }, 150);
@@ -2435,7 +2856,7 @@ function makeFolderSection(folder, projects) {
         } else {
             const empty = document.createElement("p");
             empty.className = "folder-empty";
-            empty.textContent = "이 폴더에는 프로젝트가 없습니다. '+ 프로젝트'로 만들거나, 프로젝트 수정 창에서 이 폴더를 골라 주세요.";
+            empty.textContent = "이 폴더에는 프로젝트가 없습니다. '+ 프로젝트'로 만들거나, 다른 프로젝트 카드의 맨 윗줄을 끌어다 놓아 주세요.";
             section.appendChild(empty);
         }
     }
@@ -2451,9 +2872,247 @@ function toggleFolder(folder) {
     });
 }
 
+// ----- 프로젝트를 폴더로 끌어다 놓기 -----
+// 우선순위 탭의 끌기와 같은 방식(포인터 이벤트, 새 라이브러리 없음).
+// 카드 맨 윗줄을 잡고 끌면 이름표(ghost)가 마우스를 따라다니고, 놓을 수 있는 폴더 구역이 점선으로 강조된다.
+// 폴더 구역 어디에나(머리글, 접힌 폴더, 카드들 사이 빈 곳) 놓을 수 있고, "폴더 없음" 구역에 놓으면 폴더에서 뺀다
+
+const PROJECT_DRAG_THRESHOLD = 4;  // 이만큼(px) 움직여야 끌기로 본다. 그보다 적으면 그냥 누른 것
+let projectDrag = null;            // 끄는 중에만 값이 있다: { project, card, head, startX, startY, ghost, hover, tempZone }
+
+function beginProjectDrag(e, head, card, project) {
+    if (e.pointerType === "mouse" && e.button !== 0) {
+        return;
+    }
+    if (e.target.closest("button")) {
+        return;  // 머리줄의 "수정" 버튼을 누른 것은 끌기가 아니다
+    }
+    projectDrag = {
+        project: project, card: card, head: head, startX: e.clientX, startY: e.clientY,
+        ghost: null, hover: null, tempZone: null,
+    };
+    // 마우스가 머리줄 밖으로 나가도 계속 이 줄이 이벤트를 받게 한다
+    head.setPointerCapture(e.pointerId);
+    head.addEventListener("pointermove", moveProjectDrag);
+    head.addEventListener("pointerup", endProjectDrag);
+    head.addEventListener("pointercancel", cancelProjectDrag);
+    document.addEventListener("keydown", cancelProjectDragOnEscape);
+}
+
+// 구역의 폴더 번호. "폴더 없음" 구역은 null
+function folderIdOfSection(section) {
+    return section.classList.contains("loose") ? null : Number(section.dataset.folderId);
+}
+
+// 마우스 아래에 있는 폴더 구역을 찾는다. (ghost는 pointer-events: none이라 아래가 보인다)
+function projectDropTarget(x, y) {
+    const element = document.elementFromPoint(x, y);
+    const section = element ? element.closest(".folder-section") : null;
+    return section && projectListElement.contains(section) ? section : null;
+}
+
+function startProjectDragVisuals(drag) {
+    drag.ghost = document.createElement("div");
+    drag.ghost.className = "project-ghost";
+    drag.ghost.style.borderLeftColor = drag.project.color;
+    drag.ghost.textContent = drag.project.name;
+    document.body.appendChild(drag.ghost);
+    drag.card.classList.add("drag-source");
+    document.body.classList.add("project-dragging");
+    // 이 프로젝트가 폴더 안에 있고 "폴더 없음" 구역이 아직 없으면, 폴더에서 뺄 수 있게 끄는 동안만 그 구역을 맨 아래에 만든다
+    if (drag.project.folderId !== null && !projectListElement.querySelector(".folder-section.loose")) {
+        const zone = document.createElement("section");
+        zone.className = "folder-section loose temp-zone";
+        const zoneHead = document.createElement("div");
+        zoneHead.className = "folder-head static";
+        const zoneName = document.createElement("span");
+        zoneName.className = "folder-name";
+        zoneName.textContent = "폴더 없음";
+        const zoneHint = document.createElement("span");
+        zoneHint.className = "folder-summary";
+        zoneHint.textContent = "여기에 놓으면 폴더에서 뺍니다";
+        zoneHead.append(zoneName, zoneHint);
+        zone.appendChild(zoneHead);
+        projectListElement.appendChild(zone);
+        drag.tempZone = zone;
+    }
+}
+
+function moveProjectDrag(e) {
+    const drag = projectDrag;
+    if (!drag) {
+        return;
+    }
+    if (!drag.ghost) {
+        if (Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) < PROJECT_DRAG_THRESHOLD) {
+            return;
+        }
+        startProjectDragVisuals(drag);
+    }
+    drag.ghost.style.left = (e.clientX + 14) + "px";
+    drag.ghost.style.top = (e.clientY + 14) + "px";
+
+    // 놓을 수 있는 구역을 강조한다. 지금 들어 있는 폴더는 옮길 필요가 없으니 강조하지 않는다
+    let target = projectDropTarget(e.clientX, e.clientY);
+    if (target && folderIdOfSection(target) === drag.project.folderId) {
+        target = null;
+    }
+    if (target !== drag.hover) {
+        if (drag.hover) {
+            drag.hover.classList.remove("drop-hover");
+        }
+        if (target) {
+            target.classList.add("drop-hover");
+        }
+        drag.hover = target;
+    }
+
+    // 화면 위나 아래 끝 근처로 가면 페이지를 스크롤한다 (폴더가 많으면 목표 폴더가 화면 밖일 수 있다)
+    if (e.clientY < 50) {
+        window.scrollBy(0, -14);
+    } else if (e.clientY > window.innerHeight - 50) {
+        window.scrollBy(0, 14);
+    }
+}
+
+// 끌기를 마무리한다. drop이 true이고 놓을 수 있는 구역 위였다면 그 폴더로 옮긴다
+function finishProjectDrag(drop) {
+    const drag = projectDrag;
+    if (!drag) {
+        return;
+    }
+    projectDrag = null;
+    drag.head.removeEventListener("pointermove", moveProjectDrag);
+    drag.head.removeEventListener("pointerup", endProjectDrag);
+    drag.head.removeEventListener("pointercancel", cancelProjectDrag);
+    document.removeEventListener("keydown", cancelProjectDragOnEscape);
+    document.body.classList.remove("project-dragging");
+    drag.card.classList.remove("drag-source");
+    if (drag.ghost) {
+        drag.ghost.remove();
+    }
+    if (drag.tempZone) {
+        drag.tempZone.remove();
+    }
+    const target = drag.hover;
+    if (target) {
+        target.classList.remove("drop-hover");
+    }
+    if (drop && target) {
+        moveProjectToFolder(drag.project, folderIdOfSection(target));
+    }
+}
+
+function endProjectDrag() {
+    finishProjectDrag(true);
+}
+
+function cancelProjectDrag() {
+    finishProjectDrag(false);
+}
+
+function cancelProjectDragOnEscape(e) {
+    if (e.key === "Escape") {
+        finishProjectDrag(false);
+    }
+}
+
+// 프로젝트를 다른 폴더(또는 폴더 없음)로 옮긴다. 화면에 먼저 반영하고, 저장에 실패하면 되돌린다
+async function moveProjectToFolder(project, folderId) {
+    const previous = project.folderId;
+    project.folderId = folderId;
+    renderProjects({ animate: true, repackFolderIds: [previous, folderId] });  // 빠진 폴더의 빈틈이 메워지고 들어간 폴더에 자리가 생기도록 두 폴더를 다시 쌓는다
+    const folder = foldersCache.find(function (item) {
+        return item.id === folderId;
+    });
+    try {
+        await sendRequest("/api/projects/" + project.id, "PATCH", { folderId: folderId });
+        // 접힌 폴더로 옮기면 카드가 사라져 보이므로, 잘 갔다는 것을 알려 준다
+        showToast("'" + project.name + "'을(를) " + (folder ? "'" + folder.name + "' 폴더로" : "폴더 밖으로") + " 옮겼습니다");
+    } catch (error) {
+        project.folderId = previous;
+        renderProjects({ animate: true, repackFolderIds: [previous, folderId] });
+        showToast("프로젝트를 옮기지 못했습니다: " + error.message);
+    }
+}
+
+// 카드들의 지금 위치를 기억해 둔다 (프로젝트 번호 → 문서 전체 기준 위치). 다시 쌓은 뒤 "어디서 어디로 갔는지" 알아내려는 것이다
+function snapshotProjectCards() {
+    const positions = new Map();
+    document.querySelectorAll("#project-list .project-card").forEach(function (card) {
+        const rect = card.getBoundingClientRect();
+        if (rect.width > 0) {
+            positions.set(card.dataset.projectId, { left: rect.left + window.scrollX, top: rect.top + window.scrollY });
+        }
+    });
+    return positions;
+}
+
+// 카드들이 옛 위치에서 새 위치로 스르륵 미끄러지게 한다. 요즘 많이 쓰는 FLIP 기법이다:
+// First(옛 위치를 재고) → Last(새 위치로 실제로 옮기고) → Invert(카드를 옛 위치로 잠깐 되돌려 놓고, transform으로 그만큼 밀어 둠) → Play(transform을 풀면 transition이 새 위치까지 움직여 줌).
+// 카드는 이미 새 위치에 있으므로 중간에 멈추거나 실패해도 화면이 어긋나지 않는다
+function slideProjectCards(before) {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        return;  // 움직임을 줄여 달라고 설정한 사람에게는 애니메이션 없이 바로 보여 준다
+    }
+    const moving = [];
+    document.querySelectorAll("#project-list .project-card").forEach(function (card) {
+        const old = before.get(card.dataset.projectId);
+        if (!old) {
+            return;
+        }
+        const rect = card.getBoundingClientRect();
+        const dx = old.left - (rect.left + window.scrollX);
+        const dy = old.top - (rect.top + window.scrollY);
+        if (Math.abs(dx) < 1 && Math.abs(dy) < 1) {
+            return;
+        }
+        card.style.transition = "none";
+        card.style.transform = "translate(" + dx + "px, " + dy + "px)";
+        card.style.position = "relative";  // 움직이는 동안 이웃 카드 위로 지나가도록
+        card.style.zIndex = "5";
+        moving.push(card);
+    });
+    if (moving.length === 0) {
+        return;
+    }
+    void document.body.offsetWidth;  // 옛 위치에 놓인 상태를 브라우저가 한 번 확정하게 한다 (이걸 읽지 않으면 움직임 없이 바로 새 위치로 간다)
+    moving.forEach(function (card) {
+        card.style.transition = "transform 320ms cubic-bezier(0.2, 0.7, 0.2, 1)";
+        card.style.transform = "";
+        function cleanup() {
+            card.style.transition = "";
+            card.style.position = "";
+            card.style.zIndex = "";
+            card.removeEventListener("transitionend", cleanup);
+        }
+        card.addEventListener("transitionend", cleanup);
+        setTimeout(cleanup, 600);  // transitionend가 안 오는 경우(탭 전환 등)에도 스타일을 정리한다
+    });
+}
+
 // 폴더와 프로젝트 카드들을 모두 다시 그린다.
-// 폴더가 하나도 없으면 예전처럼 카드만 늘어놓고, 폴더가 있으면 폴더 구역들 뒤에 "폴더 없음" 구역을 둔다
-function renderProjects() {
+// options.repackFolderIds: 카드가 빠지거나 들어온 폴더들의 번호(폴더 없음은 null). 이 폴더들의 카드는 "있던 열"을 잊고 처음부터 다시 쌓아서 빈틈을 메운다.
+//   (평소에는 카드가 다른 열로 튀지 않게 열을 기억해 두는데, 카드가 빠졌을 때는 오히려 빈칸이 남기 때문이다)
+// options.animate: true이면 카드들이 옛 위치에서 새 위치로 미끄러진다
+function renderProjects(options) {
+    const before = options && options.animate ? snapshotProjectCards() : null;
+    if (options && options.repackFolderIds) {
+        projectsCache.forEach(function (project) {
+            if (options.repackFolderIds.includes(project.folderId)) {
+                projectColumnMemory.delete(String(project.id));
+            }
+        });
+    }
+    renderProjectsNow();
+    if (before) {
+        slideProjectCards(before);
+    }
+}
+
+// (renderProjects가 부르는 실제 그리기) 폴더가 하나도 없으면 예전처럼 카드만 늘어놓고, 폴더가 있으면 폴더 구역들 뒤에 "폴더 없음" 구역을 둔다
+function renderProjectsNow() {
+    applyProjectListColumns();
     projectListElement.innerHTML = "";
     projectGrids = [];
     if (projectsCache.length === 0 && foldersCache.length === 0) {
@@ -2557,7 +3216,9 @@ async function saveProject() {
             await sendRequest("/api/projects", "POST", body);
         }
         projectDialog.close();
-        await loadProjects();
+        // 폴더를 바꿨으면 빠진 폴더와 들어간 폴더를 다시 쌓고 미끄러지게 한다
+        const folderChanged = editingProject && editingProject.folderId !== body.folderId;
+        await loadProjects(folderChanged ? { animate: true, repackFolderIds: [editingProject.folderId, body.folderId] } : undefined);
     } catch (error) {
         projectError.textContent = error.message;
     }
@@ -2571,9 +3232,10 @@ async function deleteProject() {
         return;
     }
     try {
+        const folderId = editingProject.folderId;
         await sendRequest("/api/projects/" + editingProject.id, "DELETE");
         projectDialog.close();
-        await loadProjects();
+        await loadProjects({ animate: true, repackFolderIds: [folderId] });  // 지운 카드의 빈칸을 아래 카드들이 올라와 메운다
     } catch (error) {
         projectError.textContent = error.message;
     }
@@ -3871,6 +4533,8 @@ async function loadSettings() {
 
         pomodoroSoundCheckbox.checked = settings.pomodoroSound !== false;
         document.querySelector('input[name="project-columns"][value="' + ([2, 3, 4].includes(settings.projectColumns) ? settings.projectColumns : 2) + '"]').checked = true;
+        document.querySelector('input[name="project-folder-columns"][value="' + (settings.projectFolderColumns === 2 ? 2 : 1) + '"]').checked = true;
+        updateFolderColumnControls();
         vaultPathInput.value = settings.vaultPath || "";
 
         // 혹시 이미 있던 슬라이더를 비우고, 화면 크기 슬라이더와 Pomodoro 슬라이더를 각자의 칸에 만든다
@@ -3930,6 +4594,26 @@ document.querySelectorAll('input[name="project-columns"]').forEach(function (rad
     radio.addEventListener("change", function () {
         if (radio.checked) {
             settings.projectColumns = Number(radio.value);
+            updateFolderColumnControls();
+            projectColumnMemory.clear();
+            renderProjects();
+            saveSettings();
+        }
+    });
+});
+
+// 카드 열 수가 4가 아니면 "폴더 2열"은 쓸 수 없으니 선택 칸을 흐리게 막고 이유를 알려 준다 (고른 값 자체는 그대로 저장해 둔다)
+function updateFolderColumnControls() {
+    const allowed = settings.projectColumns === 4;
+    document.querySelector('input[name="project-folder-columns"][value="2"]').disabled = !allowed;
+    document.getElementById("project-folder-columns-hint").classList.toggle("muted-off", !allowed);  // 막혔을 때 안내를 또렷하게
+}
+
+// 설정 탭에서 폴더 열 수(1/2열)를 골랐을 때
+document.querySelectorAll('input[name="project-folder-columns"]').forEach(function (radio) {
+    radio.addEventListener("change", function () {
+        if (radio.checked) {
+            settings.projectFolderColumns = Number(radio.value);
             projectColumnMemory.clear();
             renderProjects();
             saveSettings();

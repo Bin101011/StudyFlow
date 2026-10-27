@@ -72,12 +72,14 @@
             <!-- 탭 전체를 왼쪽(일정)과 오른쪽(할 일)으로 나누는 상자 -->
             <div class="today-layout">
                 <section class="today-column">
+                    <!-- 작은 달력: 날짜를 누르면 그날로 이동한다. 칸은 app.js가 만든다 -->
+                    <div id="mini-calendar" class="mini-calendar"></div>
                     <h2 id="events-heading">오늘의 일정</h2>
                     <!-- 일정 줄들은 app.js가 /api/events에서 받아 여기에 만든다 -->
                     <ul id="today-events" class="today-list"></ul>
                 </section>
 
-                <section class="today-column">
+                <section class="today-column" id="tasks-column">
                     <h2 id="tasks-heading">오늘 할 일</h2>
                     <!-- 할 일 입력 줄: 글자를 쓰고 Enter를 누르거나 추가 버튼을 누른다 -->
                     <div class="task-add">
@@ -96,6 +98,17 @@
                     </div>
 
                     <ul id="today-tasks" class="today-list"></ul>
+                </section>
+
+                <!-- 할 일 목록(수집함): 날짜를 아직 정하지 않은 할 일(프로젝트 없는 것만). 줄의 버튼으로 날짜를 정하거나, 가운데 "할 일" 쪽으로 끌어다 놓는다 -->
+                <section class="today-column" id="inbox-column">
+                    <h2>할 일 목록 <span id="inbox-count" class="inbox-count"></span></h2>
+                    <div class="task-add">
+                        <input type="text" id="inbox-input" placeholder="날짜 없이 적어 두고 Enter">
+                        <button id="inbox-add-button">추가</button>
+                    </div>
+                    <p class="inbox-hint">날짜를 나중에 정할 할 일. 줄 위에 마우스를 올려 날짜를 정하거나, 가운데 '할 일' 쪽으로 끌어다 놓으세요.</p>
+                    <ul id="inbox-tasks" class="today-list"></ul>
                 </section>
             </div>
         </div>
@@ -243,12 +256,18 @@
 
             <section class="settings-section">
                 <h2>프로젝트 탭</h2>
-                <p class="settings-hint">프로젝트 카드를 몇 열로 늘어놓을지 정합니다. 카드는 위아래로 빈틈 없이 쌓입니다. 창이 좁으면(900px 미만) 자동으로 1열이 됩니다.</p>
                 <div class="settings-row">
                     <span class="settings-label">카드 열 수</span>
                     <label class="settings-choice"><input type="radio" name="project-columns" value="2"> 2열</label>
                     <label class="settings-choice"><input type="radio" name="project-columns" value="3"> 3열</label>
                     <label class="settings-choice"><input type="radio" name="project-columns" value="4"> 4열</label>
+                    <span class="settings-note" title="창이 900px보다 좁으면 설정과 상관없이 카드도 폴더도 1열로 보입니다">(좁은 창은 자동 1열)</span>
+                </div>
+                <div class="settings-row">
+                    <span class="settings-label">폴더 열 수</span>
+                    <label class="settings-choice"><input type="radio" name="project-folder-columns" value="1"> 1열</label>
+                    <label class="settings-choice"><input type="radio" name="project-folder-columns" value="2"> 2열</label>
+                    <span id="project-folder-columns-hint" class="settings-note" title="폴더 2열 × 폴더 안 카드 2열 = 4열">(2열은 카드 4열일 때만)</span>
                 </div>
             </section>
             </div>

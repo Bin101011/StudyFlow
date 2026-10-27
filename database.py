@@ -165,6 +165,16 @@ def list_overdue_tasks(today):
     return rows
 
 
+def list_inbox_tasks():
+    """"할 일 목록(수집함)"에 보여줄 할 일: 날짜도 프로젝트도 없고 아직 안 끝낸 할 일을 만든 순서대로 돌려준다.
+    오늘 탭 오른쪽 패널에서 날짜를 정해 주려고 모아 둔 것이다. 프로젝트에 연결된 단계는 프로젝트 카드에서 다루므로 여기에 나오지 않는다.
+    (날짜를 정하면 date가 채워져서 이 목록에서 빠지고 그날의 할 일이 된다. 날짜를 다시 빼면 이 목록으로 돌아온다)"""
+    rows, _ = run(
+        "SELECT * FROM tasks WHERE project_id IS NULL AND date IS NULL AND parent_id IS NULL AND done = 0 ORDER BY id"
+    )
+    return rows
+
+
 def list_open_tasks():
     """우선순위 탭에 보여줄 할 일: 아직 안 끝낸 "큰 단위"의 할 일들 (날짜가 있든 없든, 지난 것이든 먼 미래든).
     큰 단위란 맨 위 단계(parent_id가 없는 것)다. 하위 단계(예: "책 읽기" 아래의 "1장", "2장")는 따로 보여주지 않고,

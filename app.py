@@ -629,6 +629,12 @@ def api_get_tasks():
     })
 
 
+# 할 일 목록(수집함): 날짜도 프로젝트도 없는 안 끝낸 할 일들. 오늘 탭 오른쪽 패널이 보여주고, 거기서 날짜를 정해 준다
+@app.route("/api/inbox")
+def api_get_inbox():
+    return jsonify(database.list_inbox_tasks())
+
+
 # 우선순위 탭(12단계)에 보여줄, 아직 안 끝낸 모든 할 일. importance/urgency가 null이면 "평가 안 함"이다
 @app.route("/api/priority-tasks")
 def api_get_priority_tasks():
@@ -706,9 +712,7 @@ def api_create_task():
     elif project_id is not None and (not isinstance(project_id, int) or not database.get_project(project_id)):
         return jsonify({"error": "그 프로젝트를 찾을 수 없습니다."}), 400
 
-    # 날짜도 프로젝트도 없으면 어디에도 보이지 않는 할 일이 되므로 막는다
-    if date is None and project_id is None:
-        return jsonify({"error": "날짜가 없는 할 일은 프로젝트에 연결해야 합니다."}), 400
+    # 날짜도 프로젝트도 없는 할 일은 "할 일 목록(수집함)"에 들어간다. 오늘 탭 오른쪽 패널에 보이고, 나중에 날짜를 정해 준다
 
     # 만들어진 할 일(번호 포함)을 돌려준다. 201: "새로 만들어졌다"
     return jsonify(database.add_task(content, date, project_id, parent_id)), 201
@@ -724,13 +728,8 @@ def api_update_task(task_id):
         changes["done"] = 1 if data["done"] else 0  # true/false를 SQLite에 저장하는 1/0으로 바꾼다
     if "date" in data:
         if data["date"] is None:
-            # 날짜를 빼는 것("오늘에서 빼기"). 프로젝트에 연결된 할 일만 가능하다.
-            # 프로젝트에도 연결되지 않은 할 일의 날짜를 빼면 어디에서도 보이지 않게 되기 때문이다
-            task = database.get_task(task_id)
-            if not task:
-                return jsonify({"error": "그 할 일을 찾을 수 없습니다."}), 404
-            if task["project_id"] is None:
-                return jsonify({"error": "프로젝트에 연결되지 않은 할 일은 날짜를 뺄 수 없습니다."}), 400
+            # 날짜를 빼는 것. 프로젝트의 단계는 프로젝트 카드에 남고("오늘에서 빼기"),
+            # 프로젝트가 없는 할 일은 "할 일 목록(수집함)"으로 돌아간다("나중으로 미루기")
             changes["date"] = None
         elif not valid_date(data["date"]):
             return jsonify({"error": "'date'는 2026-10-19 같은 날짜여야 합니다."}), 400
