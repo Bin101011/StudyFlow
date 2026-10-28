@@ -418,6 +418,7 @@ const eventStartDate = document.getElementById("event-start-date");
 const eventStartTime = document.getElementById("event-start-time");
 const eventEndDate = document.getElementById("event-end-date");
 const eventEndTime = document.getElementById("event-end-time");
+const eventMemoInput = document.getElementById("event-memo");
 const eventError = document.getElementById("event-error");
 const eventDeleteButton = document.getElementById("event-delete");
 const eventCancelButton = document.getElementById("event-cancel");
@@ -434,6 +435,9 @@ let pasting = false;
 
 // 지금 수정 중인 일정. null이면 "새 일정 추가" 모드다
 let editingEvent = null;
+// 창을 열 때 메모 칸에 채운 글자. 저장할 때 이것과 달라졌을 때만 메모를 보낸다.
+// (Google Calendar 웹에서 서식을 넣어 쓴 설명은 우리 칸에 글자만 보이므로, 메모를 안 고쳤다면 원래 서식을 건드리지 않으려는 것이다)
+let eventMemoInitial = "";
 // 삭제 버튼을 한 번 눌러서 "정말 삭제?" 확인을 기다리는 중인지
 let deleteArmed = false;
 // 새 일정을 추가할 때 미리 선택해둘 캘린더의 id. loadCalendarList가 정한다
@@ -465,6 +469,30 @@ function addDaysToText(text, days) {
     return toDateText(new Date(year, month - 1, day + days));
 }
 
+// 일정의 메모(Google Calendar의 "설명" 칸)를 화면에 보일 글자로 바꾼다.
+// 우리가 쓴 메모는 그냥 글자이지만, Google Calendar 웹에서 쓴 설명에는 <br>, <b>, <a> 같은 HTML이 섞여 올 수 있다.
+// HTML이 보이면 태그를 걷어내고 글자만 남긴다. DOMParser는 글자를 HTML 문서로 읽어 주는 브라우저 도구인데,
+// 화면에 붙이지 않은 채로 읽기만 하므로 안에 든 스크립트가 실행되지 않는다. (결과는 항상 textContent로만 화면에 넣는다)
+function memoText(raw) {
+    if (!raw) {
+        return "";
+    }
+    // 완전한 태그(<b>, </p>, <br/>, <a href="...">)나 &amp; 같은 글자 코드가 있을 때만 HTML로 본다.
+    // "3 < 5"나 "a<b" 같은 평범한 글자를 HTML로 오해해서 잘라먹지 않도록 일부러 엄격하게 본다
+    if (!/<\/?[a-z][a-z0-9]*(\s[^>]*)?\/?>|&(amp|lt|gt|quot|nbsp|#\d+);/i.test(raw)) {
+        return raw.trim();
+    }
+    const withBreaks = raw
+        .replace(/<br\s*\/?>/gi, "\n")
+        .replace(/<\/(p|div|li|h[1-6])>/gi, "\n");
+    const doc = new DOMParser().parseFromString(withBreaks, "text/html");
+    // <script>, <style> 안의 코드는 textContent에 글자로 딸려 오므로 먼저 없앤다
+    doc.querySelectorAll("script, style").forEach(function (element) {
+        element.remove();
+    });
+    return (doc.body.textContent || "").trim();
+}
+
 // 일정 하나를 툴팁용 글자로 만든다
 function describeEvent(event) {
     let when = "";
@@ -477,7 +505,13 @@ function describeEvent(event) {
             when = (event.start.getMonth() + 1) + "/" + event.start.getDate() + " – " + (last.getMonth() + 1) + "/" + last.getDate();
         }
     }
-    return when ? when + "  " + event.title : event.title;
+    const text = when ? when + "  " + event.title : event.title;
+    // 메모가 있으면 제목 아래에 이어 붙인다 (툴팁은 줄바꿈을 보여준다). 너무 길면 앞부분만
+    const memo = memoText(event.extendedProps.description);
+    if (!memo) {
+        return text;
+    }
+    return text + "\n\n" + (memo.length > 200 ? memo.slice(0, 200) + "…" : memo);
 }
 
 // 화면 아래에 알림을 4초 동안 띄운다
@@ -882,6 +916,8 @@ function showEventDialog(values) {
     eventDialogTitle.textContent = editingEvent ? "일정 수정" : "일정 추가";
 
     eventTitleInput.value = values.title;
+    eventMemoInitial = memoText(values.description);
+    eventMemoInput.value = eventMemoInitial;
     eventAllDayCheckbox.checked = values.allDay;
     eventStartDate.value = values.startDate;
     eventStartTime.value = values.startTime;
@@ -955,6 +991,7 @@ function openEditDialog(info) {
         event: event,
         title: event.title,
         calendarId: event.extendedProps.calendarId,
+        description: event.extendedProps.description,
         allDay: event.allDay,
         startDate: toDateText(event.start),
         startTime: event.allDay ? "09:00" : toTimeText(event.start),
@@ -1023,6 +1060,10 @@ async function saveEvent() {
                 title: title,
                 ...timeFields,
             };
+            // 메모는 창을 연 뒤 고쳤을 때만 보낸다. 다 지웠으면 빈 글자("")를 보내서 메모를 지운다
+            if (eventMemoInput.value.trim() !== eventMemoInitial) {
+                body.description = eventMemoInput.value.trim();
+            }
             // 다른 캘린더를 골랐으면 서버가 내용을 고친 뒤 그 캘린더로 옮긴다
             const moved = eventCalendarSelect.value && eventCalendarSelect.value !== editingEvent.extendedProps.calendarId;
             if (moved) {
@@ -1033,11 +1074,15 @@ async function saveEvent() {
                 showToast("'" + title + "' 일정을 '" + eventCalendarSelect.selectedOptions[0].textContent + "' 캘린더로 옮겼습니다");
             }
         } else {
-            await sendRequest("/api/events", "POST", {
+            const body = {
                 calendarId: eventCalendarSelect.value,
                 title: title,
                 ...timeFields,
-            });
+            };
+            if (eventMemoInput.value.trim()) {
+                body.description = eventMemoInput.value.trim();
+            }
+            await sendRequest("/api/events", "POST", body);
         }
 
         eventDialog.close();
@@ -1171,6 +1216,7 @@ function copyHoveredEvent() {
 
     copiedEvent = {
         title: event.title,
+        description: memoText(event.extendedProps.description),  // 메모도 함께 복사한다 (서식은 빼고 글자만)
         // 쓸 수 없는 캘린더(공휴일 등)의 일정이면 null로 두고, 붙여넣을 때 기본 캘린더를 쓴다
         calendarId: event.extendedProps.canEdit ? event.extendedProps.calendarId : null,
         allDay: event.allDay,
@@ -1213,13 +1259,17 @@ async function pasteCopiedEvent() {
 
     pasting = true;
     try {
-        await sendRequest("/api/events", "POST", {
+        const body = {
             calendarId: copiedEvent.calendarId || defaultCalendarId,
             title: copiedEvent.title,
             allDay: copiedEvent.allDay,
             start: start,
             end: end,
-        });
+        };
+        if (copiedEvent.description) {
+            body.description = copiedEvent.description;
+        }
+        await sendRequest("/api/events", "POST", body);
         calendar.refetchEvents();
         showToast("붙여넣었습니다: " + copiedEvent.title);
     } catch (error) {
@@ -1378,30 +1428,196 @@ async function loadTodayEvents() {
     }
 
     visible.forEach(function (event) {
-        const item = document.createElement("li");
-        item.className = "today-event";
-
-        // 캘린더 색 동그라미
-        const dot = document.createElement("span");
-        dot.className = "event-dot";
-        dot.style.backgroundColor = event.color;
-
-        // 시간 글자: 종일이면 "종일", 아니면 "09:00–10:00"
-        const time = document.createElement("span");
-        time.className = "event-time";
-        if (event.start.length === 10) {
-            time.textContent = "종일";
-        } else {
-            time.textContent = toTimeText(new Date(event.start)) + "–" + toTimeText(new Date(event.end));
-        }
-
-        const title = document.createElement("span");
-        title.textContent = event.title;  // textContent: 제목에 < > 같은 글자가 있어도 HTML로 해석되지 않는다
-
-        item.append(dot, time, title);
-        todayEventsList.appendChild(item);
+        todayEventsList.appendChild(makeTodayEventRow(event));
     });
 }
+
+// ----- 오늘 탭 일정 줄의 메모 -----
+// 일정에 "노트 가져가기" 같은 짧은 메모를 붙인다. 메모는 Google Calendar 일정의 "설명" 칸에 저장되므로 폰이나 웹에서도 보인다.
+// 일정 수정 창을 열지 않아도 되도록, 이 줄에서 바로 쓴다: 메모가 있으면 글자를 눌러서, 없으면 마우스를 올렸을 때 나오는 "+ 메모"를 눌러서.
+// 입력을 멈추고 1.5초가 지나거나 다른 곳을 누르면 저장한다. Enter를 누르면 저장하고 입력을 끝내며(Esc도 같다), 줄바꿈은 Shift+Enter로 한다.
+const EVENT_MEMO_SAVE_DELAY_MS = 1500;
+const EVENT_MEMO_MAX = 8000;  // 서버(app.py의 EVENT_DESCRIPTION_MAX)와 같은 값
+let pendingEventMemoSaves = 0;  // 지금 Google에 보내는 중인 메모 저장 개수
+
+// 메모를 쓰는 중이거나 저장하는 중이면 true. 이때 동기화가 일정 목록을 다시 그리면 쓰던 글자가 사라지므로 그 새로고침은 건너뛴다
+function isEventMemoBusy() {
+    return pendingEventMemoSaves > 0 || todayEventsList.querySelector(".event-memo-input") !== null;
+}
+
+// 일정 한 줄(<li>)을 만든다: 색 동그라미 + 시간 + (제목, 메모) + 마우스를 올리면 나오는 "+ 메모" 버튼
+function makeTodayEventRow(event) {
+    const item = document.createElement("li");
+    item.className = "today-event";
+
+    // 캘린더 색 동그라미
+    const dot = document.createElement("span");
+    dot.className = "event-dot";
+    dot.style.backgroundColor = event.color;
+
+    // 시간 글자: 종일이면 "종일", 아니면 "09:00–10:00"
+    const time = document.createElement("span");
+    time.className = "event-time";
+    if (event.start.length === 10) {
+        time.textContent = "종일";
+    } else {
+        time.textContent = toTimeText(new Date(event.start)) + "–" + toTimeText(new Date(event.end));
+    }
+
+    const title = document.createElement("div");
+    title.className = "event-title";
+    title.textContent = event.title;  // textContent: 제목에 < > 같은 글자가 있어도 HTML로 해석되지 않는다
+
+    // 줄은 격자(grid)다: 첫째 줄에 점, 시간, 제목, "+ 메모" 버튼이 놓이고, 메모는 제목 아래 둘째 줄에 붙는다 (style.css)
+    item.append(dot, time, title);
+
+    // 공휴일 캘린더처럼 쓸 수 없는 캘린더의 일정은 메모를 볼 수만 있다
+    const canEdit = Boolean(event.canEdit);
+    // text: 화면에 보이는 메모, saved: Google에 저장된 것으로 아는 메모. 둘이 다르면 아직 저장 전(또는 저장 실패)이다
+    const memo = { text: memoText(event.description), saved: memoText(event.description), saving: false, again: false, failed: false };
+
+    let addButton = null;
+    if (canEdit) {
+        addButton = document.createElement("button");
+        addButton.type = "button";
+        addButton.className = "event-memo-add";
+        addButton.textContent = "+ 메모";
+        addButton.title = "이 일정에 메모 붙이기";
+        addButton.addEventListener("click", startEditing);
+    }
+
+    // 메모를 글자로 보여주는 상태로 그린다 (입력 칸이 있었다면 걷어낸다)
+    function renderMemo() {
+        item.querySelectorAll(".event-memo, .event-memo-input").forEach(function (element) {
+            element.remove();
+        });
+        if (memo.text) {
+            const view = document.createElement("div");
+            view.className = "event-memo" + (canEdit ? " editable" : "") + (memo.failed ? " unsaved" : "");
+            view.textContent = memo.text;  // textContent: 메모에 HTML 글자가 있어도 해석되지 않는다
+            if (canEdit) {
+                view.title = memo.failed ? "저장되지 않았어요. 눌러서 고치면 다시 저장합니다" : "눌러서 메모 고치기";
+                view.addEventListener("click", startEditing);
+            }
+            item.appendChild(view);
+        }
+        if (addButton) {
+            // 메모가 없을 때만 "+ 메모" 버튼이 있다
+            if (memo.text) {
+                addButton.remove();
+            } else if (!addButton.isConnected) {
+                item.appendChild(addButton);
+            }
+        }
+    }
+
+    // 메모를 Google에 저장한다. 저장하는 사이에 또 고쳤으면 끝난 뒤 한 번 더 저장한다
+    async function saveMemo() {
+        if (memo.saving) {
+            memo.again = true;
+            return;
+        }
+        if (memo.text === memo.saved) {
+            return;
+        }
+        memo.saving = true;
+        memo.failed = false;
+        pendingEventMemoSaves++;
+        const text = memo.text;
+        try {
+            await sendRequest("/api/events/" + encodeURIComponent(event.id), "PATCH", {
+                calendarId: event.calendarId,
+                description: text,
+            });
+            memo.saved = text;
+            event.description = text;  // 이 줄을 만든 데이터도 맞춰 둔다
+            calendar.refetchEvents();  // 캘린더 탭의 툴팁도 새 메모를 보여주도록
+        } catch (error) {
+            memo.failed = true;
+            showToast("메모를 저장하지 못했습니다: " + error.message);
+        } finally {
+            memo.saving = false;
+            pendingEventMemoSaves--;
+            if (!item.querySelector(".event-memo-input")) {
+                renderMemo();  // 저장 결과(실패 표시)를 반영한다
+            }
+            if (memo.again) {
+                memo.again = false;
+                if (!memo.failed) {
+                    saveMemo();
+                }
+            }
+        }
+    }
+
+    // 메모 입력 칸을 연다
+    function startEditing() {
+        if (item.querySelector(".event-memo-input")) {
+            return;
+        }
+        item.querySelectorAll(".event-memo").forEach(function (element) {
+            element.remove();
+        });
+        if (addButton) {
+            addButton.remove();
+        }
+
+        const input = document.createElement("textarea");
+        input.className = "event-memo-input";
+        input.rows = 1;
+        input.maxLength = EVENT_MEMO_MAX;
+        input.placeholder = "예: 노트 가져가기";
+        input.value = memo.text;
+        item.appendChild(input);
+
+        // 글이 늘어나는 만큼 입력 칸도 높아진다 (+2는 위아래 테두리)
+        function fitHeight() {
+            input.style.height = "auto";
+            input.style.height = (input.scrollHeight + 2) + "px";
+        }
+        fitHeight();
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);  // 커서를 글 맨 끝에
+
+        let timer = null;
+        input.addEventListener("input", function () {
+            fitHeight();
+            clearTimeout(timer);
+            timer = setTimeout(function () {
+                memo.text = input.value.trim();
+                saveMemo();
+            }, EVENT_MEMO_SAVE_DELAY_MS);
+        });
+        // 입력 칸을 벗어나면(다른 곳을 누르거나 Esc) 바로 저장하고 글자로 보여주는 상태로 돌아간다
+        input.addEventListener("blur", function () {
+            clearTimeout(timer);
+            memo.text = input.value.trim();
+            renderMemo();
+            saveMemo();
+        });
+        // Enter: 저장하고 입력을 끝낸다. 줄바꿈은 Shift+Enter (Shift를 누르면 여기서 막지 않아 브라우저가 줄바꿈을 넣는다).
+        // 한글을 조합하는 중의 Enter는 마지막 글자를 확정하는 키라서 건드리지 않는다
+        input.addEventListener("keydown", function (e) {
+            if (e.isComposing) {
+                return;
+            }
+            if (e.key === "Escape" || (e.key === "Enter" && !e.shiftKey)) {
+                e.preventDefault();
+                input.blur();
+            }
+        });
+    }
+
+    renderMemo();
+    return item;
+}
+
+// 창이 가려지는 순간 메모를 쓰던 중이었다면 입력을 끝내서(=저장해서) 글자가 날아가지 않게 한다
+document.addEventListener("visibilitychange", function () {
+    if (document.hidden && document.activeElement && document.activeElement.classList.contains("event-memo-input")) {
+        document.activeElement.blur();
+    }
+});
 
 // 할 일 한 줄(<li>)을 만든다. 오늘 탭과 프로젝트 카드가 같이 쓴다. options는 이런 값들을 담은 묶음이다:
 //   reload: 할 일을 바꾸거나 지운 뒤 목록을 다시 불러오는 함수 (오늘 탭이면 loadTodayTasks, 프로젝트 탭이면 loadProjects)
@@ -2149,6 +2365,9 @@ function showDay(dateText) {
     todayTasksList.innerHTML = "";
     overdueSection.hidden = true;
 
+    // 하루 메모: 보고 있던 날짜의 메모를 먼저 저장하고(아래 loadDayMemo 안에서), 이 날짜의 메모를 불러온다
+    loadDayMemo(dateText);
+
     // 할 일은 내 컴퓨터에서 바로 오고, 일정은 Google을 거쳐 느릴 수 있다. 서로 기다리지 않게 따로 불러온다
     // (인터넷이 끊겨 일정이 실패해도 할 일은 보인다)
     loadTodayTasks().catch(function (error) {
@@ -2163,6 +2382,122 @@ function showDay(dateText) {
         }
     });
 }
+
+// ----- 하루 메모 -----
+// 날짜마다 하나씩 적는 자유 메모. 일정과 상관없는 그날의 생각, 챙길 것 등을 적는다. 내 컴퓨터(studyflow.db)에만 저장하고 Google에는 보내지 않는다.
+// 입력을 멈추고 1초 뒤, 또는 다른 곳을 누르거나 다른 날로 넘길 때 저절로 저장된다. 내용을 모두 지우면 메모가 사라진다.
+const dayMemoInput = document.getElementById("day-memo");
+const dayMemoStatus = document.getElementById("day-memo-status");
+const DAY_MEMO_SAVE_DELAY_MS = 1000;
+const DAY_MEMO_MAX = 20000;  // 서버(app.py의 DAY_MEMO_MAX)와 같은 값
+dayMemoInput.maxLength = DAY_MEMO_MAX;
+
+let dayMemoDate = null;     // 입력 칸의 글이 어느 날짜의 것인지. null이면 불러오는 중이라 칸을 쓸 수 없다
+let dayMemoSaved = "";      // 서버에 저장된 것으로 아는 내용
+let dayMemoTimer = null;    // "입력을 멈추고 1초 뒤 저장"을 기다리는 타이머
+// 저장 요청들을 한 줄로 세워 하나씩 보낸다. 날짜를 빠르게 넘길 때 요청이 뒤섞여 옛 내용이 새 내용을 덮어쓰는 일을 막으려는 것이다.
+// Promise는 "나중에 끝나는 일"을 담는 자바스크립트 상자이고, .then(...)으로 "이 일이 끝나면 다음 일"을 이어 붙인다
+let dayMemoQueue = Promise.resolve();
+
+function setDayMemoStatus(text, isError) {
+    dayMemoStatus.textContent = text;
+    dayMemoStatus.classList.toggle("error", Boolean(isError));
+}
+
+// 입력 칸의 내용을 저장한다. 바뀐 게 없으면 아무것도 하지 않는다.
+// keepalive가 true면(창이 닫히는 중) 줄을 서지 않고 바로 보내고, 창이 닫혀도 요청이 끝까지 가도록 한다
+function saveDayMemo(keepalive) {
+    clearTimeout(dayMemoTimer);
+    if (dayMemoDate === null || dayMemoInput.value === dayMemoSaved) {
+        return dayMemoQueue;
+    }
+    // 보내는 순간의 날짜와 내용을 지금 붙잡아 둔다. 줄을 서서 기다리는 사이에 날짜가 바뀌어도 이 날짜에 저장되어야 한다
+    const date = dayMemoDate;
+    const content = dayMemoInput.value;
+    setDayMemoStatus("저장 중…");
+
+    async function send() {
+        try {
+            const response = await fetch("/api/day-memo", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ date: date, content: content }),
+                keepalive: Boolean(keepalive),
+            });
+            if (!response.ok) {
+                throw new Error(await errorMessageFrom(response));
+            }
+            if (dayMemoDate === date) {
+                dayMemoSaved = content;
+                // 보내는 사이에 더 썼다면 아직 "수정 중"이다 (곧 다음 저장이 일어난다)
+                setDayMemoStatus(dayMemoInput.value === content ? "저장됨" : "수정 중…");
+            }
+        } catch (error) {
+            showToast("메모를 저장하지 못했습니다: " + error.message);
+            if (dayMemoDate === date) {
+                setDayMemoStatus("저장 실패", true);
+                dayMemoTimer = setTimeout(saveDayMemo, 5000);  // 5초 뒤 다시 시도한다
+            }
+        }
+    }
+
+    if (keepalive) {
+        return send();
+    }
+    dayMemoQueue = dayMemoQueue.then(send);  // send는 오류를 스스로 처리하므로 줄이 중간에 끊기지 않는다
+    return dayMemoQueue;
+}
+
+// dateText 날짜의 메모를 불러와 입력 칸에 채운다. 날짜가 바뀔 때마다(showDay) 부른다
+async function loadDayMemo(dateText) {
+    // 보고 있던 날짜의 메모에 저장 안 한 글이 있으면, 칸을 비우기 전에 먼저 저장 요청을 줄에 세운다
+    saveDayMemo();
+    dayMemoDate = null;
+    dayMemoSaved = "";
+    dayMemoInput.value = "";
+    dayMemoInput.disabled = true;
+    setDayMemoStatus("");
+    try {
+        await dayMemoQueue;  // 방금 세운 저장이 끝난 뒤에 읽어야 같은 날로 돌아왔을 때 옛 내용이 보이지 않는다
+        const response = await fetch("/api/day-memo?date=" + dateText);
+        if (!response.ok) {
+            throw new Error(await errorMessageFrom(response));
+        }
+        const data = await response.json();
+        if (dateText !== viewedDate) {
+            return;  // 그 사이 다른 날로 넘어갔다
+        }
+        dayMemoDate = dateText;
+        dayMemoSaved = data.content;
+        dayMemoInput.value = data.content;
+        dayMemoInput.disabled = false;
+    } catch (error) {
+        console.error("하루 메모를 불러오지 못했습니다:", error);
+        if (dateText === viewedDate) {
+            // 못 읽은 채로 쓰면 기존 메모를 덮어쓸 수 있으므로 칸을 잠가 둔다
+            setDayMemoStatus("불러오지 못했어요", true);
+        }
+    }
+}
+
+dayMemoInput.addEventListener("input", function () {
+    setDayMemoStatus("수정 중…");
+    clearTimeout(dayMemoTimer);
+    dayMemoTimer = setTimeout(saveDayMemo, DAY_MEMO_SAVE_DELAY_MS);
+});
+// 다른 곳을 누르면 기다리지 않고 바로 저장한다
+dayMemoInput.addEventListener("blur", function () {
+    saveDayMemo();
+});
+// 창이 가려지거나 닫히기 직전에 저장 안 한 글이 있으면 서둘러 저장한다
+document.addEventListener("visibilitychange", function () {
+    if (document.hidden) {
+        saveDayMemo(true);
+    }
+});
+window.addEventListener("pagehide", function () {
+    saveDayMemo(true);
+});
 
 // 오늘 탭을 처음 열 때 실행된다 (탭을 누를 때마다). 항상 "진짜 오늘"로 시작한다
 async function loadToday() {
@@ -5012,7 +5347,8 @@ function showSyncStatus(status) {
 // 지금 화면에 보이는 일정을 Google(서버)에서 다시 받아 온다. 캘린더 탭은 항상, 오늘 탭은 열려 있을 때만 새로고침한다
 function reloadVisibleEvents() {
     calendar.refetchEvents();
-    if (document.getElementById("today").classList.contains("active")) {
+    // 오늘 탭에서 일정 메모를 쓰는 중이면 목록을 다시 그리지 않는다 (쓰던 글자가 사라진다). 다음 동기화 때 맞춰진다
+    if (document.getElementById("today").classList.contains("active") && !isEventMemoBusy()) {
         loadTodayEvents().catch(function (error) {
             console.error("일정을 불러오지 못했습니다:", error);
         });

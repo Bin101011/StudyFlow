@@ -917,11 +917,13 @@ input.color-dot::-webkit-color-swatch {
     padding: 10px 8px;
 }
 
-/* 일정 한 줄: 색 동그라미 + 시간 + 제목 */
+/* 일정 한 줄: 색 동그라미 + 시간 + 제목 (첫째 줄). 메모가 있으면 제목 아래 둘째 줄에 붙는다.
+   칸 네 개: 점 | 시간 | 제목(남는 폭) | "+ 메모" 버튼. 첫째 줄은 메모가 생겨도 이전과 똑같이 정렬된다 */
 .today-event {
-    display: flex;
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
     align-items: baseline;  /* 시간과 제목의 글꼴이 달라도 글자 밑줄이 맞도록. 달력의 dot-event와 같은 이유 */
-    gap: 10px;
+    column-gap: 10px;
     padding: 9px 10px;
     border-radius: var(--radius-sm);
 }
@@ -944,6 +946,117 @@ input.color-dot::-webkit-color-swatch {
     flex-shrink: 0;
     color: var(--text-muted);
     font-variant-numeric: tabular-nums;  /* 숫자 폭을 같게 해서 시간이 세로로 가지런히 정렬된다 */
+}
+
+.event-title {
+    overflow-wrap: anywhere;
+}
+
+/* 일정에 붙인 메모: 제목 바로 아래(둘째 줄, 제목과 같은 칸)에 작은 회색 글씨로. 적은 그대로(줄바꿈 포함) 보인다.
+   고칠 수 있는 일정이면 눌러서 바로 고친다 */
+.event-memo {
+    grid-column: 3;
+    grid-row: 2;
+    margin: 3px 0 0 -4px;
+    padding: 2px 4px;
+    color: var(--text-muted);
+    font-size: 0.92em;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    border-radius: var(--radius-sm);
+}
+
+.event-memo.editable {
+    cursor: text;
+}
+
+.event-memo.editable:hover {
+    background-color: var(--surface-strong);
+}
+
+/* 저장에 실패해서 Google에는 아직 없는 메모: 빨간 글씨로 알린다 (눌러서 고치면 다시 저장한다) */
+.event-memo.unsaved {
+    color: var(--danger);
+}
+
+/* 메모가 없는 일정에 마우스를 올리면 줄 오른쪽에 나타나는 "+ 메모" 버튼 (task-actions와 같은 방식) */
+.event-memo-add {
+    display: none;
+    grid-column: 4;
+    grid-row: 1;
+    padding: 3px 7px;
+    font-size: 12px;
+}
+
+.today-event:hover .event-memo-add,
+.today-event:focus-within .event-memo-add {
+    display: block;
+}
+
+/* 메모 입력 칸들(일정 줄, 하루 메모, 일정 창)이 같이 쓰는 모양 */
+.event-memo-input,
+.day-memo textarea,
+#event-memo {
+    box-sizing: border-box;
+    width: 100%;
+    padding: 7px 10px;
+    font: inherit;
+    line-height: 1.5;
+    color: var(--text);
+    background-color: var(--bg);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+}
+
+.event-memo-input {
+    grid-column: 3;
+    grid-row: 2;
+    margin-top: 4px;
+    font-size: 0.92em;
+    resize: none;  /* 일정 줄 안의 입력 칸은 글이 늘어나는 만큼 저절로 높아진다 */
+    overflow: hidden;  /* 높이를 잴 때 세로 스크롤바가 생기면 폭이 10px 줄어 글이 한 줄 더 꺾인 채로 재진다. 높이를 직접 맞추므로 스크롤바는 필요 없다 */
+    /* 입력 칸을 열어도 글자가 옆으로 밀리지 않게, 테두리 1px + 안쪽 여백 10px = 11px만큼 왼쪽으로 내서 글자 위치를 제목과 맞춘다 */
+    margin-left: -11px;
+    width: calc(100% + 11px);
+}
+
+.event-memo-input:focus,
+.day-memo textarea:focus,
+#event-memo:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.event-memo-input::placeholder,
+.day-memo textarea::placeholder,
+#event-memo::placeholder {
+    color: var(--text-faint);
+}
+
+/* 하루 메모: 일정 목록 아래 */
+.day-memo {
+    margin-top: 28px;
+}
+
+.day-memo textarea {
+    min-height: 110px;
+}
+
+.day-memo textarea:disabled {
+    background-color: var(--surface);
+}
+
+/* 제목 오른쪽의 저장 상태 글자 ("수정 중…", "저장됨") */
+.day-memo-status {
+    margin-left: 6px;
+    font-weight: 400;
+    color: var(--text-faint);
+}
+
+.day-memo-status.error {
+    color: var(--danger);
 }
 
 /* 할 일 입력 줄: 하나의 둥근 상자 안에 입력 칸, 프로젝트 선택, 추가 버튼이 들어간다 */
@@ -1448,6 +1561,23 @@ input.color-dot::-webkit-color-swatch {
 .dialog-label {
     width: 52px;
     flex-shrink: 0;
+}
+
+/* 여러 줄 입력 칸이 있는 줄(일정 창의 메모): 이름 글자를 칸의 첫 줄에 맞춘다 */
+.dialog-row.top {
+    align-items: flex-start;
+}
+
+.dialog-row.top .dialog-label {
+    padding-top: 8px;
+}
+
+/* 이름 글자 옆 남은 폭을 채운다 (width: 100%를 그대로 두면 이름 글자 폭만큼 삐져나온다) */
+.dialog-row #event-memo {
+    flex: 1;
+    width: auto;
+    min-width: 0;
+    font-size: 14px;
 }
 
 /* 이름 글자 아래로 선택지들을 세로로 쌓는 줄 (프로젝트 창의 진행률 방식) */

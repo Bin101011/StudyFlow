@@ -185,26 +185,35 @@ def build_time_fields(all_day, start, end):
     }
 
 
-def create_event(service, calendar_id, title, all_day, start, end):
-    """캘린더에 일정 하나를 새로 만들고, Google이 돌려준 일정 정보를 그대로 돌려준다."""
+def create_event(service, calendar_id, title, all_day, start, end, description=None):
+    """캘린더에 일정 하나를 새로 만들고, Google이 돌려준 일정 정보를 그대로 돌려준다.
+    description은 일정의 메모(Google Calendar의 "설명" 칸)다. 없으면 보내지 않는다."""
     body = {"summary": title, **build_time_fields(all_day, start, end)}
+    if description:
+        body["description"] = description
 
     # insert: 새 일정을 만든다. 이게 HTTP의 POST 요청에 해당한다
     return service.events().insert(calendarId=calendar_id, body=body).execute()
 
 
-def update_event(service, calendar_id, event_id, all_day, start, end, title=None):
-    """일정의 시간(과 제목)을 고친다. title이 None이면 제목은 건드리지 않는다(드래그할 때)."""
-    body = build_time_fields(all_day, start, end)
+def update_event(service, calendar_id, event_id, all_day=None, start=None, end=None, title=None, description=None):
+    """일정의 시간, 제목, 메모 중 값이 주어진 것만 고친다. None인 것은 건드리지 않는다.
+    (드래그할 때는 시간만, 메모를 고칠 때는 메모만 오고, 수정 창에서는 여러 개가 함께 온다.)
+    description을 빈 글자("")로 주면 메모를 지운다. start가 있으면 all_day와 end도 있어야 한다."""
+    body = {}
 
-    # 종일 ↔ 시간 있는 일정으로 바뀔 때, 반대쪽 값("date" 또는 "dateTime")이 남아 있으면 Google이 거절한다.
-    # PATCH에서는 값을 None(JSON의 null)으로 보내면 그 값을 지우라는 뜻이다
-    stale_key = "dateTime" if all_day else "date"
-    body["start"][stale_key] = None
-    body["end"][stale_key] = None
+    if start is not None:
+        body = build_time_fields(all_day, start, end)
+        # 종일 ↔ 시간 있는 일정으로 바뀔 때, 반대쪽 값("date" 또는 "dateTime")이 남아 있으면 Google이 거절한다.
+        # PATCH에서는 값을 None(JSON의 null)으로 보내면 그 값을 지우라는 뜻이다
+        stale_key = "dateTime" if all_day else "date"
+        body["start"][stale_key] = None
+        body["end"][stale_key] = None
 
     if title is not None:
         body["summary"] = title
+    if description is not None:
+        body["description"] = description
 
     # patch: 보낸 항목만 고친다. 이게 HTTP의 PATCH 요청에 해당한다
     return service.events().patch(calendarId=calendar_id, eventId=event_id, body=body).execute()

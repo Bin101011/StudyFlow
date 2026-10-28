@@ -509,6 +509,23 @@ def run_google_write(failure_message, operation, calendar_id=None):
     return None
 
 
+# 일정 메모(Google Calendar의 "설명" 칸)의 최대 글자 수. Google의 한도(8192자)보다 조금 작게 잡았다
+EVENT_DESCRIPTION_MAX = 8000
+
+
+def read_description(data):
+    """요청에서 일정 메모(description)를 꺼낸다. (메모, 오류 응답)을 돌려준다.
+    메모를 안 보냈으면 (None, None)이다. None은 "메모는 건드리지 않는다"는 뜻이고, 빈 글자("")는 "메모를 지운다"는 뜻이다."""
+    description = data.get("description")
+    if description is None:
+        return None, None
+    if not isinstance(description, str):
+        return None, (jsonify({"error": "'description'은 글자여야 합니다."}), 400)
+    if len(description) > EVENT_DESCRIPTION_MAX:
+        return None, (jsonify({"error": f"메모는 {EVENT_DESCRIPTION_MAX}자까지 쓸 수 있습니다."}), 400)
+    return description, None
+
+
 # 같은 주소 "/api/events"라도 POST 요청이 오면 "일정 새로 만들기"로 처리한다.
 # GET은 가져오기, POST는 만들기. 메서드가 다르면 같은 주소로도 서로 다른 함수가 실행된다
 @app.route("/api/events", methods=["POST"])
@@ -518,9 +535,12 @@ def api_create_event():
     error_response = missing_key(data, ("calendarId", "title", "allDay", "start", "end"))
     if error_response:
         return error_response
+    description, error_response = read_description(data)
+    if error_response:
+        return error_response
 
     error_response = run_google_write("일정을 추가하지 못했습니다.", lambda service: google_calendar.create_event(
-        service, data["calendarId"], data["title"], data["allDay"], data["start"], data["end"]
+        service, data["calendarId"], data["title"], data["allDay"], data["start"], data["end"], description
     ), data["calendarId"])
     if error_response:
         return error_response
@@ -531,13 +551,24 @@ def api_create_event():
 
 # 주소에 일정 번호가 붙은 "/api/events/<event_id>"는 일정 하나를 가리킨다.
 # <event_id> 자리에 온 글자가 함수의 event_id 값으로 들어온다.
-# PATCH: 일정의 일부(제목, 시간)만 고친다. 제목을 안 보내면 제목은 그대로 둔다 (드래그할 때)
+# PATCH: 일정의 일부(제목, 시간, 메모)만 고친다. 안 보낸 것은 그대로 둔다 (드래그할 때는 시간만, 메모를 고칠 때는 메모만 온다).
+# 시간은 allDay, start, end 세 개가 함께 와야 한다
 @app.route("/api/events/<event_id>", methods=["PATCH"])
 def api_update_event(event_id):
     data = request.get_json()
-    error_response = missing_key(data, ("calendarId", "allDay", "start", "end"))
+    error_response = missing_key(data, ("calendarId",))
     if error_response:
         return error_response
+    has_time = any(key in data for key in ("allDay", "start", "end"))
+    if has_time:
+        error_response = missing_key(data, ("allDay", "start", "end"))
+        if error_response:
+            return error_response
+    description, error_response = read_description(data)
+    if error_response:
+        return error_response
+    if not has_time and description is None and data.get("title") is None:
+        return jsonify({"error": "고칠 내용이 없습니다."}), 400
 
     # destinationCalendarId가 있고 지금 캘린더와 다르면, 내용을 고친 뒤 일정을 그 캘린더로 옮긴다
     destination = data.get("destinationCalendarId")
@@ -554,8 +585,8 @@ def api_update_event(event_id):
             return jsonify({"error": "그 캘린더로는 일정을 옮길 수 없습니다."}), 400
 
     error_response = run_google_write("일정을 수정하지 못했습니다.", lambda service: google_calendar.update_event(
-        service, data["calendarId"], event_id, data["allDay"], data["start"], data["end"],
-        title=data.get("title"),
+        service, data["calendarId"], event_id, data.get("allDay"), data.get("start"), data.get("end"),
+        title=data.get("title"), description=description,
     ), data["calendarId"])
     if error_response:
         return error_response
@@ -732,6 +763,35 @@ def valid_date(text):
         return isinstance(text, str) and len(text) == 10
     except (TypeError, ValueError):
         return False
+
+
+# 하루 메모(오늘 탭): 날짜마다 하나씩 적는 자유 메모. 일정에 붙이는 메모와 달리 Google에는 보내지 않고 내 컴퓨터에만 저장한다
+DAY_MEMO_MAX = 20000
+
+
+@app.route("/api/day-memo")
+def api_get_day_memo():
+    date = request.args.get("date", "")
+    if not valid_date(date):
+        return jsonify({"error": "'date'는 2026-10-19 같은 날짜여야 합니다."}), 400
+    return jsonify({"date": date, "content": database.get_day_memo(date)})
+
+
+# PUT: 그날의 메모를 통째로 바꾼다. 내용이 비어 있으면 메모를 지운다 (화면이 입력을 멈출 때마다 전체 내용을 보낸다)
+@app.route("/api/day-memo", methods=["PUT"])
+def api_save_day_memo():
+    data = request.get_json()
+    error_response = missing_key(data, ("date", "content"))
+    if error_response:
+        return error_response
+    if not valid_date(data["date"]):
+        return jsonify({"error": "'date'는 2026-10-19 같은 날짜여야 합니다."}), 400
+    if not isinstance(data["content"], str):
+        return jsonify({"error": "'content'는 글자여야 합니다."}), 400
+    if len(data["content"]) > DAY_MEMO_MAX:
+        return jsonify({"error": f"메모는 {DAY_MEMO_MAX}자까지 쓸 수 있습니다."}), 400
+    database.set_day_memo(data["date"], data["content"])
+    return jsonify({"ok": True})
 
 
 # 할 일 목록: 그 날짜의 할 일(tasks)과, 그 날짜 이전에 잡혀 있는데 끝내지 못한 할 일(overdue)을 함께 돌려준다.

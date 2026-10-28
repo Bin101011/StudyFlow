@@ -17,7 +17,7 @@ import google_calendar
 # 기억해둔 일정을 파일에도 저장해두는 곳. 프로그램을 껐다 켜도 남아 있고, 인터넷이 끊겼을 때 이걸 보여준다
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_PATH = os.path.join(BASE_DIR, "events_cache.json")
-FILE_VERSION = 1  # 저장 형식이 바뀌면 올린다. 번호가 다른 옛 파일은 읽지 않고 버린다
+FILE_VERSION = 2  # 저장 형식이 바뀌면 올린다. 번호가 다른 옛 파일은 읽지 않고 버린다 (2: 일정 메모(description)를 담기 시작)
 
 # 마지막으로 "바뀐 게 있나?" 확인에 성공한 지 이 시간(초)이 지났으면, 기억해둔 일정을 그냥 믿지 않고 다시 확인한다.
 # 동기화가 멈췄는데 오래된 일정을 계속 보여주는 일을 막는 안전장치다
@@ -87,15 +87,19 @@ def date_window(start, end):
 
 
 def simplify_event(event):
-    """Google이 주는 일정에서 화면에 필요한 네 가지(id, 제목, 시작, 끝)만 남긴다.
+    """Google이 주는 일정에서 화면에 필요한 것(id, 제목, 시작, 끝, 메모)만 남긴다.
     색 같은 캘린더 정보는 일정마다 붙이지 않고 보낼 때 붙인다. 그래야 캘린더 색을 바꿔도 캐시를 고칠 필요가 없다."""
-    return {
+    simple = {
         "id": event["id"],
         "title": event.get("summary", "제목 없음"),
         # 종일 일정은 "date", 시간 있는 일정은 "dateTime"에 시각이 들어 있다
         "start": event["start"].get("dateTime") or event["start"]["date"],
         "end": event["end"].get("dateTime") or event["end"]["date"],
     }
+    # 메모(Google의 "설명" 칸)는 있을 때만 담는다. 대부분의 일정에는 없어서 기억해둔 파일이 불어나지 않는다
+    if event.get("description"):
+        simple["description"] = event["description"]
+    return simple
 
 
 # ---------- 캐시 본체 ----------

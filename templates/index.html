@@ -80,6 +80,12 @@
                     <h2 id="events-heading">오늘의 일정</h2>
                     <!-- 일정 줄들은 app.js가 /api/events에서 받아 여기에 만든다 -->
                     <ul id="today-events" class="today-list"></ul>
+
+                    <!-- 하루 메모: 이 날짜에 대한 자유 메모. 입력을 멈추면 저절로 저장된다 (내 컴퓨터에만 저장, Google에는 보내지 않는다) -->
+                    <div class="day-memo">
+                        <h2>메모 <span id="day-memo-status" class="day-memo-status"></span></h2>
+                        <textarea id="day-memo" rows="5" placeholder="이 날의 메모를 자유롭게 적으세요" disabled></textarea>
+                    </div>
                 </section>
 
                 <section class="today-column" id="tasks-column">
@@ -320,6 +326,11 @@
                 <button type="button" class="duration-chip" data-minutes="180">3시간</button>
             </div>
         </div>
+
+        <!-- 메모: Google Calendar 일정의 "설명" 칸에 저장되어 폰이나 웹에서도 보인다. 오늘 탭의 일정 줄에서도 바로 고칠 수 있다 -->
+        <label class="dialog-row top"><span class="dialog-label">메모</span>
+            <textarea id="event-memo" rows="3" placeholder="예: 노트 가져가기"></textarea>
+        </label>
 
         <!-- 입력이 잘못됐거나 Google이 거절했을 때 이유를 보여주는 줄 -->
         <p id="event-error" class="dialog-error"></p>

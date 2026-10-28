@@ -83,6 +83,15 @@ def init_db():
         )
     """)
 
+    # 하루 메모: 오늘 탭에서 날짜마다 하나씩 적는 자유 메모. 날짜가 곧 번호(PRIMARY KEY)라서 하루에 메모가 하나뿐이다.
+    # 내용을 모두 지우면 줄 자체를 지운다 (빈 메모를 남겨 두지 않는다)
+    run("""
+        CREATE TABLE IF NOT EXISTS day_memos (
+            date    TEXT PRIMARY KEY,   -- 그날 "2026-10-19"
+            content TEXT NOT NULL       -- 메모 내용
+        )
+    """)
+
     # 마이그레이션: 이미 만들어진 studyflow.db의 tasks 테이블에는 나중에 추가한 칸이 없을 수 있다.
     # CREATE TABLE IF NOT EXISTS는 테이블이 이미 있으면 아무것도 안 하므로, 없는 칸만 따로 덧붙인다.
     # PRAGMA table_info: 테이블에 어떤 칸들이 있는지 알려주는 SQLite 명령
@@ -419,3 +428,24 @@ def delete_dday(dday_id):
     """D-day를 지운다. 없으면 False."""
     _, changed = run("DELETE FROM ddays WHERE id = ?", (dday_id,))
     return changed > 0
+
+
+# ---------- 하루 메모 ----------
+
+def get_day_memo(date):
+    """그날의 메모 내용을 돌려준다. 메모가 없으면 빈 글자."""
+    rows, _ = run("SELECT content FROM day_memos WHERE date = ?", (date,))
+    return rows[0]["content"] if rows else ""
+
+
+def set_day_memo(date, content):
+    """그날의 메모를 저장한다. 내용이 비어 있으면(공백뿐인 경우도) 메모를 지운다."""
+    if content.strip() == "":
+        run("DELETE FROM day_memos WHERE date = ?", (date,))
+        return
+    # ON CONFLICT ... DO UPDATE: 그 날짜의 메모가 이미 있으면 새로 만들지 않고 내용만 바꾼다 (없으면 새로 만든다)
+    run(
+        "INSERT INTO day_memos (date, content) VALUES (?, ?) "
+        "ON CONFLICT(date) DO UPDATE SET content = excluded.content",
+        (date, content),
+    )
