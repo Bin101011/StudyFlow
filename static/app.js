@@ -81,6 +81,10 @@ let calendarTaskDays = {};      // 날짜 "2026-10-27" → 그날의 할 일들 
 let calendarTaskRange = null;   // 지금 받아 둔 기간 { start, end } (end는 포함하지 않는 날짜)
 let calendarTaskRequest = 0;    // 가장 최근에 보낸 요청의 번호. 달을 빠르게 넘길 때 늦게 온 옛 응답을 버리려는 것이다
 let calendarTaskRenderPending = false;  // 요약을 다시 붙이는 일이 이미 예약되어 있는지 (칸이 한꺼번에 여러 개 그려질 때 한 번만 하려는 것)
+// 월간 보기에서 오늘 칸을 화면 가운데로 맞추는 일을 "언제까지" 계속할지 (Date.now() 기준 밀리초, 0이면 하지 않는다).
+// 일정과 할 일 요약은 달력보다 조금 늦게 도착해서 위쪽 줄의 높이를 바꾸므로, 도착할 때마다 다시 맞춰야 오늘이 제자리에 온다
+let centerTodayUntil = 0;
+const CENTER_TODAY_SETTLE_MS = 2500;  // 달력이 그려진 뒤 일정과 요약이 도착하는 데 걸리는 시간을 넉넉히 잡은 값
 
 // FullCalendar 달력 객체를 만든다. 두 번째 칸에 설정을 적는다
 const calendar = new FullCalendar.Calendar(calendarElement, {
@@ -140,6 +144,11 @@ const calendar = new FullCalendar.Calendar(calendarElement, {
     // 보이는 기간이 바뀔 때(달/주/일을 넘기거나 보기를 바꿀 때)마다 그 기간의 할 일을 받아 온다
     datesSet: function (info) {
         loadCalendarTasks(info.startStr.slice(0, 10), info.endStr.slice(0, 10));
+        // 월간 보기에서 오늘이 보이는 기간이면 오늘 칸을 화면 가운데로 가져온다 (달을 넘겼다가 돌아와도 맨 위로 가지 않는다)
+        const now = new Date();
+        if (info.view.type === "dayGridMonth" && info.start <= now && now < info.end) {
+            startCenteringOnToday();
+        }
     },
     // 일정이 다시 그려지거나 창 크기가 바뀌면 FullCalendar가 칸 안쪽을 다시 만들 수 있으므로, 할 일 요약을 다시 붙인다
     eventsSet: function () {
@@ -272,7 +281,45 @@ function renderCalendarTaskFooters() {
         footer.classList.toggle("all-done", summary.allDone);
         footer.classList.toggle("overdue", summary.overdue);
     });
+    // 요약을 붙이면 칸 높이가 달라지므로, 오늘 맞추기 시간이 남아 있으면 오늘을 다시 가운데로 맞춘다
+    if (Date.now() < centerTodayUntil) {
+        centerOnToday();
+    }
 }
+
+// ----- 월간 보기에서 오늘 칸을 화면 가운데로 -----
+// 칸 높이가 커서 달력 안쪽이 스크롤되는 상태에서, 한 달의 후반부에 있는 오늘을 직접 스크롤해서 찾지 않아도 되게 한다.
+// 맞추는 중에 사용자가 직접 스크롤하면(아래 이벤트) 바로 멈춰서, 사용자가 옮긴 위치를 되돌리지 않는다
+// 오늘 칸을 달력의 스크롤 영역 세로 가운데에 놓는다. 오늘이 안 보이는 기간이거나 달력이 안 보이는 탭이면 아무것도 하지 않는다
+function centerOnToday() {
+    const cell = calendarElement.querySelector(".fc-daygrid-day.fc-day-today");
+    if (!cell) {
+        return;
+    }
+    const scroller = cell.closest(".fc-scroller");
+    if (!scroller || scroller.clientHeight === 0) {
+        return;  // 다른 탭에 가려져 있어서 크기를 잴 수 없다
+    }
+    // 스크롤 영역 맨 위에서 오늘 칸 맨 위까지의 거리 = (화면에서의 위치 차이) + (이미 스크롤된 만큼)
+    const cellTop = cell.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    // 칸의 가운데가 스크롤 영역의 가운데에 오도록 맞춘다. 범위를 넘으면 브라우저가 맨 위/맨 아래로 알아서 자른다
+    scroller.scrollTop = cellTop - (scroller.clientHeight - cell.offsetHeight) / 2;
+}
+
+// 오늘 맞추기를 시작한다: 지금 한 번 맞추고, 정해진 시간 동안은 칸 높이가 바뀔 때마다 다시 맞춘다
+function startCenteringOnToday() {
+    centerTodayUntil = Date.now() + CENTER_TODAY_SETTLE_MS;
+    requestAnimationFrame(centerOnToday);  // 달력이 화면에 그려진 직후에 맞춘다
+}
+
+// 사용자가 직접 스크롤하거나 달력을 만지기 시작하면 더는 자동으로 맞추지 않는다
+["wheel", "pointerdown", "keydown", "touchstart"].forEach(function (eventName) {
+    calendarElement.addEventListener(eventName, function () {
+        centerTodayUntil = 0;
+    }, { passive: true });
+});
+// ("오늘" 버튼은 따로 처리하지 않아도 된다: 다른 달에서 누르면 기간이 바뀌어 datesSet이 맡고,
+//  이번 달을 보고 있을 때는 FullCalendar가 버튼을 눌리지 않게 막아 둔다)
 
 // 말풍선: 마우스를 올리면 그날의 할 일 목록을 보여준다. 하나만 만들어 두고 계속 쓴다
 const calendarTaskTip = document.createElement("div");
