@@ -111,3 +111,7 @@ Obsidian을 쓴다면 **설정 탭 → 노트 (Obsidian)** 에 vault 폴더 경�
 화면은 HTML/CSS/JavaScript, 로직은 Python(Flask), 창은 pywebview, 저장은 SQLite입니다. 캘린더 화면은 [FullCalendar](https://fullcalendar.io/), 노트는 [marked](https://marked.js.org/)와 [DOMPurify](https://github.com/cure53/DOMPurify)를 씁니다. 글꼴은 Google Sans Flex와 Noto Sans KR(둘 다 SIL Open Font License)이고, 각 라이선스 파일은 `static/` 폴더에 함께 들어 있습니다.
 
 만든 과정과 설계 결정은 [PLAN.md](PLAN.md)에 자세히 기록되어 있습니다. (Claude Code와 함께 단계별로 만들었습니다.)
+
+## 라이선스
+
+[MIT License](LICENSE)입니다. 자유롭게 쓰고 고치고 나눠도 되지만, 저작권 표시와 라이선스 문구는 남겨 주세요. `static/lib/`와 `static/fonts/`에 들어 있는 외부 라이브러리와 글꼴은 각자의 라이선스를 따릅니다.
