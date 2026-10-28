@@ -166,13 +166,13 @@ select {
 }
 
 /* 드롭다운(<select>)의 화살표. 브라우저 기본 화살표는 칸 맨 오른쪽 끝에 붙어서 어색해, 기본 모양을 지우고(appearance: none)
-   작은 화살표 그림(SVG)을 오른쪽 끝에서 안쪽(34px)으로 들여서 직접 그린다. 글자가 화살표 밑으로 들어가지 않도록 오른쪽 안쪽 여백을 넉넉히 둔다 */
+   작은 화살표 그림(SVG)을 오른쪽 끝에서 안쪽(16px)으로 들여서 직접 그린다(기본은 약 8px, 처음엔 34px로 옮겼다가 너무 안쪽이라 21px, 다시 5px 더 오른쪽으로). 글자가 화살표 밑으로 들어가지 않도록 오른쪽 안쪽 여백을 둔다 */
 select {
     appearance: none;
-    padding-right: 54px;
+    padding-right: 37px;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23667085' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
-    background-position: right 34px center;
+    background-position: right 16px center;
     background-size: 12px 8px;
     cursor: pointer;
 }
@@ -401,8 +401,8 @@ main {
 /* 왼쪽 목록과 오른쪽 달력을 가로로 나란히 놓는다 */
 .calendar-layout {
     display: flex;
-    gap: 24px;
-    margin-left: -12px;  /* "내 캘린더" 목록이 화면 왼쪽에서 너무 멀어서 12px 왼쪽으로 당긴다 (달력도 그만큼 넓어진다) */
+    gap: 8px;  /* 목록과 달력 사이 간격 (처음 24px에서 줄여 가다가, 6px는 너무 좁다는 의견으로 8px로 정했다) */
+    margin-left: -16px;  /* "내 캘린더" 목록이 화면 왼쪽에서 너무 멀어서 왼쪽으로 당긴다. 화면 왼쪽 끝과의 간격이 8px이 되도록 (처음 24px). 달력도 그만큼 넓어진다 */
 }
 
 /* 왼쪽 캘린더 목록의 폭. 설정 탭의 슬라이더로 바꾼다 */
@@ -452,7 +452,11 @@ main {
 /* 지우기(✕) 버튼: 줄에 마우스를 올렸을 때(또는 키보드로 닿았을 때)만 보인다 */
 #calendar-list button.calendar-remove {
     flex-shrink: 0;
-    padding: 0 6px;
+    /* 눈에 보이는 ✕ 글자가 줄 오른쪽 끝에서 7px 떨어지게 한다. 버튼 상자의 오른쪽 안쪽 여백과 테두리를 없애고(글자가 상자 오른쪽 끝에 붙는다),
+       상자를 줄의 오른쪽 안쪽 여백(8px)으로 1px 밀었다. (처음에는 상자 기준으로 맞춰서 보이는 글자가 10px 떨어져 있었고, 3px로 맞췄더니 너무 좁다는 의견으로 7px로 정했다) */
+    margin-right: -1px;
+    padding: 0 0 0 6px;  /* 왼쪽 여백은 눌리는 자리를 넓히려고 남긴다 */
+    border-right-width: 0;
     font-size: 12px;
     line-height: 1.5;
     color: var(--text-faint);
@@ -971,8 +975,8 @@ input.color-dot::-webkit-color-swatch {
 
 .task-add select {
     max-width: 170px;
-    padding-right: 46px;  /* 좁은 칸이라 화살표를 조금만(28px) 들여서 글자 자리를 지킨다 */
-    background-position: right 28px center;
+    padding-right: 31px;  /* 좁은 칸이라 화살표를 조금만(13px) 들여서 글자 자리를 지킨다 */
+    background-position: right 13px center;
     border: none;
     box-shadow: none;
     background-color: var(--surface);
