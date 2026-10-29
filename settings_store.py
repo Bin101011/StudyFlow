@@ -54,6 +54,12 @@ VAULT_PATH_KEY = "vaultPath"
 LAST_NOTE_KEY = "lastNote"
 MAX_SETTING_TEXT = 500  # 경로 글자 수 한계 (이상한 값이 와도 설정 파일이 부풀지 않게)
 
+# 월간 캘린더의 표시 줄 수(몇 주를 보여줄지): 6줄 또는 7줄. 7줄이면 5주짜리 달은 다음 달 2주, 6주짜리 달은 다음 달 1주가 붙는다.
+# 그 달이 필요한 주 수보다 줄어들지는 않는다(화면이 max로 정한다). 기본 6줄은 예전 화면과 같은 모양이다
+MONTH_ROWS_KEY = "monthRows"
+MONTH_ROWS_ALLOWED = (6, 7)
+MONTH_ROWS_DEFAULT = 6
+
 # 프로젝트 탭의 카드 배치: 카드를 몇 열로 늘어놓을지 (2, 3, 4열. 1열은 없앴다. 창이 좁으면 화면이 알아서 1열로 보여준다)
 PROJECT_COLUMNS_KEY = "projectColumns"
 PROJECT_COLUMNS_ALLOWED = (2, 3, 4)
@@ -98,6 +104,7 @@ def default_settings():
     settings[PROJECT_FOLDER_COLUMNS_KEY] = PROJECT_FOLDER_COLUMNS_DEFAULT
     settings[CREATED_CALENDARS_KEY] = []
     settings[TIMELINE_HOUR_PX_KEY] = TIMELINE_HOUR_PX_DEFAULT
+    settings[MONTH_ROWS_KEY] = MONTH_ROWS_DEFAULT
     return settings
 
 
@@ -142,6 +149,10 @@ def clean_settings(raw):
     # 숫자(bool 제외)면 범위 안으로 맞춘다. nan, 무한대는 비교가 거짓이라 걸러진다
     if isinstance(hour_px, (int, float)) and not isinstance(hour_px, bool) and hour_px == hour_px and abs(hour_px) != float("inf"):
         settings[TIMELINE_HOUR_PX_KEY] = round(max(TIMELINE_HOUR_PX_MIN, min(TIMELINE_HOUR_PX_MAX, hour_px)))
+
+    month_rows = raw.get(MONTH_ROWS_KEY)
+    if isinstance(month_rows, int) and not isinstance(month_rows, bool) and month_rows in MONTH_ROWS_ALLOWED:
+        settings[MONTH_ROWS_KEY] = month_rows
 
     columns = raw.get(PROJECT_COLUMNS_KEY)
     # bool은 파이썬에서 정수의 한 종류(True == 1)라서 따로 걸러낸다

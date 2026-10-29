@@ -86,16 +86,79 @@ let calendarTaskRenderPending = false;  // 요약을 다시 붙이는 일이 이
 let centerTodayUntil = 0;
 const CENTER_TODAY_SETTLE_MS = 2500;  // 달력이 그려진 뒤 일정과 요약이 도착하는 데 걸리는 시간을 넉넉히 잡은 값
 
+// ----- 월간 보기의 줄 수 -----
+// FullCalendar의 기본 월간 보기(dayGridMonth)는 항상 6줄로 맞추고 그 줄 수를 바꿀 방법이 없다(5주짜리 달은 다음 달 1주가 붙는다).
+// 그래서 보이는 기간을 직접 계산하는 보기(MONTH_VIEW)를 만들어 쓴다: 그 달 1일이 있는 주부터 줄 수만큼의 주.
+// 줄 수는 설정 탭에서 6줄 또는 7줄로 정한다. 7줄이면 5주짜리 달은 다음 달 2주, 6주짜리 달은 다음 달 1주가 붙어서 월말에도 앞날을 미리 볼 수 있다.
+// 어느 쪽이든 그 달이 필요한 주 수보다 줄이지는 않는다(6줄로 정했는데 6주가 필요한 달이면 6줄). 그래야 달의 끝이 잘리지 않는다.
+// monthRowsSetting은 달력을 만드는 순간(calendar.render)에 불려 가는 monthVisibleRange가 쓰므로, 달력보다 먼저 선언해 둔다
+// (설정(settings)은 뒤에서 선언되어서 여기서는 쓸 수 없다. applySettings가 설정값을 이 변수에 옮겨 준다)
+const MONTH_VIEW = "monthGrid";
+let monthRowsSetting = 6;
+let lastShownMonth = null;  // 월간 보기에서 마지막으로 보던 달(그 달의 아무 날짜). 주간/일간을 보다가 월간으로 돌아올 때 쓴다 (아래 "월간 보기 이동")
+
+// year년 month월(0~11)의 날짜들이 일요일 시작 달력에서 몇 주에 걸치는지 (4~6)
+function monthWeeksNeeded(year, month) {
+    const firstWeekday = new Date(year, month, 1).getDay();  // 1일의 요일 (일요일이 0)
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    return Math.ceil((firstWeekday + daysInMonth) / 7);
+}
+
+// FullCalendar가 "이 날짜(currentDate)를 볼 때 보여줄 기간"을 물으면 대답하는 함수. end는 포함하지 않는 날짜다
+function monthVisibleRange(currentDate) {
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    const first = new Date(year, month, 1);
+    const start = new Date(year, month, 1 - first.getDay());  // 1일이 있는 주의 일요일
+    const rows = Math.max(monthRowsSetting, monthWeeksNeeded(year, month));
+    return { start: start, end: new Date(start.getFullYear(), start.getMonth(), start.getDate() + rows * 7) };
+}
+
+// 보이는 기간의 시작일(rangeStart)로 "지금 어느 달을 보고 있는지"를 알아낸다. 시작일은 1일이 있는 주의 일요일이라
+// 그날부터 6일 뒤(그 주의 토요일)까지는 반드시 1일을 지나므로, 6일 뒤 날짜의 달이 보고 있는 달이다 (예: 9월 27일 시작 → 10월 3일 → 10월).
+// FullCalendar가 알려주는 "현재 날짜"(calendar.getDate())는 이동할 때마다 보이는 기간의 시작일(이전 달 날짜일 수 있다)로 바뀌어서 쓰지 못한다.
+// 돌려주는 값은 그 달의 아무 날짜(Date)다
+function shownMonthDate(rangeStart) {
+    return new Date(rangeStart.getFullYear(), rangeStart.getMonth(), rangeStart.getDate() + 6);
+}
+
+function isSameMonth(a, b) {
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
+}
+
 // FullCalendar 달력 객체를 만든다. 두 번째 칸에 설정을 적는다
 const calendar = new FullCalendar.Calendar(calendarElement, {
     // 처음 열면 월간 보기
-    initialView: "dayGridMonth",
+    initialView: MONTH_VIEW,
 
     // 달력 맨 위 줄: 왼쪽(이전/다음/오늘), 가운데(제목), 오른쪽(월/주/일 전환)
     headerToolbar: {
         left: "prev,next today",
         center: "title",
-        right: "dayGridMonth,timeGridWeek,timeGridDay",
+        right: MONTH_VIEW + ",timeGridWeek,timeGridDay",
+    },
+
+    // 월간 보기의 정의: 줄 수를 직접 정하는 보기(위 설명). 이전/다음 이동은 FullCalendar에 맡기지 않고 우리가 직접 한 달씩 옮긴다(아래 "월간 보기 이동")
+    views: {
+        [MONTH_VIEW]: {
+            type: "dayGrid",
+            visibleRange: monthVisibleRange,
+            buttonText: "월간",
+            // 제목은 기간("9월 27일 – 11월 14일")이 아니라 보고 있는 달("2026년 10월")로. 인자의 start는 보이는 기간의 시작일이다
+            titleFormat: function (arg) {
+                const shown = shownMonthDate(new Date(arg.start.year, arg.start.month, arg.start.day));
+                return shown.getFullYear() + "년 " + (shown.getMonth() + 1) + "월";
+            },
+        },
+    },
+
+    // 보이는 기간에는 앞뒤 달의 날짜도 들어 있다. FullCalendar는 보이는 기간 밖의 날짜만 "다른 달"로 흐리게 칠하는데,
+    // 이 보기에서는 보이는 기간이 곧 달력 전체라서 다른 달 날짜를 우리가 직접 흐리게 표시한다 (기존 월간 보기와 같은 모양으로)
+    dayCellClassNames: function (arg) {
+        if (arg.view.type === MONTH_VIEW && !isSameMonth(arg.date, shownMonthDate(arg.view.activeStart))) {
+            return ["fc-day-other"];
+        }
+        return [];
     },
 
     // 한국어로 표시한다 (요일이 일, 월, 화... 로 나온다)
@@ -144,11 +207,13 @@ const calendar = new FullCalendar.Calendar(calendarElement, {
     // 보이는 기간이 바뀔 때(달/주/일을 넘기거나 보기를 바꿀 때)마다 그 기간의 할 일을 받아 온다
     datesSet: function (info) {
         loadCalendarTasks(info.startStr.slice(0, 10), info.endStr.slice(0, 10));
-        // 월간 보기에서 오늘이 보이는 기간이면 오늘 칸을 화면 가운데로 가져온다 (달을 넘겼다가 돌아와도 맨 위로 가지 않는다)
+        // 월간 보기에서 보고 있는 달이 오늘이 있는 달이면 오늘 칸을 화면 가운데로 가져온다 (달을 넘겼다가 돌아와도 맨 위로 가지 않는다).
+        // 앞 달을 볼 때 맨 아래에 붙는 다음 달 주에 오늘이 들어 있어도 가운데로 가져오지 않는다(그 달이 아니라서)
         const now = new Date();
-        if (info.view.type === "dayGridMonth" && info.start <= now && now < info.end) {
+        if (info.view.type === MONTH_VIEW && isSameMonth(shownMonthDate(info.start), now)) {
             startCenteringOnToday();
         }
+        syncMonthTodayButton(info);
     },
     // 일정이 다시 그려지거나 창 크기가 바뀌면 FullCalendar가 칸 안쪽을 다시 만들 수 있으므로, 할 일 요약을 다시 붙인다
     eventsSet: function () {
@@ -200,6 +265,73 @@ const calendar = new FullCalendar.Calendar(calendarElement, {
 
 // 준비한 달력을 실제로 화면에 그린다
 calendar.render();
+
+// ----- 월간 보기 이동 -----
+// 이전/다음/보기 전환을 FullCalendar에 맡기면 이 보기에서는 어긋난다: FullCalendar는 이동할 때 "현재 날짜 + 1개월"을 계산하는데,
+// 이 보기의 현재 날짜는 이동할 때마다 보이는 기간의 시작일(이전 달 날짜일 수 있다)로 바뀌어서, 12월에서 "다음"을 눌러도 12월에 머물고
+// "이전"은 두 달씩 건너뛰었다(실제로 확인했다). 그래서 월간 보기에서는 "보고 있는 달"(shownMonthDate)을 기준으로 우리가 직접 한 달씩 옮긴다.
+// 이전/다음 버튼과 키보드 ←/→는 모두 calendar.prev()/next()를 부르므로, 이 두 메서드를 바꿔 끼우면 둘 다 고쳐진다
+function gotoShownMonth(delta) {
+    const shown = shownMonthDate(calendar.view.activeStart);
+    // 15일로 가는 이유: 그 달의 어느 날로 가든 같은 달이 보이지만, 1일 같은 날은 FullCalendar가 저장해 둔 현재 날짜와 같아서
+    // "이미 거기 있다"고 보고 다시 그리지 않을 수 있다(줄 수 설정을 바꾸고 같은 달을 다시 그릴 때 필요하다)
+    calendar.gotoDate(new Date(shown.getFullYear(), shown.getMonth() + delta, 15));
+}
+const nativeCalendarPrev = calendar.prev;
+const nativeCalendarNext = calendar.next;
+const nativeCalendarChangeView = calendar.changeView;
+calendar.prev = function () {
+    if (calendar.view.type === MONTH_VIEW) {
+        gotoShownMonth(-1);
+    } else {
+        nativeCalendarPrev.call(calendar);
+    }
+};
+calendar.next = function () {
+    if (calendar.view.type === MONTH_VIEW) {
+        gotoShownMonth(1);
+    } else {
+        nativeCalendarNext.call(calendar);
+    }
+};
+// 보기를 바꿀 때(월간 ↔ 주간/일간)는 FullCalendar가 저장해 둔 "현재 날짜"에 맡기지 않고 날짜를 직접 정해 준다.
+// 그 날짜는 보이는 기간의 시작일(이전 달일 수 있다)로 바뀌어 있어서, 맡기면 9월에서 주간으로 갔다가 월간으로 돌아올 때 8월이 나왔다(실제로 확인했다).
+//  - 월간 → 주간/일간: 오늘이 보던 달이면 오늘, 아니면 그 달 8일(8일의 주는 항상 그 달 안에서 시작한다)
+//  - 주간/일간 → 월간: 방금 보던 달(lastShownMonth)이 지금 보는 주/일과 겹치면 그 달로, 아니면 그 주의 수요일이 속한 달로
+calendar.changeView = function (viewType, dateOrRange) {
+    const current = calendar.view;
+    if (dateOrRange === undefined && current.type === MONTH_VIEW && viewType !== MONTH_VIEW) {
+        const shown = shownMonthDate(current.activeStart);
+        const now = new Date();
+        dateOrRange = isSameMonth(shown, now) ? now : new Date(shown.getFullYear(), shown.getMonth(), 8);
+    } else if (dateOrRange === undefined && current.type !== MONTH_VIEW && viewType === MONTH_VIEW) {
+        const start = current.activeStart;
+        const end = current.activeEnd;
+        const overlaps = lastShownMonth !== null &&
+            new Date(lastShownMonth.getFullYear(), lastShownMonth.getMonth(), 1) < end &&
+            new Date(lastShownMonth.getFullYear(), lastShownMonth.getMonth() + 1, 1) > start;
+        // 주간이면 시작일 + 3일이 수요일이고, 일간이면 그날 하나뿐이라 시작일을 그대로 쓴다
+        const middle = current.type === "timeGridDay" ? start : new Date(start.getFullYear(), start.getMonth(), start.getDate() + 3);
+        dateOrRange = overlaps ? new Date(lastShownMonth.getFullYear(), lastShownMonth.getMonth(), 15) : middle;
+    }
+    return nativeCalendarChangeView.call(calendar, viewType, dateOrRange);
+};
+
+// "오늘" 버튼: FullCalendar는 오늘이 보이는 기간 안에 있으면 버튼을 꺼 버린다. 이 보기는 앞 달을 볼 때 다음 달 주도 보이므로
+// (예: 9월을 보는데 아래에 10월 3일이 있다) 그때도 꺼져서 오늘 달로 돌아갈 수 없게 된다. 그래서 "보고 있는 달이 오늘의 달일 때만" 끈다
+function syncMonthTodayButton(info) {
+    if (info.view.type !== MONTH_VIEW) {
+        return;
+    }
+    lastShownMonth = shownMonthDate(info.start);  // 주간/일간으로 갔다가 돌아올 때 이 달로 돌아오기 위해 기억해 둔다
+    // 버튼은 이 함수를 부른 직후에 FullCalendar가 다시 그릴 수 있으므로, 한 박자 뒤에 맞춘다
+    setTimeout(function () {
+        const button = calendarElement.querySelector(".fc-today-button");
+        if (button) {
+            button.disabled = isSameMonth(shownMonthDate(info.start), new Date());
+        }
+    }, 0);
+}
 
 // 서버에서 이 기간의 날짜별 할 일을 받아 와서 달력에 붙인다. 실패해도 일정은 멀쩡히 보여야 하므로 조용히 넘어간다(콘솔에만 남김)
 async function loadCalendarTasks(start, end) {
@@ -943,7 +1075,7 @@ function openAddDialog(info) {
     const date = info.date;
     let allDay = false;
     let start;
-    if (info.view.type === "dayGridMonth") {
+    if (info.view.type === MONTH_VIEW) {
         // 월간 보기: 클릭한 날의 09:00~10:00를 기본값으로 한다
         start = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 9);
     } else if (info.allDay) {
@@ -5874,6 +6006,14 @@ function applySettings() {
     }
     // 종일 일정 제목 줄바꿈: 값이 없으면(false가 아니면) 켜진 상태가 기본이다
     calendarElement.classList.toggle("wrap-all-day", settings.wrapAllDay !== false);
+    // 월간 캘린더의 줄 수(6 또는 7). 바뀌었고 지금 월간 보기를 보고 있다면 같은 달을 새 줄 수로 다시 그린다
+    const monthRows = settings.monthRows === 7 ? 7 : 6;
+    if (monthRows !== monthRowsSetting) {
+        monthRowsSetting = monthRows;
+        if (calendar.view.type === MONTH_VIEW) {
+            gotoShownMonth(0);
+        }
+    }
     // 칸 크기가 바뀌었으니 FullCalendar가 레이아웃을 다시 계산하게 한다
     calendar.updateSize();
     // Pomodoro 시간 설정이 바뀌었을 수 있으니 타이머 위젯도 맞춘다 (아래 "Pomodoro 타이머" 구역)
@@ -5945,6 +6085,7 @@ async function loadSettings() {
         });
 
         pomodoroSoundCheckbox.checked = settings.pomodoroSound !== false;
+        document.querySelector('input[name="month-rows"][value="' + (settings.monthRows === 7 ? 7 : 6) + '"]').checked = true;
         document.querySelector('input[name="project-columns"][value="' + ([2, 3, 4].includes(settings.projectColumns) ? settings.projectColumns : 2) + '"]').checked = true;
         document.querySelector('input[name="project-folder-columns"][value="' + (settings.projectFolderColumns === 2 ? 2 : 1) + '"]').checked = true;
         updateFolderColumnControls();
@@ -6013,6 +6154,17 @@ wrapAllDayCheckbox.addEventListener("change", function () {
 });
 
 // 설정 탭에서 프로젝트 카드 열 수(2/3/4열)를 골랐을 때: 카드를 처음부터 다시 쌓고, 저장한다
+// 월간 캘린더 줄 수: 고르면 바로 캘린더에 반영하고 저장한다
+document.querySelectorAll('input[name="month-rows"]').forEach(function (radio) {
+    radio.addEventListener("change", function () {
+        if (radio.checked) {
+            settings.monthRows = Number(radio.value);
+            applySettings();
+            saveSettings();
+        }
+    });
+});
+
 document.querySelectorAll('input[name="project-columns"]').forEach(function (radio) {
     radio.addEventListener("change", function () {
         if (radio.checked) {
