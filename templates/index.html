@@ -268,6 +268,14 @@
             </section>
 
             <section class="settings-section">
+                <h2>오늘 탭</h2>
+                <p class="settings-hint">오늘 탭 왼쪽 시간표 칸의 너비입니다. 넓히면 겹친 블록의 제목이 덜 잘리고, 대신 가운데 할 일 칸이 좁아집니다. 시간표의 확대/축소(한 시간의 높이)는 시간표 위에서 두 손가락으로 벌리거나 오므려서 바꿉니다.</p>
+                <!-- 슬라이더는 app.js가 서버(/api/settings)에서 정의를 받아 여기에 만든다 -->
+                <div id="today-slider-list"></div>
+                <button id="today-settings-reset">기본값으로</button>
+            </section>
+
+            <section class="settings-section">
                 <h2>Pomodoro 타이머</h2>
                 <p class="settings-hint">집중과 휴식을 번갈아 하는 타이머입니다. 상단 바 가운데에 있고 마우스로 끌어서 아무 곳에나 옮길 수 있습니다. 진행 중인 단계의 시간은 바꿔도 그대로 이어집니다.</p>
                 <!-- 슬라이더들은 app.js가 서버(/api/settings)에서 정의를 받아 여기에 만든다 -->
@@ -388,6 +396,10 @@
         <label class="dialog-row"><span class="dialog-label">색</span>
             <!-- <input type="color">: 브라우저가 주는 색 선택 도구 -->
             <input type="color" id="project-color">
+        </label>
+        <!-- 메모: 프로젝트 카드에 글자로 보인다. 카드에서 바로 고칠 수도 있다 -->
+        <label class="dialog-row top"><span class="dialog-label">메모</span>
+            <textarea id="project-memo" rows="3" placeholder="예: 제출 형식, 연락처, 참고 링크"></textarea>
         </label>
         <!-- radio: 여러 개 중 하나만 고르는 동그란 선택 칸. name이 같은 것끼리 한 묶음이다 -->
         <div class="dialog-row column">

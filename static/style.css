@@ -881,7 +881,8 @@ input.color-dot::-webkit-color-swatch {
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: minmax(330px, 400px) minmax(0, 1fr) minmax(250px, 300px);
+    /* 첫 칸(시간표)의 너비는 설정 탭의 "시간표 너비"(--timeline-width)다. 창이 좁으면 330px까지 줄어든다 */
+    grid-template-columns: minmax(330px, var(--timeline-width, 400px)) minmax(0, 1fr) minmax(250px, 300px);
     gap: 32px;
     max-width: 1500px;
     font-size: var(--cal-font-size);
@@ -911,7 +912,7 @@ input.color-dot::-webkit-color-swatch {
     }
 
     .today-layout {
-        grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+        grid-template-columns: minmax(300px, min(var(--timeline-width, 400px), 380px)) minmax(0, 1fr);
     }
 
     #timeline-column {
@@ -1319,6 +1320,8 @@ input.color-dot::-webkit-color-swatch {
 /* 메모 입력 칸들(일정 줄, 하루 메모, 일정 창)이 같이 쓰는 모양 */
 .tl-popover textarea,
 .day-memo textarea,
+.project-memo-input,
+#project-memo,
 #event-memo {
     box-sizing: border-box;
     width: 100%;
@@ -1339,6 +1342,8 @@ input.color-dot::-webkit-color-swatch {
 
 .tl-popover textarea:focus,
 .day-memo textarea:focus,
+.project-memo-input:focus,
+#project-memo:focus,
 #event-memo:focus {
     outline: none;
     border-color: var(--accent);
@@ -1347,6 +1352,8 @@ input.color-dot::-webkit-color-swatch {
 
 .tl-popover textarea::placeholder,
 .day-memo textarea::placeholder,
+.project-memo-input::placeholder,
+#project-memo::placeholder,
 #event-memo::placeholder {
     color: var(--text-faint);
 }
@@ -1650,6 +1657,55 @@ input.color-dot::-webkit-color-swatch {
     width: 220px;
 }
 
+/* 프로젝트 카드의 메모: 진행률 아래. 메모가 있으면 작은 회색 글씨(적은 그대로, 줄바꿈 포함)이고 눌러서 고친다 */
+.project-memo-box {
+    margin: 0 0 10px;
+}
+
+.project-memo {
+    padding: 4px 8px;
+    margin-left: -8px;
+    color: var(--text-muted);
+    font-size: 0.88em;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    border-radius: var(--radius-sm);
+    cursor: text;
+}
+
+.project-memo:hover {
+    background-color: var(--surface-strong);
+}
+
+/* 저장에 실패해서 아직 서버에 없는 메모: 빨간 글씨로 알린다 (눌러서 고치면 다시 저장한다) */
+.project-memo.unsaved {
+    color: var(--danger);
+}
+
+/* 메모가 없는 프로젝트: 카드에 마우스를 올리거나 키보드로 들어갔을 때만 [+ 메모] 버튼이 보인다 (자리는 차지하지 않는다) */
+.project-memo-add {
+    display: none;
+    padding: 3px 8px;
+    font-size: 12px;
+}
+
+.project-card:hover .project-memo-add,
+.project-card:focus-within .project-memo-add {
+    display: inline-block;
+}
+
+.project-memo-input {
+    resize: none;  /* 카드 안의 입력 칸은 글이 늘어나는 만큼 저절로 높아진다 */
+    overflow: hidden;  /* 높이를 잴 때 세로 스크롤바가 생기면 폭이 10px 줄어 글이 한 줄 더 꺾인 채로 재진다 (일정 메모 칸과 같은 이유) */
+    font-size: 0.88em;
+}
+
+/* 메모가 없을 때 빈 상자가 여백만 차지하지 않게 한다 */
+.project-memo-box:empty {
+    display: none;
+}
+
 /* 프로젝트 카드 안의 단계 줄과 추가 줄 */
 .project-card .task-date {
     color: var(--text-muted);  /* 카드 안에서는 날짜가 "밀림"이 아니므로 빨간색을 쓰지 않는다 */
@@ -1896,7 +1952,8 @@ input.color-dot::-webkit-color-swatch {
 }
 
 /* 이름 글자 옆 남은 폭을 채운다 (width: 100%를 그대로 두면 이름 글자 폭만큼 삐져나온다) */
-.dialog-row #event-memo {
+.dialog-row #event-memo,
+.dialog-row #project-memo {
     flex: 1;
     width: auto;
     min-width: 0;

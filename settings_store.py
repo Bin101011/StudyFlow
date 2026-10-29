@@ -28,8 +28,14 @@ POMODORO_SLIDER_DEFINITIONS = [
     {"key": "pomodoroLongEvery", "label": "긴 휴식까지 집중 횟수", "min": 2, "max": 8, "step": 1, "default": 4, "unit": "번"},
 ]
 
+# 오늘 탭의 슬라이더 설정들. 설정 탭의 "오늘 탭" 칸에 따로 보인다.
+# 시간표 너비: 오늘 탭 왼쪽 시간표 칸의 가로 길이. 기본값 400은 처음 만들 때의 값이고, 넓히면 겹친 블록의 제목이 덜 잘리지만 가운데 할 일 칸이 좁아진다
+TODAY_SLIDER_DEFINITIONS = [
+    {"key": "timelineWidth", "label": "시간표 너비", "min": 380, "max": 550, "step": 10, "default": 400, "unit": "px"},
+]
+
 # 숫자 슬라이더 설정 전체 (clean_settings와 default_settings가 같이 쓴다)
-ALL_SLIDER_DEFINITIONS = SLIDER_DEFINITIONS + POMODORO_SLIDER_DEFINITIONS
+ALL_SLIDER_DEFINITIONS = SLIDER_DEFINITIONS + POMODORO_SLIDER_DEFINITIONS + TODAY_SLIDER_DEFINITIONS
 
 # 슬라이더가 아닌 설정들
 # 1) 일정을 추가할 때 미리 선택될 캘린더의 id (빈 글자면 "정하지 않음")

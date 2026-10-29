@@ -123,6 +123,9 @@ def init_db():
     columns, _ = run("PRAGMA table_info(projects)")
     if "folder_id" not in [column["name"] for column in columns]:
         run("ALTER TABLE projects ADD COLUMN folder_id INTEGER")
+    # 프로젝트 메모: 프로젝트 카드에 붙이는 자유 메모. 이미 있던 프로젝트들은 빈 글자("")로 시작한다 (DEFAULT '')
+    if "memo" not in [column["name"] for column in columns]:
+        run("ALTER TABLE projects ADD COLUMN memo TEXT NOT NULL DEFAULT ''")
 
     # 범위가 줄어들기 전(-5~5)에 평가해 둔 값이 있으면 새 범위 안으로 맞춘다. MAX/MIN은 두 값 중 큰/작은 쪽을 고른다.
     # 이미 범위 안인 값은 그대로이고, 평가 안 한(NULL) 할 일은 건드리지 않는다
@@ -334,20 +337,20 @@ def get_project(project_id):
     return rows[0] if rows else None
 
 
-def add_project(name, deadline, color, progress_mode, manual_percent, folder_id=None):
-    """프로젝트를 하나 추가하고, 만들어진 프로젝트(번호 포함)를 돌려준다. folder_id는 넣을 폴더(없으면 None)다."""
+def add_project(name, deadline, color, progress_mode, manual_percent, folder_id=None, memo=""):
+    """프로젝트를 하나 추가하고, 만들어진 프로젝트(번호 포함)를 돌려준다. folder_id는 넣을 폴더(없으면 None), memo는 카드에 붙일 메모다."""
     with contextlib.closing(connect()) as connection:
         with connection:
             cursor = connection.execute(
-                "INSERT INTO projects (name, deadline, color, progress_mode, manual_percent, folder_id) VALUES (?, ?, ?, ?, ?, ?)",
-                (name, deadline, color, progress_mode, manual_percent, folder_id),
+                "INSERT INTO projects (name, deadline, color, progress_mode, manual_percent, folder_id, memo) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (name, deadline, color, progress_mode, manual_percent, folder_id, memo),
             )
             row = connection.execute("SELECT * FROM projects WHERE id = ?", (cursor.lastrowid,)).fetchone()
             return dict(row)
 
 
 # 프로젝트에서 고칠 수 있는 칸들 (EDITABLE_COLUMNS와 같은 이유로 고정된 목록)
-EDITABLE_PROJECT_COLUMNS = ("name", "deadline", "color", "progress_mode", "manual_percent", "folder_id")
+EDITABLE_PROJECT_COLUMNS = ("name", "deadline", "color", "progress_mode", "manual_percent", "folder_id", "memo")
 
 
 def update_project(project_id, changes):

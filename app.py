@@ -658,6 +658,7 @@ def api_get_settings():
         "values": settings_store.load_settings(),
         "sliders": settings_store.SLIDER_DEFINITIONS,
         "pomodoroSliders": settings_store.POMODORO_SLIDER_DEFINITIONS,
+        "todaySliders": settings_store.TODAY_SLIDER_DEFINITIONS,
     })
 
 
@@ -1109,11 +1110,15 @@ def project_json(project, tasks):
         "progressMode": project["progress_mode"],
         "manualPercent": project["manual_percent"],
         "folderId": project["folder_id"],
+        "memo": project["memo"],
         "total": project["total"],
         "doneCount": project["done_count"],
         "percent": percent,
         "tasks": tasks,
     }
+
+
+PROJECT_MEMO_MAX = 5000  # 프로젝트 메모의 최대 글자 수
 
 
 def parse_project_fields(data):
@@ -1150,6 +1155,14 @@ def parse_project_fields(data):
         if folder_id is not None and (isinstance(folder_id, bool) or not isinstance(folder_id, int) or not database.get_folder(folder_id)):
             return None, (jsonify({"error": "그 폴더를 찾을 수 없습니다."}), 400)
         fields["folder_id"] = folder_id
+
+    if "memo" in data:
+        memo = data["memo"]
+        if not isinstance(memo, str):
+            return None, (jsonify({"error": "메모는 글자여야 합니다."}), 400)
+        if len(memo) > PROJECT_MEMO_MAX:
+            return None, (jsonify({"error": f"메모는 {PROJECT_MEMO_MAX}자까지 쓸 수 있습니다."}), 400)
+        fields["memo"] = memo.strip()  # 앞뒤 공백과 줄바꿈은 정리한다. 내용이 없으면 빈 글자("")가 되어 메모가 지워진다
 
     if "manualPercent" in data:
         try:
@@ -1194,6 +1207,7 @@ def api_create_project():
         fields.get("progress_mode", "auto"),
         fields.get("manual_percent", 0),
         fields.get("folder_id"),
+        fields.get("memo", ""),
     )
     return jsonify(project), 201
 

@@ -3630,6 +3630,7 @@ const projectListElement = document.getElementById("project-list");
 const projectAddButton = document.getElementById("project-add-button");
 const projectDialog = document.getElementById("project-dialog");
 const projectDialogTitle = document.getElementById("project-dialog-title");
+const projectMemoInput = document.getElementById("project-memo");
 const projectNameInput = document.getElementById("project-name");
 const projectDeadlineInput = document.getElementById("project-deadline");
 const projectColorInput = document.getElementById("project-color");
@@ -3735,6 +3736,125 @@ function describeDeadline(deadline) {
 }
 
 // 프로젝트 카드 하나를 만든다
+// 프로젝트 카드의 메모: 진행률 아래에 작은 회색 글씨로 보인다. 메모가 있으면 글자를 눌러서, 없으면 카드에 마우스를 올렸을 때 나오는 [+ 메모]를 눌러서 그 자리에서 바로 쓴다.
+// 일정 메모와 같은 방식이다: Enter를 누르면 저장하고 입력을 끝내고(줄바꿈은 Shift+Enter, 한글 조합 중의 Enter는 글자 확정이라 건드리지 않는다),
+// 입력을 멈추고 1.5초가 지나거나 다른 곳을 눌러도, Esc를 눌러도 저장한다. 모두 지우면 메모가 사라진다. 수정 창(수정 버튼)에도 같은 메모 칸이 있다.
+const PROJECT_MEMO_SAVE_DELAY_MS = 1500;
+const PROJECT_MEMO_MAX = 5000;  // 서버(app.py의 PROJECT_MEMO_MAX)와 같은 값
+
+function makeProjectMemo(project) {
+    const box = document.createElement("div");
+    box.className = "project-memo-box";
+    // text: 화면에 보이는 메모, saved: 서버에 저장된 것으로 아는 메모. 둘이 다르면 아직 저장 전(또는 저장 실패)이다
+    const memo = { text: project.memo || "", saved: project.memo || "", saving: false, again: false, failed: false };
+
+    // 메모를 글자로 보여주는 상태로 그린다 (입력 칸이 있었다면 걷어낸다)
+    function render() {
+        box.replaceChildren();
+        if (memo.text) {
+            const view = document.createElement("div");
+            view.className = "project-memo" + (memo.failed ? " unsaved" : "");
+            view.textContent = memo.text;  // textContent: 메모에 < > 같은 글자가 있어도 HTML로 해석되지 않는다
+            view.title = memo.failed ? "저장되지 않았어요. 눌러서 고치면 다시 저장합니다" : "눌러서 메모 고치기";
+            view.addEventListener("click", startEditing);
+            box.appendChild(view);
+        } else {
+            const add = document.createElement("button");
+            add.type = "button";
+            add.className = "project-memo-add";
+            add.textContent = "+ 메모";
+            add.title = "이 프로젝트에 메모 붙이기";
+            add.addEventListener("click", startEditing);
+            box.appendChild(add);
+        }
+    }
+
+    // 서버에 저장한다. 저장하는 사이에 또 고쳤으면 끝난 뒤 한 번 더 저장한다
+    async function save() {
+        if (memo.saving) {
+            memo.again = true;
+            return;
+        }
+        if (memo.text === memo.saved) {
+            return;
+        }
+        memo.saving = true;
+        memo.failed = false;
+        const text = memo.text;
+        try {
+            await sendRequest("/api/projects/" + project.id, "PATCH", { memo: text });
+            memo.saved = text;
+            project.memo = text;  // 수정 창이 열 때 읽는 값도 맞춰 둔다
+        } catch (error) {
+            memo.failed = true;
+            showToast("메모를 저장하지 못했습니다: " + error.message);
+        } finally {
+            memo.saving = false;
+            if (!box.querySelector("textarea")) {
+                render();  // 저장 결과(실패 표시)를 반영한다
+            }
+            if (memo.again) {
+                memo.again = false;
+                if (!memo.failed) {
+                    save();
+                }
+            }
+        }
+    }
+
+    function startEditing() {
+        if (box.querySelector("textarea")) {
+            return;
+        }
+        box.replaceChildren();
+        const input = document.createElement("textarea");
+        input.className = "project-memo-input";
+        input.rows = 1;
+        input.maxLength = PROJECT_MEMO_MAX;
+        input.placeholder = "예: 제출 형식, 연락처, 참고 링크";
+        input.value = memo.text;
+        box.appendChild(input);
+
+        // 글이 늘어나는 만큼 입력 칸도 높아진다 (+2는 위아래 테두리)
+        function fitHeight() {
+            input.style.height = "auto";
+            input.style.height = (input.scrollHeight + 2) + "px";
+        }
+        fitHeight();
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);  // 커서를 글 맨 끝에
+
+        let timer = null;
+        input.addEventListener("input", function () {
+            fitHeight();
+            clearTimeout(timer);
+            timer = setTimeout(function () {
+                memo.text = input.value.trim();
+                save();
+            }, PROJECT_MEMO_SAVE_DELAY_MS);
+        });
+        // 입력 칸을 벗어나면(다른 곳을 누르거나 Enter, Esc) 바로 저장하고 글자로 보여주는 상태로 돌아간다
+        input.addEventListener("blur", function () {
+            clearTimeout(timer);
+            memo.text = input.value.trim();
+            render();
+            save();
+        });
+        input.addEventListener("keydown", function (e) {
+            if (e.isComposing) {
+                return;
+            }
+            if (e.key === "Escape" || (e.key === "Enter" && !e.shiftKey)) {
+                e.preventDefault();
+                input.blur();
+            }
+        });
+    }
+
+    render();
+    return box;
+}
+
 function makeProjectCard(project) {
     const card = document.createElement("div");
     card.className = "project-card";
@@ -3821,6 +3941,8 @@ function makeProjectCard(project) {
         detail.textContent = "단계 " + project.doneCount + " / " + project.total + " 완료";
     }
     card.appendChild(detail);
+
+    card.appendChild(makeProjectMemo(project));
 
     // 단계 목록: 이 프로젝트에 연결된 단계들과, 각 단계 아래의 하위 단계들. 오늘 탭에서 연결한 할 일도 여기에 같이 나온다.
     // project.tasks는 위쪽 단계들의 리스트이고, 각 단계의 children에 하위 단계들이 들어 있다
@@ -4468,6 +4590,7 @@ function openProjectDialog(project, options) {
     // radio 칸 중 지금 방식에 해당하는 것을 체크한다. [value=...]는 value가 그 값인 요소를 찾는 선택자다
     const mode = editingProject ? editingProject.progressMode : "auto";
     document.querySelector('input[name="project-mode"][value="' + mode + '"]').checked = true;
+    projectMemoInput.value = editingProject ? editingProject.memo : "";
     projectError.textContent = "";
 
     projectDialog.showModal();
@@ -4489,6 +4612,7 @@ async function saveProject() {
         color: projectColorInput.value,
         progressMode: mode,
         folderId: projectFolderSelect.value ? Number(projectFolderSelect.value) : null,
+        memo: projectMemoInput.value,
     };
     // 자동 → 직접으로 바꾸면 슬라이더가 0%에서 시작하지 않고, 지금 보이던 진행률에서 시작하게 한다
     if (editingProject && mode === "manual" && editingProject.progressMode !== "manual") {
@@ -5722,6 +5846,7 @@ const sliderListElement = document.getElementById("slider-list");
 const defaultCalendarSelect = document.getElementById("default-calendar-select");
 const wrapAllDayCheckbox = document.getElementById("wrap-all-day-checkbox");
 const pomodoroSliderListElement = document.getElementById("pomodoro-slider-list");
+const todaySliderListElement = document.getElementById("today-slider-list");
 const pomodoroSoundCheckbox = document.getElementById("pomodoro-sound-checkbox");
 
 // 설정 이름 → 그 값을 담는 CSS 변수 이름. 슬라이더 값이 바뀌면 이 CSS 변수를 바꾼다
@@ -5733,6 +5858,7 @@ const SETTING_CSS_VARS = {
     eventGap: "--event-gap",
     sidebarWidth: "--sidebar-width",
     letterSpacing: "--letter-spacing",
+    timelineWidth: "--timeline-width",  // 오늘 탭 시간표 칸의 너비
 };
 
 // 설정 이름 → 단위("px", "em" 등). 서버가 알려준 슬라이더 정의에서 loadSettings가 채운다
@@ -5827,8 +5953,12 @@ async function loadSettings() {
         // 혹시 이미 있던 슬라이더를 비우고, 화면 크기 슬라이더와 Pomodoro 슬라이더를 각자의 칸에 만든다
         sliderListElement.innerHTML = "";
         pomodoroSliderListElement.innerHTML = "";
+        todaySliderListElement.innerHTML = "";
         data.sliders.forEach(function (def) {
             buildSlider(def, sliderListElement);
+        });
+        (data.todaySliders || []).forEach(function (def) {
+            buildSlider(def, todaySliderListElement);
         });
         (data.pomodoroSliders || []).forEach(function (def) {
             buildSlider(def, pomodoroSliderListElement);
@@ -5841,9 +5971,9 @@ async function loadSettings() {
     applySettings();
 }
 
-// "기본값으로" 버튼: 모든 슬라이더를 기본값으로 되돌리고 저장한다 (기본 캘린더는 그대로 둔다)
-document.getElementById("settings-reset").addEventListener("click", function () {
-    sliderListElement.querySelectorAll("input[type=range]").forEach(function (slider) {
+// "기본값으로" 버튼: 그 칸의 슬라이더들을 기본값으로 되돌리고 저장한다 (기본 캘린더는 그대로 둔다)
+function resetSliders(listElement) {
+    listElement.querySelectorAll("input[type=range]").forEach(function (slider) {
         slider.value = slider.dataset.default;
         settings[slider.dataset.key] = Number(slider.dataset.default);
         // 슬라이더 오른쪽의 값 글자도 기본값으로 바꾼다 (nextElementSibling = 바로 다음 요소)
@@ -5851,6 +5981,12 @@ document.getElementById("settings-reset").addEventListener("click", function () 
     });
     applySettings();
     saveSettings();
+}
+document.getElementById("settings-reset").addEventListener("click", function () {
+    resetSliders(sliderListElement);
+});
+document.getElementById("today-settings-reset").addEventListener("click", function () {
+    resetSliders(todaySliderListElement);
 });
 
 // 일정 추가 창에서 미리 선택해둘 캘린더를 정한다.
