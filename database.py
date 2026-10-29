@@ -92,6 +92,22 @@ def init_db():
         )
     """)
 
+    # 시간표의 "내 계획" 블록: 오늘 탭의 시간표에 "몇 시부터 몇 시까지 뭘 하겠다"고 적어 두는 블록. Google에는 보내지 않는다.
+    # 시각은 그날 0시부터 몇 분이 지났는지(0~1440)로 저장한다 (예: 16:30 = 990). 하루 안에서만 만든다
+    run("""
+        CREATE TABLE IF NOT EXISTS time_blocks (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            date      TEXT NOT NULL,      -- 그날 "2026-10-28"
+            start_min INTEGER NOT NULL,   -- 시작 (0시부터 몇 분째인지)
+            end_min   INTEGER NOT NULL,   -- 끝 (포함하지 않는다)
+            title     TEXT NOT NULL,      -- 블록에 적은 글. 할 일과 연결된 블록은 만들 때의 할 일 이름이 들어 있다
+            task_id   INTEGER             -- 연결된 할 일(tasks.id). 없어도 된다
+        )
+    """)
+    run("CREATE INDEX IF NOT EXISTS idx_time_blocks_date ON time_blocks (date)")
+    # 이미 지워진 할 일에 연결된 채 남아 있는 블록을 정리한다. 할 일을 지울 때 블록을 같이 지우지 않던 옛 동작 때문에 생긴 것들이다
+    run("DELETE FROM time_blocks WHERE task_id IS NOT NULL AND task_id NOT IN (SELECT id FROM tasks)")
+
     # 마이그레이션: 이미 만들어진 studyflow.db의 tasks 테이블에는 나중에 추가한 칸이 없을 수 있다.
     # CREATE TABLE IF NOT EXISTS는 테이블이 이미 있으면 아무것도 안 하므로, 없는 칸만 따로 덧붙인다.
     # PRAGMA table_info: 테이블에 어떤 칸들이 있는지 알려주는 SQLite 명령
@@ -245,6 +261,14 @@ def update_task(task_id, changes):
         changes = {**changes, "done_at": done_at}
 
     updated = update_row("tasks", EDITABLE_COLUMNS, task_id, changes)
+    # 날짜가 바뀌면 시간표에 배치해 둔 계획 블록 중 그 날짜가 아닌 것은 지운다("내일로", "목록으로", "빼기" 등).
+    # 블록은 하루 안의 시각이라 다른 날로 옮겨진 할 일에는 의미가 없고, 남겨 두면 할 일이 없는 날에 계획만 남기 때문이다.
+    # 같은 날짜로 다시 정하면 그 날짜의 블록은 그대로 둔다. 날짜를 비우면(None) 모든 블록을 지운다
+    if updated and "date" in changes:
+        if changes["date"] is None:
+            run("DELETE FROM time_blocks WHERE task_id = ?", (task_id,))
+        else:
+            run("DELETE FROM time_blocks WHERE task_id = ? AND date != ?", (task_id, changes["date"]))
     # 하위 단계를 가진 단계를 "완료"하면(우선순위 탭의 완료 메뉴) 아직 안 끝낸 하위 단계도 함께 끝낸 것으로 한다.
     # 하위 단계가 없는 할 일은 해당 줄이 없어서 아무 일도 일어나지 않는다
     if updated and changes.get("done"):
@@ -268,6 +292,12 @@ def update_row(table, allowed_columns, row_id, changes):
 def delete_task(task_id):
     """할 일을 지운다. 그 번호의 할 일이 없으면 False.
     하위 단계가 있는 단계를 지우면 그 아래 하위 단계들도 함께 지운다. (상위가 없는 채로 남으면 어디에서도 안 보이기 때문이다)"""
+    # 시간표에 배치해 둔 계획 블록도 함께 지운다 (할 일이 사라졌는데 시간표에 남아 있으면 안 되므로). 하위 단계의 블록도 같다.
+    # 할 일을 지우기 전에 해야 한다: 지운 뒤에는 어느 블록이 이 할 일의 것인지 찾을 수 없다
+    run(
+        "DELETE FROM time_blocks WHERE task_id = ? OR task_id IN (SELECT id FROM tasks WHERE parent_id = ?)",
+        (task_id, task_id),
+    )
     _, changed = run("DELETE FROM tasks WHERE id = ? OR parent_id = ?", (task_id, task_id))
     return changed > 0
 
@@ -335,6 +365,11 @@ def delete_project(project_id):
     세 문장이 모두 성공하거나 모두 취소되도록 한 번의 거래(transaction)로 묶는다."""
     with contextlib.closing(connect()) as connection:
         with connection:
+            # 함께 지워지는 할 일의 시간표 블록도 지운다 (할 일이 먼저 지워지면 어느 블록인지 찾을 수 없으니 먼저 한다)
+            connection.execute(
+                "DELETE FROM time_blocks WHERE task_id IN (SELECT id FROM tasks WHERE project_id = ? AND date IS NULL)",
+                (project_id,),
+            )
             connection.execute("DELETE FROM tasks WHERE project_id = ? AND date IS NULL", (project_id,))
             connection.execute(
                 "UPDATE tasks SET project_id = NULL, parent_id = NULL WHERE project_id = ?", (project_id,)
@@ -427,6 +462,58 @@ def update_dday(dday_id, changes):
 def delete_dday(dday_id):
     """D-day를 지운다. 없으면 False."""
     _, changed = run("DELETE FROM ddays WHERE id = ?", (dday_id,))
+    return changed > 0
+
+
+# ---------- 시간표의 "내 계획" 블록 ----------
+
+# 블록을 읽는 SELECT. 할 일과 연결된 블록은 할 일의 지금 이름과 완료 여부를 같이 가져온다.
+# 연결된 할 일을 지우면 블록도 함께 지워진다(delete_task, delete_project). LEFT JOIN은 혹시 연결이 끊긴 블록이 있어도
+# 읽다가 오류가 나지 않게 하는 안전장치다. 그때는 t.id가 비어서 task_id가 NULL이 되고 제목은 블록에 저장해 둔 글(b.title)이 쓰인다
+TIME_BLOCK_SELECT = """
+    SELECT b.id, b.date, b.start_min, b.end_min,
+           COALESCE(t.content, b.title) AS title,
+           t.id AS task_id, t.done AS task_done
+    FROM time_blocks b LEFT JOIN tasks t ON t.id = b.task_id
+"""
+
+
+def list_time_blocks(date):
+    """그날의 계획 블록들을 시작 시각 순서로 돌려준다."""
+    rows, _ = run(TIME_BLOCK_SELECT + " WHERE b.date = ? ORDER BY b.start_min, b.id", (date,))
+    return rows
+
+
+def get_time_block(block_id):
+    """블록 하나를 돌려준다. 없으면 None."""
+    rows, _ = run(TIME_BLOCK_SELECT + " WHERE b.id = ?", (block_id,))
+    return rows[0] if rows else None
+
+
+def add_time_block(date, start_min, end_min, title, task_id=None):
+    """계획 블록을 하나 만들고, 만들어진 블록(번호 포함)을 돌려준다."""
+    with contextlib.closing(connect()) as connection:
+        with connection:
+            cursor = connection.execute(
+                "INSERT INTO time_blocks (date, start_min, end_min, title, task_id) VALUES (?, ?, ?, ?, ?)",
+                (date, start_min, end_min, title, task_id),
+            )
+            block_id = cursor.lastrowid
+    return get_time_block(block_id)
+
+
+# 블록에서 고칠 수 있는 칸들 (EDITABLE_COLUMNS와 같은 이유로 고정된 목록. 날짜와 연결된 할 일은 바꾸지 않는다)
+EDITABLE_TIME_BLOCK_COLUMNS = ("start_min", "end_min", "title")
+
+
+def update_time_block(block_id, changes):
+    """블록의 changes에 든 칸만 고친다. 그 번호의 블록이 없으면 False."""
+    return update_row("time_blocks", EDITABLE_TIME_BLOCK_COLUMNS, block_id, changes)
+
+
+def delete_time_block(block_id):
+    """블록을 지운다. 없으면 False."""
+    _, changed = run("DELETE FROM time_blocks WHERE id = ?", (block_id,))
     return changed > 0
 
 

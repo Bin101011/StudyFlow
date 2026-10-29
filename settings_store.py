@@ -67,6 +67,13 @@ POMODORO_POSITION_KEY = "pomodoroPosition"
 # 이상한 값이 들어와도 화면 밖 아주 먼 곳으로 가지 않게 하는 한계. 실제 화면 안으로 맞추는 일은 화면(app.js)이 한다
 MAX_POSITION = 20000
 
+# 6) 오늘 탭 시간표의 확대 정도: 한 시간의 세로 길이(px). 두 손가락으로 벌리거나 오므리면(또는 +/- 버튼) 바뀌고 껐다 켜도 유지된다.
+# 범위와 기본값은 화면(app.js의 TL_HOUR_MIN/MAX/DEFAULT)과 같아야 한다
+TIMELINE_HOUR_PX_KEY = "timelineHourPx"
+TIMELINE_HOUR_PX_MIN = 36
+TIMELINE_HOUR_PX_MAX = 160
+TIMELINE_HOUR_PX_DEFAULT = 64
+
 # 저장 파일을 읽고 쓰는 동안 다른 요청이 끼어들지 못하게 하는 열쇠
 _lock = threading.Lock()
 
@@ -84,6 +91,7 @@ def default_settings():
     settings[PROJECT_COLUMNS_KEY] = PROJECT_COLUMNS_DEFAULT
     settings[PROJECT_FOLDER_COLUMNS_KEY] = PROJECT_FOLDER_COLUMNS_DEFAULT
     settings[CREATED_CALENDARS_KEY] = []
+    settings[TIMELINE_HOUR_PX_KEY] = TIMELINE_HOUR_PX_DEFAULT
     return settings
 
 
@@ -123,6 +131,11 @@ def clean_settings(raw):
         # 숫자(bool 제외)이고 한계 안일 때만 인정한다. nan, 무한대는 비교가 거짓이 되어 걸러진다
         if all(isinstance(v, (int, float)) and not isinstance(v, bool) and -MAX_POSITION <= v <= MAX_POSITION for v in (x, y)):
             settings[POMODORO_POSITION_KEY] = {"x": round(x), "y": round(y)}
+
+    hour_px = raw.get(TIMELINE_HOUR_PX_KEY)
+    # 숫자(bool 제외)면 범위 안으로 맞춘다. nan, 무한대는 비교가 거짓이라 걸러진다
+    if isinstance(hour_px, (int, float)) and not isinstance(hour_px, bool) and hour_px == hour_px and abs(hour_px) != float("inf"):
+        settings[TIMELINE_HOUR_PX_KEY] = round(max(TIMELINE_HOUR_PX_MIN, min(TIMELINE_HOUR_PX_MAX, hour_px)))
 
     columns = raw.get(PROJECT_COLUMNS_KEY)
     # bool은 파이썬에서 정수의 한 종류(True == 1)라서 따로 걸러낸다

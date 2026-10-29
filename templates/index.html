@@ -72,19 +72,30 @@
             <!-- D-day 줄: "기말고사 D-50" 같은 알약들과 추가 버튼. 알약은 app.js가 /api/ddays에서 받아 여기에 만든다 -->
             <div id="dday-strip" class="dday-strip"></div>
 
-            <!-- 탭 전체를 왼쪽(일정)과 오른쪽(할 일)으로 나누는 상자 -->
+            <!-- 탭 전체를 세 칸으로 나누는 상자: 시간표 | 할 일 + 메모 | 작은 달력 + 할 일 목록.
+                 각 칸은 화면 높이에 맞춰져 있고, 목록이 길어지면 칸 안에서만 스크롤된다 (메모가 아래로 밀려나지 않게) -->
             <div class="today-layout">
-                <section class="today-column">
-                    <!-- 작은 달력: 날짜를 누르면 그날로 이동한다. 칸은 app.js가 만든다 -->
-                    <div id="mini-calendar" class="mini-calendar"></div>
-                    <h2 id="events-heading">오늘의 일정</h2>
-                    <!-- 일정 줄들은 app.js가 /api/events에서 받아 여기에 만든다 -->
-                    <ul id="today-events" class="today-list"></ul>
-
-                    <!-- 하루 메모: 이 날짜에 대한 자유 메모. 입력을 멈추면 저절로 저장된다 (내 컴퓨터에만 저장, Google에는 보내지 않는다) -->
-                    <div class="day-memo">
-                        <h2>메모 <span id="day-memo-status" class="day-memo-status"></span></h2>
-                        <textarea id="day-memo" rows="5" placeholder="이 날의 메모를 자유롭게 적으세요" disabled></textarea>
+                <!-- 시간표: 그날의 Google 일정(진한 블록)과 내 계획(점선 블록)을 시간 눈금 위에 놓는다. 내용은 app.js가 만든다 -->
+                <section class="today-column" id="timeline-column">
+                    <h2 class="tl-heading">
+                        <span>시간표</span>
+                        <span class="tl-legend"><i class="tl-key tl-key-event"></i>일정</span>
+                        <span class="tl-legend"><i class="tl-key tl-key-plan"></i>내 계획</span>
+                        <!-- 확대/축소. 터치패드에서 시간표 위를 두 손가락으로 벌리거나 오므려도 된다. 확대하면 5분 단위, 아니면 15분 단위로 맞춰진다 -->
+                        <span class="tl-zoom" title="터치패드에서 두 손가락을 벌리거나 오므려도 확대/축소됩니다">
+                            <span id="tl-snap" class="tl-snap">15분 단위</span>
+                            <button type="button" id="tl-zoom-out" aria-label="시간표 축소">−</button>
+                            <button type="button" id="tl-zoom-in" aria-label="시간표 확대">+</button>
+                        </span>
+                    </h2>
+                    <!-- 종일 일정은 시간표 위에 한 줄로 모아서 보여준다. 있을 때만 보인다 -->
+                    <div id="timeline-allday" class="tl-allday" hidden></div>
+                    <div id="timeline-scroll" class="tl-scroll">
+                        <div id="timeline" class="tl">
+                            <div id="timeline-labels" class="tl-labels"></div>
+                            <!-- 블록들이 놓이는 곳. 빈 곳을 끌면 새 계획이 만들어진다 -->
+                            <div id="timeline-grid" class="tl-grid"></div>
+                        </div>
                     </div>
                 </section>
 
@@ -99,25 +110,40 @@
                         </select>
                         <button id="task-add-button">추가</button>
                     </div>
+                    <p class="inbox-hint">할 일을 시간표로 끌어다 놓으면 그 시간의 계획이 됩니다.</p>
 
-                    <!-- 지난 날짜에 끝내지 못한 할 일. 있을 때만 보인다 -->
-                    <div id="overdue-section" hidden>
-                        <h3>밀린 할 일</h3>
-                        <ul id="overdue-tasks" class="today-list"></ul>
+                    <!-- 목록이 길어지면 이 상자 안에서만 스크롤된다 -->
+                    <div class="column-scroll">
+                        <!-- 지난 날짜에 끝내지 못한 할 일. 있을 때만 보인다 -->
+                        <div id="overdue-section" hidden>
+                            <h3>밀린 할 일</h3>
+                            <ul id="overdue-tasks" class="today-list"></ul>
+                        </div>
+
+                        <ul id="today-tasks" class="today-list"></ul>
                     </div>
 
-                    <ul id="today-tasks" class="today-list"></ul>
+                    <!-- 하루 메모: 이 날짜에 대한 자유 메모. 칸의 바닥에 고정되어 할 일이 많아져도 밀려나지 않는다.
+                         입력을 멈추면 저절로 저장된다 (내 컴퓨터에만 저장, Google에는 보내지 않는다) -->
+                    <div class="day-memo">
+                        <h2>메모 <span id="day-memo-status" class="day-memo-status"></span></h2>
+                        <textarea id="day-memo" rows="4" placeholder="이 날의 메모를 자유롭게 적으세요" disabled></textarea>
+                    </div>
                 </section>
 
-                <!-- 할 일 목록(수집함): 날짜를 아직 정하지 않은 할 일(프로젝트 없는 것만). 줄의 버튼으로 날짜를 정하거나, 가운데 "할 일" 쪽으로 끌어다 놓는다 -->
+                <!-- 작은 달력 + 할 일 목록(수집함): 날짜를 아직 정하지 않은 할 일(프로젝트 없는 것만). 줄의 버튼으로 날짜를 정하거나, 가운데 "할 일" 칸이나 시간표로 끌어다 놓는다 -->
                 <section class="today-column" id="inbox-column">
+                    <!-- 작은 달력: 날짜를 누르면 그날로 이동한다. 칸은 app.js가 만든다 -->
+                    <div id="mini-calendar" class="mini-calendar"></div>
                     <h2>할 일 목록 <span id="inbox-count" class="inbox-count"></span></h2>
                     <div class="task-add">
                         <input type="text" id="inbox-input" placeholder="날짜 없이 적어 두고 Enter">
                         <button id="inbox-add-button">추가</button>
                     </div>
-                    <p class="inbox-hint">날짜를 나중에 정할 할 일. 줄 위에 마우스를 올려 날짜를 정하거나, 가운데 '할 일' 쪽으로 끌어다 놓으세요.</p>
-                    <ul id="inbox-tasks" class="today-list"></ul>
+                    <p class="inbox-hint">날짜를 나중에 정할 할 일. 줄 위에 마우스를 올려 날짜를 정하거나, 가운데 '할 일' 칸이나 시간표로 끌어다 놓으세요.</p>
+                    <div class="column-scroll">
+                        <ul id="inbox-tasks" class="today-list"></ul>
+                    </div>
                 </section>
             </div>
         </div>

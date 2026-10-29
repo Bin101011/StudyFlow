@@ -794,6 +794,122 @@ def api_save_day_memo():
     return jsonify({"ok": True})
 
 
+# 시간표의 "내 계획" 블록(오늘 탭): 몇 시부터 몇 시까지 무엇을 하겠다고 적어 두는 블록. Google에는 보내지 않고 내 컴퓨터에만 저장한다.
+# 시각은 그날 0시부터 몇 분째인지(0~1440)로 주고받는다. 화면은 15분 단위로 맞추지만 서버는 5분 단위까지 받는다
+TIME_BLOCK_MIN_LENGTH = 5     # 블록의 최소 길이(분)
+TIME_BLOCK_TITLE_MAX = 200
+
+
+def is_minute(value):
+    """0~1440 사이의 정수인지 (True/False는 숫자로 치지 않는다)."""
+    return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 1440
+
+
+def time_block_json(block):
+    """DB의 블록 한 줄을 화면에 보낼 모양으로 바꾼다. 할 일과 연결되어 있으면 taskId와 완료 여부가 들어 있다."""
+    return {
+        "id": block["id"],
+        "date": block["date"],
+        "start": block["start_min"],
+        "end": block["end_min"],
+        "title": block["title"],
+        "taskId": block["task_id"],
+        "taskDone": block["task_done"] == 1 if block["task_id"] is not None else False,
+    }
+
+
+def check_block_range(start, end):
+    """시작/끝이 올바른지 확인한다. 문제가 있으면 400 응답을, 괜찮으면 None을 돌려준다."""
+    if not is_minute(start) or not is_minute(end):
+        return jsonify({"error": "시작과 끝은 0~1440 사이의 정수(분)여야 합니다."}), 400
+    if end - start < TIME_BLOCK_MIN_LENGTH:
+        return jsonify({"error": f"블록은 {TIME_BLOCK_MIN_LENGTH}분 이상이어야 합니다."}), 400
+    return None
+
+
+def check_block_title(title):
+    """블록 제목이 올바른지 확인한다. 문제가 있으면 400 응답을, 괜찮으면 None을 돌려준다."""
+    if not isinstance(title, str) or not title.strip():
+        return jsonify({"error": "블록에 적을 글을 입력하세요."}), 400
+    if len(title.strip()) > TIME_BLOCK_TITLE_MAX:
+        return jsonify({"error": f"글은 {TIME_BLOCK_TITLE_MAX}자까지 쓸 수 있습니다."}), 400
+    return None
+
+
+@app.route("/api/time-blocks")
+def api_get_time_blocks():
+    date = request.args.get("date", "")
+    if not valid_date(date):
+        return jsonify({"error": "'date'는 2026-10-19 같은 날짜여야 합니다."}), 400
+    return jsonify([time_block_json(block) for block in database.list_time_blocks(date)])
+
+
+# 새 블록. taskId를 주면 그 할 일과 연결한다(제목은 할 일 이름이 되고, 보낸 title은 무시한다). 안 주면 title이 필요하다
+@app.route("/api/time-blocks", methods=["POST"])
+def api_create_time_block():
+    data = request.get_json()
+    error_response = missing_key(data, ("date", "start", "end"))
+    if error_response:
+        return error_response
+    if not valid_date(data["date"]):
+        return jsonify({"error": "'date'는 2026-10-19 같은 날짜여야 합니다."}), 400
+    error_response = check_block_range(data["start"], data["end"])
+    if error_response:
+        return error_response
+
+    task_id = data.get("taskId")
+    if task_id is not None:
+        task = database.get_task(task_id) if isinstance(task_id, int) and not isinstance(task_id, bool) else None
+        if task is None:
+            return jsonify({"error": "연결할 할 일을 찾을 수 없습니다."}), 404
+        title = task["content"]
+    else:
+        title = data.get("title")
+        error_response = check_block_title(title)
+        if error_response:
+            return error_response
+        title = title.strip()
+
+    block = database.add_time_block(data["date"], data["start"], data["end"], title, task_id)
+    return jsonify(time_block_json(block)), 201
+
+
+# 블록의 시간이나 제목을 고친다 (보낸 것만). 시작과 끝은 하나만 보내도 되고, 합쳐서 올바른지 확인한다
+@app.route("/api/time-blocks/<int:block_id>", methods=["PATCH"])
+def api_update_time_block(block_id):
+    data = request.get_json()
+    block = database.get_time_block(block_id)
+    if block is None:
+        return jsonify({"error": "블록을 찾을 수 없습니다."}), 404
+
+    changes = {}
+    if "start" in data or "end" in data:
+        start = data.get("start", block["start_min"])
+        end = data.get("end", block["end_min"])
+        error_response = check_block_range(start, end)
+        if error_response:
+            return error_response
+        changes["start_min"] = start
+        changes["end_min"] = end
+    if "title" in data:
+        error_response = check_block_title(data["title"])
+        if error_response:
+            return error_response
+        changes["title"] = data["title"].strip()
+    if not changes:
+        return jsonify({"error": "고칠 내용이 없습니다."}), 400
+
+    database.update_time_block(block_id, changes)
+    return jsonify(time_block_json(database.get_time_block(block_id)))
+
+
+@app.route("/api/time-blocks/<int:block_id>", methods=["DELETE"])
+def api_delete_time_block(block_id):
+    if not database.delete_time_block(block_id):
+        return jsonify({"error": "블록을 찾을 수 없습니다."}), 404
+    return jsonify({"ok": True})
+
+
 # 할 일 목록: 그 날짜의 할 일(tasks)과, 그 날짜 이전에 잡혀 있는데 끝내지 못한 할 일(overdue)을 함께 돌려준다.
 # 날짜는 화면이 이 컴퓨터의 "오늘"을 계산해서 ?date=2026-10-19 로 보낸다
 @app.route("/api/tasks")

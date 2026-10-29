@@ -1087,6 +1087,7 @@ async function saveEvent() {
 
         eventDialog.close();
         calendar.refetchEvents();  // Google에서 일정을 다시 불러와서 화면을 맞춘다
+        reloadTimelineIfVisible();  // 오늘 탭의 시간표에서 연 창이었다면 시간표도 새 내용으로
     } catch (error) {
         // 실패하면 창을 닫지 않고 이유를 보여준다. 입력한 내용이 남아 있어서 다시 시도할 수 있다
         eventError.textContent = error.message;
@@ -1113,6 +1114,7 @@ async function deleteEvent() {
         );
         eventDialog.close();
         calendar.refetchEvents();
+        reloadTimelineIfVisible();
     } catch (error) {
         eventError.textContent = error.message;
     } finally {
@@ -1348,14 +1350,12 @@ document.addEventListener("keydown", function (e) {
 // ---------- 오늘 탭 ----------
 
 const todayTitle = document.getElementById("today-title");
-const todayEventsList = document.getElementById("today-events");
 const todayTasksList = document.getElementById("today-tasks");
 const overdueSection = document.getElementById("overdue-section");
 const overdueTasksList = document.getElementById("overdue-tasks");
 const taskInput = document.getElementById("task-input");
 const taskAddButton = document.getElementById("task-add-button");
 const taskProjectSelect = document.getElementById("task-project");
-const eventsHeading = document.getElementById("events-heading");
 const tasksHeading = document.getElementById("tasks-heading");
 const dayPrevButton = document.getElementById("day-prev");
 const dayNextButton = document.getElementById("day-next");
@@ -1388,236 +1388,1106 @@ function showEmptyMessage(listElement, message) {
     listElement.appendChild(item);
 }
 
-// 오늘의 일정을 서버에서 받아와서 왼쪽 목록에 그린다
-async function loadTodayEvents() {
-    // 요청을 보낸 시점의 날짜를 기억해둔다. 응답이 오기 전에 ◀ ▶로 다른 날로 넘어갔다면 이 응답은 버린다
-    const date = viewedDate;
-    // 캘린더 탭이 쓰는 /api/events를 그대로 쓴다. 그날 0시 ~ 다음 날 0시를 요청한다
-    const response = await fetch(
-        "/api/events?start=" + date + "&end=" + addDaysToText(date, 1)
-    );
-    if (!response.ok) {
-        throw new Error("서버 오류: " + response.status);
-    }
-    const events = await response.json();
-    if (date !== viewedDate) {
-        return;
-    }
+// ----- 시간표 (오늘 탭 왼쪽) -----
+// 그날의 Google 일정(옅은 색 블록)과 "내 계획"(점선 블록)을 24시간 눈금 위에 놓는다. 지금 보고 있는 날짜(viewedDate)를 따라간다.
+//  - 일정은 /api/events에서, 계획은 /api/time-blocks에서 받는다. 계획은 내 컴퓨터에만 저장하고 Google에는 보내지 않는다.
+//  - 일정과 계획이 겹치면 폭을 나눠 나란히 놓는다(layoutOverlaps).
+//  - 빈 곳을 끌면 그 시간만큼의 계획이 만들어지고(한 번 누르기만 하면 1시간), 제목을 적고 Enter를 누르면 저장된다.
+//  - 계획 블록은 끌어서 옮기고, 아래쪽 끝을 끌어서 길이를 바꾼다. 15분 단위로 맞춰진다.
+//  - 오늘 할 일(또는 할 일 목록)의 할 일을 시간표로 끌어다 놓으면 그 할 일과 연결된 계획이 만들어진다.
+//  - 블록을 누르면 작은 창이 뜬다. 일정이면 메모를 바로 쓰고(Enter 저장, Shift+Enter 줄바꿈), 계획이면 제목을 고치거나 지운다.
+// 달력(FullCalendar)을 쓰지 않고 직접 만든 이유: 일정과 계획을 한 화면에 섞어 겹침까지 배치해야 하고,
+// 할 일 끌어다 놓기가 이미 있는 포인터 이벤트 방식(beginTaskDrag)과 한 몸으로 움직여야 해서다.
 
-    // 캘린더 탭에서 체크를 꺼둔 캘린더의 일정은 여기서도 보이지 않게 한다
-    const visible = events.filter(function (event) {
-        return !hiddenCalendarIds.has(event.calendarId);
-    });
+// 시간표 확대/축소: 터치패드에서 두 손가락을 벌리거나 오므리면(브라우저에는 Ctrl+휠로 전달된다), 또는 [+] [−] 버튼으로 시간표를 늘이고 줄인다.
+// 한 시간의 세로 길이가 커질수록 블록을 더 잘게 맞출 수 있어서, 충분히 확대하면 5분 단위, 그보다 작으면 15분 단위로 맞춰진다.
+const TL_HOUR_MIN = 36;          // 가장 축소했을 때 한 시간의 세로 길이(px). 서버(settings_store.py)와 같은 값
+const TL_HOUR_MAX = 160;         // 가장 확대했을 때. 서버와 같은 값
+const TL_HOUR_DEFAULT = 64;      // 처음 값 (처음에 42px로 만들었는데 사용자가 너무 작다고 해서 키웠다). 서버와 같은 값
+const TL_FINE_HOUR_PX = 120;     // 이만큼 확대하면 5분 단위로 맞춘다 (5분이 10px 이상이 되는 크기)
+const TL_HALF_LINES_PX = 84;     // 이만큼 확대하면 30분 눈금(옅은 줄과 글자)도 보여준다
+const TL_QUARTER_LINES_PX = 120; // 이만큼 확대하면 15분 줄도 보여준다
+const TL_SCROLL_PAD = 10;        // .tl-scroll의 위쪽 안쪽 여백(px). style.css와 같은 값
+let tlHourPx = TL_HOUR_DEFAULT;  // 지금 한 시간의 세로 길이(px). 두 손가락 동작은 조금씩 변하므로 소수일 수 있다
 
-    // 정렬: 종일 일정이 맨 위, 그 아래는 시작 시각 순서.
-    // 종일 일정의 start는 "2026-10-19"(10글자), 시간 있는 일정은 "2026-10-19T09:00:00+09:00"처럼 더 길다
-    visible.sort(function (a, b) {
-        const aAllDay = a.start.length === 10;
-        const bAllDay = b.start.length === 10;
-        if (aAllDay !== bAllDay) {
-            return aAllDay ? -1 : 1;
-        }
-        // Date끼리 빼면 밀리초 차이가 나오므로, 빠른 일정이 앞에 온다
-        return new Date(a.start) - new Date(b.start);
-    });
+const TL_DEFAULT_LENGTH = 60;    // 빈 곳을 한 번 누르거나 할 일을 끌어다 놓았을 때 만들어지는 길이(분)
+const TL_DAY_MIN = 24 * 60;      // 하루의 분
+const TL_MIN_VISIBLE_PX = 16;    // 아주 짧은 블록도 눌러 볼 수 있게 보장하는 최소 높이(px). 기본 확대(64px/시간)에서 15분이 딱 이 높이다
 
-    todayEventsList.innerHTML = "";
-    if (visible.length === 0) {
-        showEmptyMessage(todayEventsList, "일정이 없습니다.");
-        return;
-    }
+const timelineScroll = document.getElementById("timeline-scroll");
+const timelineEl = document.getElementById("timeline");
+const timelineLabels = document.getElementById("timeline-labels");
+const timelineGrid = document.getElementById("timeline-grid");
+const timelineAllDay = document.getElementById("timeline-allday");
+const timelineZoomIn = document.getElementById("tl-zoom-in");
+const timelineZoomOut = document.getElementById("tl-zoom-out");
+const timelineSnapLabel = document.getElementById("tl-snap");
 
-    visible.forEach(function (event) {
-        todayEventsList.appendChild(makeTodayEventRow(event));
-    });
+// 블록을 만들고 옮길 때 맞추는 단위(분)이자 끌어서 줄일 수 있는 가장 짧은 길이. 확대한 정도에 따라 5분 또는 15분이다
+function snapStep() {
+    return tlHourPx >= TL_FINE_HOUR_PX ? 5 : 15;
 }
 
-// ----- 오늘 탭 일정 줄의 메모 -----
-// 일정에 "노트 가져가기" 같은 짧은 메모를 붙인다. 메모는 Google Calendar 일정의 "설명" 칸에 저장되므로 폰이나 웹에서도 보인다.
-// 일정 수정 창을 열지 않아도 되도록, 이 줄에서 바로 쓴다: 메모가 있으면 글자를 눌러서, 없으면 마우스를 올렸을 때 나오는 "+ 메모"를 눌러서.
-// 입력을 멈추고 1.5초가 지나거나 다른 곳을 누르면 저장한다. Enter를 누르면 저장하고 입력을 끝내며(Esc도 같다), 줄바꿈은 Shift+Enter로 한다.
+// 시간 눈금 글자를 만든다. 한 시간마다 있고, 충분히 확대하면 30분마다 작은 글자도 붙는다. 확대 정도가 바뀔 때마다 다시 만든다
+function buildTimelineLabels() {
+    timelineLabels.replaceChildren();
+    function addLabel(min, minor) {
+        const label = document.createElement("span");
+        label.textContent = minToText(min);
+        label.style.top = (min / 60 * tlHourPx) + "px";
+        if (minor) {
+            label.className = "tl-label-minor";
+        }
+        timelineLabels.appendChild(label);
+    }
+    for (let hour = 0; hour <= 24; hour++) {
+        addLabel(hour * 60, false);
+        if (hour < 24 && tlHourPx >= TL_HALF_LINES_PX) {
+            addLabel(hour * 60 + 30, true);
+        }
+    }
+}
+
+// 지금 시간표가 보여주는 내용. date는 이 내용이 어느 날짜의 것인지, request는 가장 최근 요청의 번호(늦게 온 옛 응답을 버리려는 것)다
+const timeline = { date: null, events: [], plans: [], eventsFailed: false, needScroll: false, request: 0 };
+let timelineDrag = null;        // 끄는 중에만 값이 있다
+let timelinePopover = null;     // 블록을 눌러 연 작은 창이 있으면 { el, key, onClose }
 const EVENT_MEMO_SAVE_DELAY_MS = 1500;
-const EVENT_MEMO_MAX = 8000;  // 서버(app.py의 EVENT_DESCRIPTION_MAX)와 같은 값
+const EVENT_MEMO_MAX = 8000;    // 서버(app.py의 EVENT_DESCRIPTION_MAX)와 같은 값
 let pendingEventMemoSaves = 0;  // 지금 Google에 보내는 중인 메모 저장 개수
 
-// 메모를 쓰는 중이거나 저장하는 중이면 true. 이때 동기화가 일정 목록을 다시 그리면 쓰던 글자가 사라지므로 그 새로고침은 건너뛴다
-function isEventMemoBusy() {
-    return pendingEventMemoSaves > 0 || todayEventsList.querySelector(".event-memo-input") !== null;
+// ----- 작은 도구들 -----
+
+// 0시부터의 분 → "16:30" (1440분은 "24:00")
+function minToText(min) {
+    return pad(Math.floor(min / 60)) + ":" + pad(min % 60);
 }
 
-// 일정 한 줄(<li>)을 만든다: 색 동그라미 + 시간 + (제목, 메모) + 마우스를 올리면 나오는 "+ 메모" 버튼
-function makeTodayEventRow(event) {
-    const item = document.createElement("li");
-    item.className = "today-event";
+// 길이(분) → "1시간 30분"
+function durationText(min) {
+    const hours = Math.floor(min / 60);
+    const minutes = min % 60;
+    return (hours ? hours + "시간" : "") + (hours && minutes ? " " : "") + (minutes ? minutes + "분" : "");
+}
 
-    // 캘린더 색 동그라미
-    const dot = document.createElement("span");
-    dot.className = "event-dot";
-    dot.style.backgroundColor = event.color;
+function clampNumber(value, low, high) {
+    return Math.max(low, Math.min(high, value));
+}
 
-    // 시간 글자: 종일이면 "종일", 아니면 "09:00–10:00"
-    const time = document.createElement("span");
-    time.className = "event-time";
-    if (event.start.length === 10) {
-        time.textContent = "종일";
-    } else {
-        time.textContent = toTimeText(new Date(event.start)) + "–" + toTimeText(new Date(event.end));
+// 분 → 시간표 안에서의 세로 위치(px)와 그 반대
+function minToY(min) {
+    return min / 60 * tlHourPx;
+}
+
+// 화면의 세로 위치(clientY)가 시간표의 몇 분째를 가리키는지. 스크롤된 만큼은 getBoundingClientRect가 알아서 반영한다
+function yToMin(clientY) {
+    return (clientY - timelineGrid.getBoundingClientRect().top) / tlHourPx * 60;
+}
+
+function floorSnap(min) {
+    return Math.floor(min / snapStep()) * snapStep();
+}
+
+function ceilSnap(min) {
+    return Math.ceil(min / snapStep()) * snapStep();
+}
+
+function roundSnap(min) {
+    return Math.round(min / snapStep()) * snapStep();
+}
+
+// ----- 확대/축소 -----
+
+// 확대 정도(tlHourPx)를 화면에 반영한다: 눈금 간격(CSS 변수), 30분/15분 줄, 눈금 글자, "15분 단위" 표시, 버튼
+function applyTimelineZoomVisuals() {
+    timelineEl.style.setProperty("--tl-hour", tlHourPx + "px");
+    timelineEl.classList.toggle("tl-half", tlHourPx >= TL_HALF_LINES_PX);
+    timelineEl.classList.toggle("tl-quarter", tlHourPx >= TL_QUARTER_LINES_PX);
+    buildTimelineLabels();
+    timelineSnapLabel.textContent = snapStep() + "분 단위";
+    timelineZoomIn.disabled = tlHourPx >= TL_HOUR_MAX;
+    timelineZoomOut.disabled = tlHourPx <= TL_HOUR_MIN;
+}
+applyTimelineZoomVisuals();
+
+let timelineZoomSaveTimer = null;
+
+// 한 시간의 길이를 px로 바꾼다. anchorClientY(화면의 세로 위치)가 있으면 그 자리의 시각이 제자리에 있도록 스크롤을 맞춘다
+// (손가락을 벌린 자리가 그대로 있고 주변이 늘어나는 것처럼 보이게). save가 true면 확대 정도를 설정에 저장한다
+function setTimelineZoom(px, anchorClientY, save) {
+    const next = clampNumber(px, TL_HOUR_MIN, TL_HOUR_MAX);
+    if (next === tlHourPx) {
+        return;
     }
+    closeTimelinePopover();
+    const anchorMin = anchorClientY === undefined ? null : yToMin(anchorClientY);
+    tlHourPx = next;
+    applyTimelineZoomVisuals();
+    renderTimeline();  // 블록의 위치와 크기를 새 눈금에 맞춰 다시 그린다
+    if (anchorMin !== null) {
+        const offset = anchorClientY - timelineScroll.getBoundingClientRect().top - TL_SCROLL_PAD;
+        timelineScroll.scrollTop = minToY(anchorMin) - offset;
+    }
+    if (save) {
+        // 두 손가락 동작은 이벤트가 쏟아지므로, 멈추고 0.6초 뒤에 한 번만 저장한다
+        clearTimeout(timelineZoomSaveTimer);
+        timelineZoomSaveTimer = setTimeout(function () {
+            settings.timelineHourPx = Math.round(tlHourPx);
+            saveSettings();
+        }, 600);
+    }
+}
+
+// 시간표 위에서 Ctrl+휠(터치패드의 두 손가락 벌리기/오므리기): 확대/축소. 마우스 휠은 한 칸에 deltaY가 100쯤 와서 너무 크게 변하므로 ±30으로 제한한다.
+// 끄는 중에는 무시한다(끌던 블록의 위치가 어긋나지 않게). Ctrl 없이 굴리면 평소처럼 스크롤된다
+timelineScroll.addEventListener("wheel", function (e) {
+    if (!e.ctrlKey) {
+        return;
+    }
+    e.preventDefault();  // 앱 전체가 확대되는 브라우저의 기본 동작을 막는다
+    if (timelineDrag) {
+        return;
+    }
+    const delta = clampNumber(e.deltaY, -30, 30);
+    setTimelineZoom(tlHourPx * Math.exp(-delta * 0.008), e.clientY, true);
+}, { passive: false });
+
+// [+] [−] 버튼: 한 번에 25%씩. 보이는 영역의 한가운데를 기준으로 늘이고 줄인다
+function zoomTimelineByButton(factor) {
+    const rect = timelineScroll.getBoundingClientRect();
+    setTimelineZoom(tlHourPx * factor, rect.top + rect.height / 2, true);
+}
+timelineZoomIn.addEventListener("click", function () {
+    zoomTimelineByButton(1.25);
+});
+timelineZoomOut.addEventListener("click", function () {
+    zoomTimelineByButton(0.8);
+});
+
+// 저장해 둔 확대 정도를 불러온다. 프로그램을 켠 뒤 처음 오늘 탭을 열 때 한 번만 한다
+// (탭을 열 때마다 하면, 방금 확대하고 저장이 끝나기 전에 탭을 옮겼을 때 옛 값으로 되돌아간다)
+let timelineZoomLoaded = false;
+function loadTimelineZoom() {
+    if (timelineZoomLoaded) {
+        return;
+    }
+    timelineZoomLoaded = true;
+    const saved = settings.timelineHourPx;
+    if (typeof saved === "number") {
+        setTimelineZoom(saved, undefined, false);
+    }
+}
+
+// "2026-10-28" → 이 컴퓨터 시간대의 그날 0시 (new Date("2026-10-28")은 UTC로 읽혀 하루 어긋날 수 있어서 직접 만든다)
+function dateFromText(text) {
+    const [year, month, day] = text.split("-").map(Number);
+    return new Date(year, month - 1, day);
+}
+
+// 시간 있는 일정을 그날 0시부터의 (시작, 끝) 분으로 바꾼다. 하루를 넘나드는 일정은 그날 안으로 잘라서 본다
+function eventMinutes(event, dateText) {
+    const dayStart = dateFromText(dateText).getTime();
+    const start = Math.round((new Date(event.start).getTime() - dayStart) / 60000);
+    const end = Math.round((new Date(event.end).getTime() - dayStart) / 60000);
+    return { start: clampNumber(start, 0, TL_DAY_MIN), end: clampNumber(end, 0, TL_DAY_MIN) };
+}
+
+// Google 일정 데이터를 일정 수정 창(openEditDialog)이 알아보는 모양(FullCalendar의 일정 객체와 같은 이름들)으로 바꿔 준다
+function eventAsCalendarEvent(event) {
+    const allDay = event.start.length === 10;
+    return {
+        id: event.id,
+        title: event.title,
+        allDay: allDay,
+        start: allDay ? dateFromText(event.start) : new Date(event.start),
+        end: allDay ? dateFromText(event.end) : new Date(event.end),
+        extendedProps: { calendarId: event.calendarId, canEdit: event.canEdit, description: event.description },
+    };
+}
+
+// ----- 겹침 배치 -----
+// 시간이 겹치는 블록들을 한 묶음으로 보고, 묶음 안에서 겹치지 않게 칸(열)을 나눠 준다.
+// 예: 둘이 겹치면 각각 폭의 절반, 셋이 한꺼번에 겹치면 3분의 1. 겹치지 않는 블록은 폭을 다 쓴다.
+// 각 item에 col(몇 번째 칸)과 cols(그 묶음이 몇 칸으로 나뉘는지)을 채워 넣는다.
+// "겹친다"의 기준은 시간이 아니라 **실제로 화면에 그려지는 크기**다. 19:15에 끝나는 블록과 19:15에 시작하는 블록은 붙어서 나란히 이어지고(분할하지 않는다),
+// 짧은 블록은 최소 높이(TL_MIN_VISIBLE_PX)로 그려지므로 그 높이만큼은 차지하는 것으로 본다(그래야 그 아래 블록이 짧은 블록의 글자를 가리지 않는다).
+// 확대/축소하면 같은 5분도 그려지는 높이가 달라지므로, 시간표를 다시 그릴 때마다 지금 크기로 계산한다.
+// (처음에는 글자 크기를 신경 쓰느라 "짧은 블록은 무조건 30분으로 본다"고 했는데, 그러면 10분 떨어진 블록까지 분할돼서 너무 널널했다)
+function layoutOverlaps(items) {
+    const minVisibleMin = TL_MIN_VISIBLE_PX / tlHourPx * 60;  // 최소 높이를 분으로 바꾼 값
+    items.forEach(function (item) {
+        item.layoutEnd = Math.max(item.end, item.start + minVisibleMin);
+    });
+    items.sort(function (a, b) {
+        return a.start - b.start || b.end - a.end;
+    });
+
+    let cluster = [];
+    let clusterEnd = -1;
+    let columnEnds = [];  // 각 칸이 마지막으로 차지한 끝 시각
+    function closeCluster() {
+        cluster.forEach(function (item) {
+            item.cols = columnEnds.length;
+        });
+    }
+    items.forEach(function (item) {
+        if (item.start >= clusterEnd) {  // 앞 묶음과 이어지지 않으면 새 묶음을 시작한다
+            closeCluster();
+            cluster = [];
+            columnEnds = [];
+        }
+        let column = columnEnds.findIndex(function (end) {
+            return end <= item.start;
+        });
+        if (column === -1) {
+            column = columnEnds.length;
+            columnEnds.push(0);
+        }
+        columnEnds[column] = item.layoutEnd;
+        item.col = column;
+        cluster.push(item);
+        clusterEnd = Math.max(clusterEnd, item.layoutEnd);
+    });
+    closeCluster();
+}
+
+// 블록 높이에 맞춰 글자를 조금 줄인다: 블록이 짧으면(5분처럼 짧은 시간이거나 많이 축소했을 때) 제목이 블록 밖으로 잘리지 않도록
+// 24px 아래에서는 높이에 비례해 줄이되 최소 80%까지만 줄인다(많이 줄이면 안 읽힌다). 아주 짧으면 위아래 여백과 줄 간격도 줄인다
+function fitBlockText(element, heightPx) {
+    element.style.setProperty("--tl-fs", clampNumber(heightPx / 24, 0.8, 1));
+    element.classList.toggle("tl-short", heightPx < 24);
+}
+
+// 블록의 위치와 크기를 정한다 (세로는 시간, 가로는 겹침 배치)
+function placeBlock(element, item) {
+    const height = Math.max(minToY(item.end - item.start), TL_MIN_VISIBLE_PX);
+    element.style.top = minToY(item.start) + "px";
+    element.style.height = height + "px";
+    fitBlockText(element, height);
+    const width = 100 / (item.cols || 1);
+    element.style.left = "calc(" + (item.col || 0) * width + "% + 2px)";
+    element.style.width = "calc(" + width + "% - 4px)";
+}
+
+// ----- 불러오기와 그리기 -----
+
+// 보고 있는 날짜의 일정과 계획을 받아서 그린다. 계획은 내 컴퓨터에서 바로 오고 일정은 Google을 거쳐 느릴 수 있어서 따로 기다린다.
+// 인터넷이 끊겨 일정을 못 받아도 계획은 보인다
+async function loadTimeline() {
+    const date = viewedDate;
+    const request = ++timeline.request;
+    async function getJson(url) {
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(await errorMessageFrom(response));
+        }
+        return response.json();
+    }
+    const [eventsResult, plansResult] = await Promise.allSettled([
+        getJson("/api/events?start=" + date + "&end=" + addDaysToText(date, 1)),
+        getJson("/api/time-blocks?date=" + date),
+    ]);
+    if (request !== timeline.request || date !== viewedDate) {
+        return;  // 그 사이 다른 날로 넘어갔거나 더 새 요청이 있다
+    }
+    timeline.date = date;
+    if (plansResult.status === "fulfilled") {
+        timeline.plans = plansResult.value;
+    } else {
+        timeline.plans = [];
+        showToast("계획을 불러오지 못했습니다: " + plansResult.reason.message);
+    }
+    if (eventsResult.status === "fulfilled") {
+        // 캘린더 탭에서 체크를 꺼둔 캘린더의 일정은 여기서도 보이지 않게 한다
+        timeline.events = eventsResult.value.filter(function (event) {
+            return !hiddenCalendarIds.has(event.calendarId);
+        });
+        timeline.eventsFailed = false;
+    } else {
+        console.error("일정을 불러오지 못했습니다:", eventsResult.reason);
+        timeline.events = [];
+        timeline.eventsFailed = true;
+    }
+    renderTimeline();
+}
+
+// 계획만 다시 받는다 (계획을 만들거나 고친 뒤. Google 일정은 그대로이므로 다시 받지 않는다)
+async function reloadPlans() {
+    const date = viewedDate;
+    try {
+        const response = await fetch("/api/time-blocks?date=" + date);
+        if (!response.ok) {
+            throw new Error(await errorMessageFrom(response));
+        }
+        const plans = await response.json();
+        if (date !== viewedDate) {
+            return;
+        }
+        timeline.date = date;
+        timeline.plans = plans;
+    } catch (error) {
+        showToast("계획을 불러오지 못했습니다: " + error.message);
+    }
+    renderTimeline();
+}
+
+// 시간표와 할 일 목록을 함께 다시 불러온다 (reloadTodayAndInbox가 계획도 불러오므로 같은 일이다. 시간표 쪽 코드에서 읽기 쉽게 이름을 따로 둔다)
+async function reloadTodayAndTimeline() {
+    await reloadTodayAndInbox();
+}
+
+// 달력 탭에서 연 일정 수정 창이 저장/삭제된 뒤, 오늘 탭이 열려 있으면 시간표도 새 내용으로 맞춘다
+function reloadTimelineIfVisible() {
+    if (document.getElementById("today").classList.contains("active")) {
+        loadTimeline().catch(function (error) {
+            console.error("시간표를 불러오지 못했습니다:", error);
+        });
+    }
+}
+
+// 지금 쓰는 중이거나 끄는 중이면 true. 이때 동기화가 시간표를 다시 그리면 쓰던 글과 끌던 블록이 사라지므로 그 새로고침은 건너뛴다
+function isTimelineBusy() {
+    return timelineDrag !== null || timelinePopover !== null || pendingEventMemoSaves > 0 ||
+        timelineGrid.querySelector(".tl-creating") !== null;
+}
+
+// 지금 내용(timeline)을 화면에 그린다
+function renderTimeline() {
+    timelineGrid.replaceChildren();
+    timelineAllDay.replaceChildren();
+
+    const allDay = [];
+    const items = [];
+    timeline.events.forEach(function (event) {
+        if (event.start.length === 10) {
+            allDay.push(event);
+            return;
+        }
+        const range = eventMinutes(event, timeline.date);
+        if (range.end <= range.start) {
+            return;  // 그날 안에는 시간이 남지 않는 일정(전날 밤에 끝난 일정 등)
+        }
+        items.push({ kind: "event", data: event, start: range.start, end: range.end });
+    });
+    timeline.plans.forEach(function (plan) {
+        items.push({ kind: "plan", data: plan, start: plan.start, end: plan.end });
+    });
+    layoutOverlaps(items);
+
+    allDay.forEach(function (event) {
+        timelineAllDay.appendChild(makeEventBlock(event, null));
+    });
+    if (timeline.eventsFailed) {
+        const note = document.createElement("span");
+        note.className = "today-empty";
+        note.textContent = "일정을 불러오지 못했습니다.";
+        timelineAllDay.appendChild(note);
+    }
+    timelineAllDay.hidden = allDay.length === 0 && !timeline.eventsFailed;
+
+    items.forEach(function (item) {
+        const block = item.kind === "event" ? makeEventBlock(item.data, item) : makePlanBlock(item.data, item);
+        placeBlock(block, item);
+        timelineGrid.appendChild(block);
+    });
+
+    // 작은 창이 열려 있는 블록은 계속 표시해 둔다
+    if (timelinePopover) {
+        const open = timelineGrid.querySelector('[data-key="' + timelinePopover.key + '"]') ||
+            timelineAllDay.querySelector('[data-key="' + timelinePopover.key + '"]');
+        if (open) {
+            open.classList.add("selected");
+            timelinePopover.anchor = open;  // 블록이 새로 만들어졌으니, 창이 따라갈 블록도 새것으로 바꾼다
+        }
+    }
+
+    updateNowLine();
+    refreshTaskSlots();
+    if (timeline.needScroll && timelineScroll.clientHeight > 0) {
+        scrollTimelineToDefault();
+    }
+}
+
+// 처음 열었을 때(또는 날짜를 바꿨을 때) 보여줄 위치: 오늘이면 지금 시각이 위에서 3분의 1쯤에, 다른 날이면 07:00이 맨 위에 오게 한다
+function scrollTimelineToDefault() {
+    timeline.needScroll = false;
+    let top;
+    if (timeline.date === toDateText(new Date())) {
+        const now = new Date();
+        top = minToY(now.getHours() * 60 + now.getMinutes()) - timelineScroll.clientHeight / 3;
+    } else {
+        top = minToY(7 * 60);
+    }
+    timelineScroll.scrollTop = Math.max(0, top);
+}
+
+// 지금 시각을 가리키는 빨간 줄 (오늘을 볼 때만)
+function updateNowLine() {
+    timelineGrid.querySelectorAll(".tl-now").forEach(function (line) {
+        line.remove();
+    });
+    if (timeline.date !== toDateText(new Date())) {
+        return;
+    }
+    const now = new Date();
+    const line = document.createElement("div");
+    line.className = "tl-now";
+    line.style.top = minToY(now.getHours() * 60 + now.getMinutes()) + "px";
+    timelineGrid.appendChild(line);
+}
+setInterval(function () {
+    if (document.getElementById("today").classList.contains("active")) {
+        updateNowLine();
+    }
+}, 60000);
+
+// 오늘 할 일 줄 옆에 "16:30–18:30"을 붙인다 (시간표에 배치한 할 일이라는 표시). 시간표나 할 일 목록을 다시 그릴 때마다 맞춘다
+function refreshTaskSlots() {
+    const plansByTask = {};
+    if (timeline.date === viewedDate) {
+        timeline.plans.forEach(function (plan) {
+            if (plan.taskId !== null) {
+                (plansByTask[plan.taskId] = plansByTask[plan.taskId] || []).push(plan);
+            }
+        });
+    }
+    [todayTasksList, overdueTasksList].forEach(function (list) {
+        list.querySelectorAll(".task-row[data-task-id]").forEach(function (row) {
+            row.querySelectorAll(".task-slot").forEach(function (old) {
+                old.remove();
+            });
+            const plans = plansByTask[row.dataset.taskId];
+            const anchor = row.querySelector(".task-content, .task-edit-input");
+            if (!plans || !anchor) {
+                return;
+            }
+            plans.sort(function (a, b) {
+                return a.start - b.start;
+            });
+            const slot = document.createElement("span");
+            slot.className = "task-slot";
+            slot.textContent = minToText(plans[0].start) + "–" + minToText(plans[0].end) + (plans.length > 1 ? " 외 " + (plans.length - 1) : "");
+            anchor.after(slot);
+        });
+    });
+}
+
+// ----- 블록 만들기 -----
+
+// Google 일정 블록. item이 null이면 종일 일정(시간표 위의 알약)이다
+function makeEventBlock(event, item) {
+    const block = document.createElement("div");
+    block.className = "tl-block tl-event";
+    block.style.setProperty("--c", event.color);
+    block.dataset.key = "e:" + event.id;
 
     const title = document.createElement("div");
-    title.className = "event-title";
+    title.className = "tl-title";
     title.textContent = event.title;  // textContent: 제목에 < > 같은 글자가 있어도 HTML로 해석되지 않는다
+    block.appendChild(title);
 
-    // 줄은 격자(grid)다: 첫째 줄에 점, 시간, 제목, "+ 메모" 버튼이 놓이고, 메모는 제목 아래 둘째 줄에 붙는다 (style.css)
-    item.append(dot, time, title);
-
-    // 공휴일 캘린더처럼 쓸 수 없는 캘린더의 일정은 메모를 볼 수만 있다
-    const canEdit = Boolean(event.canEdit);
-    // text: 화면에 보이는 메모, saved: Google에 저장된 것으로 아는 메모. 둘이 다르면 아직 저장 전(또는 저장 실패)이다
-    const memo = { text: memoText(event.description), saved: memoText(event.description), saving: false, again: false, failed: false };
-
-    let addButton = null;
-    if (canEdit) {
-        addButton = document.createElement("button");
-        addButton.type = "button";
-        addButton.className = "event-memo-add";
-        addButton.textContent = "+ 메모";
-        addButton.title = "이 일정에 메모 붙이기";
-        addButton.addEventListener("click", startEditing);
-    }
-
-    // 메모를 글자로 보여주는 상태로 그린다 (입력 칸이 있었다면 걷어낸다)
-    function renderMemo() {
-        item.querySelectorAll(".event-memo, .event-memo-input").forEach(function (element) {
-            element.remove();
-        });
-        if (memo.text) {
-            const view = document.createElement("div");
-            view.className = "event-memo" + (canEdit ? " editable" : "") + (memo.failed ? " unsaved" : "");
-            view.textContent = memo.text;  // textContent: 메모에 HTML 글자가 있어도 해석되지 않는다
-            if (canEdit) {
-                view.title = memo.failed ? "저장되지 않았어요. 눌러서 고치면 다시 저장합니다" : "눌러서 메모 고치기";
-                view.addEventListener("click", startEditing);
-            }
-            item.appendChild(view);
-        }
-        if (addButton) {
-            // 메모가 없을 때만 "+ 메모" 버튼이 있다
-            if (memo.text) {
-                addButton.remove();
-            } else if (!addButton.isConnected) {
-                item.appendChild(addButton);
-            }
+    const memo = memoText(event.description);
+    let timeText = "종일";
+    if (item) {
+        timeText = minToText(item.start) + "–" + minToText(item.end);
+        if (item.end - item.start >= 60) {  // 한 시간 이상이어야 시간 글자가 들어갈 자리가 있다
+            const time = document.createElement("div");
+            time.className = "tl-time";
+            time.textContent = timeText;
+            block.appendChild(time);
         }
     }
+    if (memo) {
+        const memoLine = document.createElement("div");
+        memoLine.className = "tl-memo";
+        memoLine.textContent = memo;
+        block.appendChild(memoLine);
+    }
+    // 마우스를 올리면 전체 제목, 시간, 메모가 툴팁으로 뜬다 (블록이 작아 글자가 잘려도 읽을 수 있게)
+    block.title = timeText + "  " + event.title + (memo ? "\n\n" + (memo.length > 200 ? memo.slice(0, 200) + "…" : memo) : "");
+    block.addEventListener("click", function () {
+        openEventPopover(event, block, timeText);
+    });
+    return block;
+}
 
-    // 메모를 Google에 저장한다. 저장하는 사이에 또 고쳤으면 끝난 뒤 한 번 더 저장한다
-    async function saveMemo() {
-        if (memo.saving) {
-            memo.again = true;
+// 내 계획 블록: 끌어서 옮기고, 아래쪽 끝을 끌어서 길이를 바꾸고, 그냥 누르면 작은 창이 열린다
+function makePlanBlock(plan, item) {
+    const block = document.createElement("div");
+    block.className = "tl-block tl-plan" + (plan.taskDone ? " done" : "");
+    block.dataset.key = "p:" + plan.id;
+
+    const title = document.createElement("div");
+    title.className = "tl-title";
+    title.textContent = plan.title;
+    block.appendChild(title);
+    if (item.end - item.start >= 45) {
+        const time = document.createElement("div");
+        time.className = "tl-time";
+        time.textContent = minToText(item.start) + "–" + minToText(item.end);
+        block.appendChild(time);
+    }
+    const handle = document.createElement("div");
+    handle.className = "tl-resize";
+    block.appendChild(handle);
+
+    block.title = minToText(plan.start) + "–" + minToText(plan.end) + "  " + plan.title + "\n끌어서 옮기고, 아래쪽 끝을 끌어서 길이를 바꿉니다";
+    block.addEventListener("pointerdown", function (e) {
+        beginPlanDrag(e, block, plan);
+    });
+    return block;
+}
+
+// ----- 끌기 도우미 -----
+
+// 포인터 끌기 하나를 지켜본다. 4px 넘게 움직여야 끌기로 보고, 그 전에 손을 떼면 "그냥 누른 것"이다(moved가 false).
+// 우선순위 탭, 프로젝트, 할 일 끌기와 같은 포인터 이벤트 방식이다. Esc를 누르면 취소한다.
+// handlers: { move(event), end(event, moved), cancel() }
+function trackTimelineDrag(startEvent, handlers) {
+    if (startEvent.pointerType === "mouse" && startEvent.button !== 0) {
+        return;
+    }
+    const drag = { startX: startEvent.clientX, startY: startEvent.clientY, moved: false };
+    timelineDrag = drag;
+
+    function onMove(e) {
+        if (!drag.moved && Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) < PROJECT_DRAG_THRESHOLD) {
             return;
         }
-        if (memo.text === memo.saved) {
+        drag.moved = true;
+        autoScrollTimeline(e.clientY);
+        handlers.move(e);
+    }
+    function stop() {
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        document.removeEventListener("pointercancel", onCancel);
+        document.removeEventListener("keydown", onKey);
+        timelineDrag = null;
+    }
+    function onUp(e) {
+        stop();
+        handlers.end(e, drag.moved);
+    }
+    function onCancel() {
+        stop();
+        handlers.cancel();
+    }
+    function onKey(e) {
+        if (e.key === "Escape") {
+            onCancel();
+        }
+    }
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onCancel);
+    document.addEventListener("keydown", onKey);
+}
+
+// 끌다가 시간표의 위/아래 끝에 가까워지면 그쪽으로 스크롤한다 (끌 때 움직이는 동안만 일어난다)
+function autoScrollTimeline(clientY) {
+    const rect = timelineScroll.getBoundingClientRect();
+    if (clientY < rect.top + 24) {
+        timelineScroll.scrollTop -= 14;
+    } else if (clientY > rect.bottom - 24) {
+        timelineScroll.scrollTop += 14;
+    }
+}
+
+// ----- 계획 만들기 / 옮기기 / 길이 바꾸기 / 지우기 -----
+
+async function createPlan(start, end, title, taskId) {
+    const body = { date: viewedDate, start: start, end: end };
+    if (taskId) {
+        body.taskId = taskId;
+    } else {
+        body.title = title;
+    }
+    await sendRequest("/api/time-blocks", "POST", body);
+}
+
+// 빈 곳을 끌어서(또는 눌러서) 새 계획을 만든다: 끈 만큼, 누르기만 하면 1시간짜리 블록에 제목 입력 칸이 열린다
+timelineGrid.addEventListener("pointerdown", function (e) {
+    if (e.target.closest(".tl-block")) {
+        return;  // 블록 위에서 시작한 끌기는 그 블록의 몫이다
+    }
+    closeTimelinePopover();
+    const anchor = yToMin(e.clientY);
+    let range = null;
+    const ghost = document.createElement("div");
+    ghost.className = "tl-block tl-plan tl-creating";
+
+    trackTimelineDrag(e, {
+        move: function (ev) {
+            const current = yToMin(ev.clientY);
+            let low = Math.max(0, floorSnap(Math.min(anchor, current)));
+            let high = Math.min(TL_DAY_MIN, ceilSnap(Math.max(anchor, current)));
+            if (high - low < snapStep()) {  // 최소 길이는 맞추는 단위(5분 또는 15분)와 같다
+                high = Math.min(TL_DAY_MIN, low + snapStep());
+                low = high - snapStep();
+            }
+            range = { start: low, end: high };
+            placeBlock(ghost, range);
+            if (!ghost.isConnected) {
+                timelineGrid.appendChild(ghost);
+            }
+        },
+        end: function (ev, moved) {
+            if (!moved) {
+                const start = clampNumber(floorSnap(anchor), 0, TL_DAY_MIN - TL_DEFAULT_LENGTH);
+                range = { start: start, end: start + TL_DEFAULT_LENGTH };
+            }
+            openPlanCreator(ghost, range.start, range.end);
+        },
+        cancel: function () {
+            ghost.remove();
+        },
+    });
+});
+
+// 새 계획 블록 안에 제목 입력 칸을 연다. Enter나 다른 곳을 누르면 저장하고, Esc나 빈 칸이면 취소한다
+function openPlanCreator(block, start, end) {
+    placeBlock(block, { start: start, end: end });
+    block.replaceChildren();
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "tl-title-input";
+    input.maxLength = 200;
+    input.placeholder = "계획 (예: 토익 공부)";
+    block.appendChild(input);
+    if (!block.isConnected) {
+        timelineGrid.appendChild(block);
+    }
+    input.focus();
+
+    let finished = false;
+    async function finish(save) {
+        if (finished) {
+            return;  // Enter로 끝낸 뒤 입력 칸이 사라지면서 생기는 blur는 무시한다
+        }
+        finished = true;
+        const text = input.value.trim();
+        block.remove();
+        if (!save || !text) {
             return;
         }
-        memo.saving = true;
-        memo.failed = false;
-        pendingEventMemoSaves++;
-        const text = memo.text;
         try {
-            await sendRequest("/api/events/" + encodeURIComponent(event.id), "PATCH", {
-                calendarId: event.calendarId,
-                description: text,
-            });
-            memo.saved = text;
-            event.description = text;  // 이 줄을 만든 데이터도 맞춰 둔다
-            calendar.refetchEvents();  // 캘린더 탭의 툴팁도 새 메모를 보여주도록
+            await createPlan(start, end, text, null);
         } catch (error) {
-            memo.failed = true;
-            showToast("메모를 저장하지 못했습니다: " + error.message);
-        } finally {
-            memo.saving = false;
-            pendingEventMemoSaves--;
-            if (!item.querySelector(".event-memo-input")) {
-                renderMemo();  // 저장 결과(실패 표시)를 반영한다
+            showToast("계획을 만들지 못했습니다: " + error.message);
+        }
+        await reloadPlans();
+    }
+    input.addEventListener("keydown", function (e) {
+        if (e.isComposing) {
+            return;  // 한글을 조합하는 중의 Enter는 글자를 확정하는 키다
+        }
+        if (e.key === "Enter") {
+            e.preventDefault();
+            finish(true);
+        } else if (e.key === "Escape") {
+            e.preventDefault();
+            finish(false);
+        }
+    });
+    input.addEventListener("blur", function () {
+        finish(true);
+    });
+}
+
+// 계획 블록을 끌어서 옮기거나(몸통) 길이를 바꾼다(아래쪽 끝). 4px도 안 움직이고 놓으면 그냥 누른 것이라 작은 창이 열린다
+function beginPlanDrag(e, block, plan) {
+    if (e.target.closest("input, button, textarea")) {
+        return;
+    }
+    const resizing = e.target.closest(".tl-resize") !== null;
+    const length = plan.end - plan.start;
+    const pressedAt = yToMin(e.clientY);  // 누른 순간 포인터가 가리킨 시각. 여기서 얼마나 움직였는지(delta)로 새 위치를 정한다
+    let next = { start: plan.start, end: plan.end };
+
+    trackTimelineDrag(e, {
+        move: function (ev) {
+            const delta = roundSnap(yToMin(ev.clientY) - pressedAt);
+            if (resizing) {
+                next = { start: plan.start, end: clampNumber(plan.end + delta, plan.start + snapStep(), TL_DAY_MIN) };
+            } else {
+                const start = clampNumber(plan.start + delta, 0, TL_DAY_MIN - length);
+                next = { start: start, end: start + length };
             }
-            if (memo.again) {
-                memo.again = false;
+            block.classList.add("dragging");
+            block.style.top = minToY(next.start) + "px";
+            const dragHeight = Math.max(minToY(next.end - next.start), TL_MIN_VISIBLE_PX);
+            block.style.height = dragHeight + "px";
+            fitBlockText(block, dragHeight);  // 길이를 바꾸는 동안 글자 크기도 따라간다
+            const time = block.querySelector(".tl-time");
+            if (time) {
+                time.textContent = minToText(next.start) + "–" + minToText(next.end);
+            }
+        },
+        end: async function (ev, moved) {
+            block.classList.remove("dragging");
+            if (!moved) {
+                openPlanPopover(plan, block);
+                return;
+            }
+            if (next.start !== plan.start || next.end !== plan.end) {
+                try {
+                    await sendRequest("/api/time-blocks/" + plan.id, "PATCH", { start: next.start, end: next.end });
+                } catch (error) {
+                    showToast("계획을 옮기지 못했습니다: " + error.message);
+                }
+            }
+            await reloadPlans();  // 서버에 있는 실제 모습으로 다시 그린다 (실패했으면 제자리로 돌아온다)
+        },
+        cancel: function () {
+            block.classList.remove("dragging");
+            renderTimeline();
+        },
+    });
+}
+
+// ----- 블록을 눌렀을 때 뜨는 작은 창 -----
+
+function closeTimelinePopover() {
+    if (!timelinePopover) {
+        return;
+    }
+    const popover = timelinePopover;
+    timelinePopover = null;
+    if (popover.onClose) {
+        popover.onClose();  // 쓰던 메모가 있으면 저장한다
+    }
+    popover.el.remove();
+    document.querySelectorAll(".tl-block.selected").forEach(function (block) {
+        block.classList.remove("selected");
+    });
+}
+
+// 작은 창을 블록 옆(오른쪽, 자리가 없으면 왼쪽)에 놓는다. 화면 밖으로 나가지 않게 맞춘다
+function positionPopover(popover, anchor) {
+    const rect = anchor.getBoundingClientRect();
+    const width = popover.offsetWidth;
+    let left = rect.right + 10;
+    if (left + width > window.innerWidth - 8) {
+        left = rect.left - width - 10;
+    }
+    left = clampNumber(left, 8, Math.max(8, window.innerWidth - width - 8));
+    const top = clampNumber(rect.top, 8, Math.max(8, window.innerHeight - popover.offsetHeight - 8));
+    popover.style.left = left + "px";
+    popover.style.top = top + "px";
+}
+
+// 작은 창을 열고 화면에 붙인다. 같은 블록의 창이 이미 열려 있으면 닫는다(다시 누르면 닫힘)
+function showTimelinePopover(key, anchor, build) {
+    if (timelinePopover && timelinePopover.key === key) {
+        closeTimelinePopover();
+        return;
+    }
+    closeTimelinePopover();
+    const el = document.createElement("div");
+    el.className = "tl-popover";
+    timelinePopover = { el: el, key: key, onClose: null, anchor: anchor };
+    anchor.classList.add("selected");
+    document.body.appendChild(el);
+    build(el, timelinePopover);
+    positionPopover(el, anchor);
+}
+
+// 작은 창 밖을 누르면 닫는다 (다른 블록을 누르면 그 블록의 클릭이 새 창을 연다)
+document.addEventListener("pointerdown", function (e) {
+    if (timelinePopover && !timelinePopover.el.contains(e.target) && !e.target.closest(".tl-block")) {
+        closeTimelinePopover();
+    }
+}, true);
+timelineScroll.addEventListener("scroll", closeTimelinePopover);
+document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && timelinePopover && !e.target.closest(".tl-popover")) {
+        closeTimelinePopover();
+    }
+});
+
+function makePopoverButton(text, onClick, className) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = text;
+    if (className) {
+        button.className = className;
+    }
+    button.addEventListener("click", onClick);
+    return button;
+}
+
+// Google 일정의 작은 창: 제목과 시간, 메모 칸, [일정 수정…] [닫기]
+function openEventPopover(event, block, timeText) {
+    showTimelinePopover("e:" + event.id, block, function (el, popover) {
+        const title = document.createElement("h3");
+        title.textContent = event.title;
+        const sub = document.createElement("p");
+        sub.className = "tl-pop-sub";
+        sub.textContent = timeText;
+        el.append(title, sub);
+
+        const canEdit = Boolean(event.canEdit);
+        // text: 입력 칸의 글, saved: Google에 저장된 것으로 아는 글. 둘이 다르면 아직 저장 전(또는 저장 실패)이다
+        const memo = { text: memoText(event.description), saved: memoText(event.description), saving: false, again: false, failed: false };
+
+        // 메모를 Google에 저장한다. 저장하는 사이에 또 고쳤으면 끝난 뒤 한 번 더 저장한다
+        async function saveMemo() {
+            if (memo.saving) {
+                memo.again = true;
+                return;
+            }
+            if (memo.text === memo.saved) {
+                return;
+            }
+            memo.saving = true;
+            memo.failed = false;
+            pendingEventMemoSaves++;
+            const text = memo.text;
+            try {
+                await sendRequest("/api/events/" + encodeURIComponent(event.id), "PATCH", {
+                    calendarId: event.calendarId,
+                    description: text,
+                });
+                memo.saved = text;
+                event.description = text;  // 이 블록을 만든 데이터도 맞춰 둔다
+                calendar.refetchEvents();  // 캘린더 탭의 툴팁도 새 메모를 보여주도록
+            } catch (error) {
+                memo.failed = true;
+                showToast("메모를 저장하지 못했습니다: " + error.message);
+            } finally {
+                memo.saving = false;
+                pendingEventMemoSaves--;
                 if (!memo.failed) {
-                    saveMemo();
+                    renderTimeline();  // 블록에 새 메모를 보여준다
+                }
+                if (memo.again) {
+                    memo.again = false;
+                    if (!memo.failed) {
+                        saveMemo();
+                    }
                 }
             }
         }
-    }
 
-    // 메모 입력 칸을 연다
-    function startEditing() {
-        if (item.querySelector(".event-memo-input")) {
-            return;
-        }
-        item.querySelectorAll(".event-memo").forEach(function (element) {
-            element.remove();
-        });
-        if (addButton) {
-            addButton.remove();
-        }
+        if (canEdit) {
+            const label = document.createElement("label");
+            label.className = "tl-pop-label";
+            label.textContent = "메모";
+            const input = document.createElement("textarea");
+            input.rows = 1;
+            input.maxLength = EVENT_MEMO_MAX;
+            input.placeholder = "예: 노트 가져가기";
+            input.value = memo.text;
+            label.htmlFor = "tl-pop-memo";
+            input.id = "tl-pop-memo";
+            const tip = document.createElement("p");
+            tip.className = "tl-pop-tip";
+            tip.textContent = "Enter 저장 · Shift+Enter 줄바꿈";
+            el.append(label, input, tip);
 
-        const input = document.createElement("textarea");
-        input.className = "event-memo-input";
-        input.rows = 1;
-        input.maxLength = EVENT_MEMO_MAX;
-        input.placeholder = "예: 노트 가져가기";
-        input.value = memo.text;
-        item.appendChild(input);
-
-        // 글이 늘어나는 만큼 입력 칸도 높아진다 (+2는 위아래 테두리)
-        function fitHeight() {
-            input.style.height = "auto";
-            input.style.height = (input.scrollHeight + 2) + "px";
-        }
-        fitHeight();
-        input.focus();
-        input.setSelectionRange(input.value.length, input.value.length);  // 커서를 글 맨 끝에
-
-        let timer = null;
-        input.addEventListener("input", function () {
+            // 글이 늘어나는 만큼 입력 칸도 높아진다 (+2는 위아래 테두리). 창 높이가 변하니 위치도 다시 맞춘다
+            function fitHeight() {
+                input.style.height = "auto";
+                input.style.height = (input.scrollHeight + 2) + "px";
+                positionPopover(el, popover.anchor);
+            }
             fitHeight();
-            clearTimeout(timer);
-            timer = setTimeout(function () {
+            input.focus();
+            input.setSelectionRange(input.value.length, input.value.length);  // 커서를 글 맨 끝에
+
+            let timer = null;
+            input.addEventListener("input", function () {
+                fitHeight();
+                clearTimeout(timer);
+                timer = setTimeout(function () {
+                    memo.text = input.value.trim();
+                    saveMemo();
+                }, EVENT_MEMO_SAVE_DELAY_MS);
+            });
+            // 다른 곳을 누르면 바로 저장한다 (창은 그대로 둔다. [일정 수정…]을 누르려다 입력 칸을 벗어날 수도 있으니까)
+            input.addEventListener("blur", function () {
+                clearTimeout(timer);
                 memo.text = input.value.trim();
                 saveMemo();
-            }, EVENT_MEMO_SAVE_DELAY_MS);
-        });
-        // 입력 칸을 벗어나면(다른 곳을 누르거나 Esc) 바로 저장하고 글자로 보여주는 상태로 돌아간다
-        input.addEventListener("blur", function () {
-            clearTimeout(timer);
-            memo.text = input.value.trim();
-            renderMemo();
-            saveMemo();
-        });
-        // Enter: 저장하고 입력을 끝낸다. 줄바꿈은 Shift+Enter (Shift를 누르면 여기서 막지 않아 브라우저가 줄바꿈을 넣는다).
-        // 한글을 조합하는 중의 Enter는 마지막 글자를 확정하는 키라서 건드리지 않는다
-        input.addEventListener("keydown", function (e) {
-            if (e.isComposing) {
-                return;
-            }
-            if (e.key === "Escape" || (e.key === "Enter" && !e.shiftKey)) {
-                e.preventDefault();
-                input.blur();
-            }
-        });
-    }
+            });
+            // Enter: 저장하고 창을 닫는다. 줄바꿈은 Shift+Enter. 한글을 조합하는 중의 Enter는 마지막 글자를 확정하는 키라서 건드리지 않는다
+            input.addEventListener("keydown", function (e) {
+                if (e.isComposing) {
+                    return;
+                }
+                if (e.key === "Escape" || (e.key === "Enter" && !e.shiftKey)) {
+                    e.preventDefault();
+                    closeTimelinePopover();
+                }
+            });
+            popover.onClose = function () {
+                clearTimeout(timer);
+                memo.text = input.value.trim();
+                saveMemo();
+            };
+        } else if (memo.text) {
+            const readonly = document.createElement("p");
+            readonly.className = "tl-pop-readonly";
+            readonly.textContent = memo.text;
+            el.appendChild(readonly);
+        }
 
-    renderMemo();
-    return item;
+        const buttons = document.createElement("div");
+        buttons.className = "tl-pop-buttons";
+        if (canEdit) {
+            buttons.appendChild(makePopoverButton("일정 수정…", function () {
+                closeTimelinePopover();
+                openEditDialog({ event: eventAsCalendarEvent(event) });
+            }));
+        }
+        buttons.appendChild(makePopoverButton("닫기", closeTimelinePopover));
+        el.appendChild(buttons);
+    });
 }
 
-// 창이 가려지는 순간 메모를 쓰던 중이었다면 입력을 끝내서(=저장해서) 글자가 날아가지 않게 한다
-document.addEventListener("visibilitychange", function () {
-    if (document.hidden && document.activeElement && document.activeElement.classList.contains("event-memo-input")) {
-        document.activeElement.blur();
+// 내 계획의 작은 창: 제목(할 일과 연결된 계획은 할 일 이름), 시간과 길이, [삭제] [닫기]
+function openPlanPopover(plan, block) {
+    showTimelinePopover("p:" + plan.id, block, function (el, popover) {
+        const linked = plan.taskId !== null;
+        let titleInput = null;
+        if (linked) {
+            const title = document.createElement("h3");
+            title.textContent = plan.title;
+            el.appendChild(title);
+        } else {
+            titleInput = document.createElement("input");
+            titleInput.type = "text";
+            titleInput.className = "tl-title-input";
+            titleInput.maxLength = 200;
+            titleInput.value = plan.title;
+            titleInput.setAttribute("aria-label", "계획 제목");
+            el.appendChild(titleInput);
+        }
+        const sub = document.createElement("p");
+        sub.className = "tl-pop-sub";
+        sub.style.marginTop = "6px";
+        sub.textContent = minToText(plan.start) + "–" + minToText(plan.end) + " (" + durationText(plan.end - plan.start) + ")" + (linked ? " · 할 일과 연결됨" : "");
+        el.appendChild(sub);
+
+        if (linked) {
+            // 연결된 할 일의 완료를 시간표에서 바로 체크한다
+            const row = document.createElement("label");
+            row.className = "tl-pop-check";
+            const checkbox = document.createElement("input");
+            checkbox.type = "checkbox";
+            checkbox.checked = plan.taskDone;
+            checkbox.addEventListener("change", function () {
+                updateTask(plan.taskId, { done: checkbox.checked }, reloadTodayAndTimeline);
+            });
+            row.append(checkbox, "할 일 완료");
+            el.appendChild(row);
+        }
+
+        // 제목 고치기: Enter나 창을 벗어날 때 바뀌었으면 저장한다. Esc는 되돌리고 닫는다
+        if (titleInput) {
+            popover.onClose = async function () {
+                const text = titleInput.value.trim();
+                if (!text || text === plan.title) {
+                    return;
+                }
+                try {
+                    await sendRequest("/api/time-blocks/" + plan.id, "PATCH", { title: text });
+                } catch (error) {
+                    showToast("제목을 고치지 못했습니다: " + error.message);
+                }
+                await reloadPlans();
+            };
+            titleInput.addEventListener("keydown", function (e) {
+                if (e.isComposing) {
+                    return;
+                }
+                if (e.key === "Enter") {
+                    e.preventDefault();
+                    closeTimelinePopover();
+                } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    titleInput.value = plan.title;
+                    closeTimelinePopover();
+                }
+            });
+            titleInput.focus();
+            titleInput.select();
+        }
+
+        // 삭제 버튼: 일정이나 할 일 삭제와 같이 두 번 눌러야 지워진다. 한 번 누르고 3초 동안 안 누르면 원래대로 돌아간다
+        const buttons = document.createElement("div");
+        buttons.className = "tl-pop-buttons";
+        let armed = false;
+        let armTimer = null;
+        const deleteButton = makePopoverButton("삭제", async function () {
+            if (!armed) {
+                armed = true;
+                deleteButton.textContent = "정말?";
+                armTimer = setTimeout(function () {
+                    armed = false;
+                    deleteButton.textContent = "삭제";
+                }, 3000);
+                return;
+            }
+            clearTimeout(armTimer);
+            popover.onClose = null;  // 지우는 블록의 제목을 저장하려 하지 않게
+            closeTimelinePopover();
+            try {
+                await sendRequest("/api/time-blocks/" + plan.id, "DELETE");
+            } catch (error) {
+                showToast("계획을 지우지 못했습니다: " + error.message);
+            }
+            await reloadPlans();
+        }, "danger");
+        const spacer = document.createElement("span");
+        spacer.className = "spacer";
+        buttons.append(deleteButton, spacer, makePopoverButton("닫기", closeTimelinePopover));
+        el.appendChild(buttons);
+    });
+}
+
+// ----- 할 일을 시간표로 끌어다 놓기 -----
+// 할 일 끌기(beginTaskDrag)가 시간표 위에서 끝나면 부른다. 보고 있는 날짜의 할 일이 아니면(할 일 목록, 밀린 할 일) 먼저 그 날짜로 정한다.
+// 끄는 동안에는 놓일 자리를 점선 상자로 미리 보여 준다.
+
+let timelineDropPreview = null;
+
+function showTimelineDropPreview(start, text) {
+    if (!timelineDropPreview) {
+        timelineDropPreview = document.createElement("div");
+        timelineDropPreview.className = "tl-drop-preview";
+        timelineGrid.appendChild(timelineDropPreview);
     }
-});
+    timelineDropPreview.style.top = minToY(start) + "px";
+    timelineDropPreview.style.height = minToY(TL_DEFAULT_LENGTH) + "px";
+    timelineDropPreview.textContent = minToText(start) + "  " + text;
+}
+
+function hideTimelineDropPreview() {
+    if (timelineDropPreview) {
+        timelineDropPreview.remove();
+        timelineDropPreview = null;
+    }
+}
+
+// 포인터 위치에 놓을 때의 시작 시각 (15분 단위, 1시간짜리 블록이 하루 안에 들어오도록 맞춘다)
+function dropStartMinutes(clientY) {
+    return clampNumber(floorSnap(yToMin(clientY)), 0, TL_DAY_MIN - TL_DEFAULT_LENGTH);
+}
+
+async function dropTaskOnTimeline(task, start) {
+    try {
+        if (task.date !== viewedDate) {
+            await sendRequest("/api/tasks/" + task.id, "PATCH", { date: viewedDate });
+        }
+        await createPlan(start, start + TL_DEFAULT_LENGTH, null, task.id);
+        showToast("'" + task.content + "'을(를) " + minToText(start) + "–" + minToText(start + TL_DEFAULT_LENGTH) + "에 배치했습니다");
+    } catch (error) {
+        showToast("시간표에 놓지 못했습니다: " + error.message);
+    }
+    await reloadTodayAndInbox();
+}
 
 // 할 일 한 줄(<li>)을 만든다. 오늘 탭과 프로젝트 카드가 같이 쓴다. options는 이런 값들을 담은 묶음이다:
 //   reload: 할 일을 바꾸거나 지운 뒤 목록을 다시 불러오는 함수 (오늘 탭이면 loadTodayTasks, 프로젝트 탭이면 loadProjects)
@@ -1634,6 +2504,7 @@ document.addEventListener("visibilitychange", function () {
 function makeTaskRow(task, options) {
     const item = document.createElement("li");
     item.className = "task-row";
+    item.dataset.taskId = task.id;  // 시간표에 배치한 할 일 옆에 시간을 붙일 때(refreshTaskSlots) 이 줄을 찾는 이름표
     if (options.dragFrom) {
         item.classList.add("task-draggable");
         item.addEventListener("pointerdown", function (e) {
@@ -1826,7 +2697,7 @@ function makeTaskRow(task, options) {
 
 // 서버에서 할 일 목록을 받아와서 오른쪽에 그린다
 async function loadTodayTasks() {
-    const date = viewedDate;  // loadTodayEvents와 같은 이유로, 요청 시점의 날짜를 기억해둔다
+    const date = viewedDate;  // loadTimeline과 같은 이유로, 요청 시점의 날짜를 기억해둔다
     const response = await fetch("/api/tasks?date=" + date);
     if (!response.ok) {
         throw new Error("서버 오류: " + response.status);
@@ -1852,7 +2723,8 @@ async function loadTodayTasks() {
             showProject: true,
             unscheduleOnly: true,
             toInbox: true,
-            dragFrom: !task.project_id && task.done !== 1 ? "loose" : null,  // 프로젝트 없는 할 일은 끌어서 "할 일 목록"으로 돌려보낼 수 있다
+            // 끌 수 있는 할 일: 프로젝트 없는 할 일("loose")은 시간표나 "할 일 목록"으로, 프로젝트 할 일("project")은 시간표로(또는 작은 달력 날짜로)
+            dragFrom: task.done === 1 ? null : (task.project_id ? "project" : "loose"),
         }));
     });
 
@@ -1871,10 +2743,11 @@ async function loadTodayTasks() {
                 showProject: true,
                 unscheduleOnly: true,
                 toInbox: true,
-                dragFrom: !task.project_id ? "loose" : null,
+                dragFrom: task.project_id ? "project" : "loose",
             }));
         });
     }
+    refreshTaskSlots();  // 시간표에 배치한 할 일 옆에 "16:30–18:30"을 붙인다
 }
 
 // 할 일의 일부(완료 여부, 날짜)를 바꾸고 reload()로 목록을 다시 불러온다
@@ -2104,8 +2977,9 @@ function paintMiniDots() {
 // 반대로 오늘 탭의 프로젝트 없는 할 일을 이 칸으로 끌어다 놓거나 "목록으로" 버튼을 누르면 날짜가 빠져서 다시 이 목록으로 돌아온다
 
 // 오늘 탭의 할 일과 할 일 목록을 함께 다시 불러온다 (할 일이 이쪽 목록과 저쪽 목록 사이를 오가기 때문에 둘 다 맞춰야 한다)
+// 시간표의 계획 블록도 함께 맞춘다: 할 일을 지우면 그 블록도 지워지고, 끝내면 블록도 끝낸 모양이 되기 때문이다
 async function reloadTodayAndInbox() {
-    await Promise.all([loadTodayTasks(), loadInbox()]);
+    await Promise.all([loadTodayTasks(), loadInbox(), reloadPlans()]);
 }
 
 async function loadInbox() {
@@ -2228,17 +3102,23 @@ function beginTaskDrag(e, item, task, from) {
     document.addEventListener("keydown", cancelTaskDragOnEscape);
 }
 
-// 이 끌기에서 놓을 수 있는 칸: 목록에서 온 것은 가운데 칸, 오늘 탭에서 온 것은 오른쪽 목록 칸
+// 이 끌기에서 놓을 수 있는 칸. 어디서 끌었든(from) 시간표(계획이 된다)와 작은 달력의 날짜 칸(그 날짜로 정해진다)에는 놓을 수 있다.
+//  - 할 일 목록("inbox")에서 온 것: 가운데 "할 일" 칸(보고 있는 날짜로 정해진다)
+//  - 오늘 탭의 프로젝트 없는 할 일("loose"): 오른쪽 "할 일 목록" 칸(날짜가 빠진다)
+//  - 오늘 탭의 프로젝트 할 일("project"): 날짜를 뺄 수 없으니(프로젝트 카드에서 다룬다) 위의 두 곳뿐이다
 function taskDropTarget(x, y, from) {
     const element = document.elementFromPoint(x, y);
     if (!element) {
         return null;
     }
-    if (from === "inbox") {
-        // 작은 달력의 날짜 칸에 놓으면 그 날짜로, 가운데 칸에 놓으면 보고 있는 날짜로 정해진다
-        return element.closest(".mini-day") || element.closest("#tasks-column");
+    const target = element.closest(".tl-grid") || element.closest(".mini-day");
+    if (target) {
+        return target;
     }
-    return element.closest("#inbox-column");
+    if (from === "inbox") {
+        return element.closest("#tasks-column");
+    }
+    return from === "loose" ? element.closest("#inbox-column") : null;
 }
 
 function moveTaskDrag(e) {
@@ -2270,6 +3150,14 @@ function moveTaskDrag(e) {
         }
         drag.hover = target;
     }
+
+    // 시간표 위에서는 놓일 자리(15분 단위)를 점선 상자로 미리 보여 준다
+    if (drag.hover && drag.hover.classList.contains("tl-grid")) {
+        drag.dropMin = dropStartMinutes(e.clientY);
+        showTimelineDropPreview(drag.dropMin, drag.task.content);
+    } else {
+        hideTimelineDropPreview();
+    }
 }
 
 // 끌기를 마무리한다. drop이 true이고 놓을 수 있는 칸 위였다면 날짜를 바꾼다
@@ -2291,12 +3179,19 @@ function finishTaskDrag(drop) {
     if (drag.hover) {
         drag.hover.classList.remove("drop-hover");
     }
+    hideTimelineDropPreview();
     if (!drop || !drag.hover || !drag.ghost) {
         return;
     }
+    if (drag.hover.classList.contains("tl-grid")) {
+        dropTaskOnTimeline(drag.task, drag.dropMin);  // 시간표에 놓으면 그 시간의 계획이 된다
+        return;
+    }
     const hoverDate = drag.hover.dataset ? drag.hover.dataset.date : null;
-    if (drag.from === "inbox") {
-        assignTaskDate(drag.task, hoverDate || viewedDate);  // 날짜 칸(data-date)이면 그 날짜, 아니면 보고 있는 날짜
+    if (hoverDate) {
+        assignTaskDate(drag.task, hoverDate);  // 작은 달력의 날짜 칸(data-date)이면 그 날짜로 정한다
+    } else if (drag.from === "inbox") {
+        assignTaskDate(drag.task, viewedDate);  // 가운데 "할 일" 칸이면 보고 있는 날짜로 정한다
     } else {
         updateTask(drag.task.id, { date: null }, reloadTodayAndInbox);
     }
@@ -2355,13 +3250,19 @@ function showDay(dateText) {
     todayTitle.textContent = new Date(year, month - 1, day).toLocaleDateString("ko-KR", {
         year: "numeric", month: "long", day: "numeric", weekday: "long",
     });
-    eventsHeading.textContent = isToday ? "오늘의 일정" : "일정";
     tasksHeading.textContent = isToday ? "오늘 할 일" : "할 일";
     dayTodayButton.hidden = isToday;
     syncMiniCalendar();  // 작은 달력도 보고 있는 날짜의 달로 맞추고, 그날을 표시한다
 
-    // 그날의 일정과 할 일은 내용이 바뀌기 전의 것이 남아 보이지 않게 먼저 비운다
-    todayEventsList.innerHTML = "";
+    // 그날의 시간표와 할 일은 내용이 바뀌기 전의 것이 남아 보이지 않게 먼저 비운다.
+    // 시간표는 새 내용이 오면 처음 보여줄 위치(오늘이면 지금 시각 근처, 아니면 07:00)로 스크롤하도록 표시해 둔다
+    closeTimelinePopover();
+    timeline.date = null;
+    timeline.events = [];
+    timeline.plans = [];
+    timeline.eventsFailed = false;
+    timeline.needScroll = true;
+    renderTimeline();
     todayTasksList.innerHTML = "";
     overdueSection.hidden = true;
 
@@ -2369,17 +3270,12 @@ function showDay(dateText) {
     loadDayMemo(dateText);
 
     // 할 일은 내 컴퓨터에서 바로 오고, 일정은 Google을 거쳐 느릴 수 있다. 서로 기다리지 않게 따로 불러온다
-    // (인터넷이 끊겨 일정이 실패해도 할 일은 보인다)
+    // (인터넷이 끊겨 일정이 실패해도 할 일과 내 계획은 보인다)
     loadTodayTasks().catch(function (error) {
         showToast("할 일을 불러오지 못했습니다: " + error.message);
     });
-    loadTodayEvents().catch(function (error) {
-        console.error("일정을 불러오지 못했습니다:", error);
-        // 그 사이 다른 날로 넘어갔다면 이 오류는 지금 화면과 상관없으므로 건드리지 않는다
-        if (dateText === viewedDate) {
-            todayEventsList.innerHTML = "";
-            showEmptyMessage(todayEventsList, "일정을 불러오지 못했습니다.");
-        }
+    loadTimeline().catch(function (error) {
+        console.error("시간표를 불러오지 못했습니다:", error);
     });
 }
 
@@ -2505,6 +3401,7 @@ async function loadToday() {
 
     // 숨길 캘린더 목록(hiddenCalendarIds)이 설정에서 불러와진 뒤에 일정을 걸러야 한다
     await settingsReady;
+    loadTimelineZoom();  // 저장해 둔 시간표 확대 정도 (처음 한 번만)
 
     // 달력에서 특정 날짜를 보려고 온 것이면 그 날짜를, 아니면 오늘을 보여준다 (탭을 열 때마다 오늘로 돌아오는 원래 동작은 그대로)
     showDay(pendingTodayDate || todayText);
@@ -5347,10 +6244,10 @@ function showSyncStatus(status) {
 // 지금 화면에 보이는 일정을 Google(서버)에서 다시 받아 온다. 캘린더 탭은 항상, 오늘 탭은 열려 있을 때만 새로고침한다
 function reloadVisibleEvents() {
     calendar.refetchEvents();
-    // 오늘 탭에서 일정 메모를 쓰는 중이면 목록을 다시 그리지 않는다 (쓰던 글자가 사라진다). 다음 동기화 때 맞춰진다
-    if (document.getElementById("today").classList.contains("active") && !isEventMemoBusy()) {
-        loadTodayEvents().catch(function (error) {
-            console.error("일정을 불러오지 못했습니다:", error);
+    // 오늘 탭에서 시간표의 블록을 끌거나 메모를 쓰는 중이면 시간표를 다시 그리지 않는다 (쓰던 글자와 끌던 블록이 사라진다). 다음 동기화 때 맞춰진다
+    if (document.getElementById("today").classList.contains("active") && !isTimelineBusy()) {
+        loadTimeline().catch(function (error) {
+            console.error("시간표를 불러오지 못했습니다:", error);
         });
     }
 }

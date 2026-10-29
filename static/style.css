@@ -741,7 +741,7 @@ input.color-dot::-webkit-color-swatch {
     flex-wrap: wrap;
     align-items: center;
     gap: 8px;
-    margin: 0 0 24px 8px;
+    margin: 0 0 14px 8px;
     font-size: calc(var(--cal-font-size) * 0.9);
 }
 
@@ -863,29 +863,67 @@ input.color-dot::-webkit-color-swatch {
     font-weight: 500;
 }
 
-/* 일정 | 할 일 | 할 일 목록(수집함) 세 칸을 가로로 나란히 놓는다. 글자 크기는 설정 탭의 "글자 크기"를 따른다.
-   minmax(0, 1fr)의 0은 긴 글자가 칸을 밀어내지 않게 하는 것이고, 가운데(할 일) 칸이 조금 더 넓다 */
+/* 시간표 | 할 일 + 메모 | 작은 달력 + 할 일 목록(수집함) 세 칸을 가로로 나란히 놓는다. 글자 크기는 설정 탭의 "글자 크기"를 따른다.
+   오늘 탭은 화면 높이에 맞춰지고, 각 칸은 안에서만 스크롤된다. 그래서 할 일이 많아져도 칸 바닥의 메모가 밀려나지 않고,
+   시간표는 칸 안에서 위아래로 스크롤된다. minmax(0, 1fr)의 0은 긴 글자가 칸을 밀어내지 않게 하는 것이다 */
+#today.active {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - var(--chrome-height));
+}
+
+.today-header,
+.dday-strip {
+    flex: none;
+}
+
 .today-layout {
+    flex: 1;
+    min-height: 0;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr) minmax(0, 1fr);
-    gap: 40px;
-    align-items: start;
+    grid-template-columns: minmax(330px, 400px) minmax(0, 1fr) minmax(250px, 300px);
+    gap: 32px;
     max-width: 1500px;
     font-size: var(--cal-font-size);
 }
 
 .today-column {
     min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
 }
 
-/* 창이 좁으면(1100px 미만) 일정과 할 일을 위에, 할 일 목록을 그 아래 한 줄로 둔다 */
+/* 칸 안에서 스크롤되는 목록 상자. 스크롤바가 글자를 가리지 않도록 오른쪽에 여유를 둔다 */
+.column-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    margin-right: -6px;
+    padding-right: 6px;
+}
+
+/* 창이 좁으면(1100px 미만) 화면 높이 맞춤을 풀고, 시간표와 할 일을 위에, 작은 달력과 할 일 목록을 그 아래 한 줄로 둔다 */
 @media (max-width: 1099px) {
+    #today.active {
+        display: block;
+        height: auto;
+    }
+
     .today-layout {
-        grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+        grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+    }
+
+    #timeline-column {
+        height: 640px;
     }
 
     #inbox-column {
         grid-column: 1 / -1;
+    }
+
+    .column-scroll {
+        overflow-y: visible;
     }
 }
 
@@ -917,21 +955,7 @@ input.color-dot::-webkit-color-swatch {
     padding: 10px 8px;
 }
 
-/* 일정 한 줄: 색 동그라미 + 시간 + 제목 (첫째 줄). 메모가 있으면 제목 아래 둘째 줄에 붙는다.
-   칸 네 개: 점 | 시간 | 제목(남는 폭) | "+ 메모" 버튼. 첫째 줄은 메모가 생겨도 이전과 똑같이 정렬된다 */
-.today-event {
-    display: grid;
-    grid-template-columns: auto auto minmax(0, 1fr) auto;
-    align-items: baseline;  /* 시간과 제목의 글꼴이 달라도 글자 밑줄이 맞도록. 달력의 dot-event와 같은 이유 */
-    column-gap: 10px;
-    padding: 9px 10px;
-    border-radius: var(--radius-sm);
-}
-
-.today-event:hover {
-    background-color: var(--surface);
-}
-
+/* 색 동그라미: 프로젝트 이름표(.project-chip)와 D-day 알약이 쓴다 */
 .event-dot {
     width: 9px;
     height: 9px;
@@ -940,61 +964,360 @@ input.color-dot::-webkit-color-swatch {
     align-self: center;  /* 줄이 기준선 맞춤이어도 점만은 가운데에 */
 }
 
-.event-time {
-    min-width: 7.5em;  /* 시간 칸 폭을 맞춰서 제목이 세로로 가지런히 정렬되게 하되, 글자가 더 길어지면(글자 간격을 넓힌 경우 등) 칸도 늘어난다 */
-    white-space: nowrap;  /* "09:00–10:00"이 가운데 대시에서 두 줄로 꺾이지 않게 한다 */
-    flex-shrink: 0;
-    color: var(--text-muted);
-    font-variant-numeric: tabular-nums;  /* 숫자 폭을 같게 해서 시간이 세로로 가지런히 정렬된다 */
+/* ===== 시간표 (오늘 탭 왼쪽) ===== */
+/* 시간표 제목 줄: 제목, 범례, 오른쪽 끝의 확대/축소 */
+.today-column h2.tl-heading {
+    display: flex;
+    align-items: center;
+    height: 26px;
 }
 
-.event-title {
+.tl-zoom {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+    font-weight: 400;
+}
+
+.tl-snap {
+    margin-right: 4px;
+    font-size: 0.95em;
+    color: var(--text-muted);
+}
+
+.tl-zoom button {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    font-size: 15px;
+    line-height: 1;
+}
+
+/* 제목 옆의 범례: 일정(진한 블록)과 내 계획(점선 블록) */
+.tl-legend {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: 12px;
+    font-weight: 400;
+}
+
+.tl-key {
+    display: block;
+    width: 14px;
+    height: 10px;
+    border-radius: 3px;
+}
+
+.tl-key-event {
+    background-color: #e3ebff;
+    border-left: 3px solid #4a7cff;
+}
+
+.tl-key-plan {
+    border: 1.5px dashed var(--accent);
+    background-color: #f1f6ff;
+}
+
+/* 종일 일정: 시간표 위에 작은 알약으로 모은다. 시간 눈금 글자 폭(48px)만큼 비워서 블록들과 왼쪽이 맞는다 */
+.tl-allday {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 0 0 8px 48px;
+}
+
+.tl-allday .tl-block {
+    position: static;
+    padding: 3px 10px;
+}
+
+/* 스크롤되는 시간표 영역. 위아래 10px은 00:00과 24:00 글자가 잘리지 않게 하는 여유다 */
+.tl-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 10px 0;
+}
+
+/* 하루 24시간의 세로 길이. 한 시간의 높이(--tl-hour)는 app.js의 tlHourPx(확대/축소로 바뀐다)가 정해서 넣어 준다 */
+.tl {
+    position: relative;
+    height: calc(24 * var(--tl-hour, 64px));
+}
+
+.tl-labels span {
+    position: absolute;
+    left: 0;
+    width: 40px;
+    text-align: right;
+    font-size: 0.78em;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    transform: translateY(-50%);
+}
+
+/* 확대했을 때만 나오는 30분 눈금 글자: 더 작고 연하게 */
+.tl-labels .tl-label-minor {
+    font-size: 0.68em;
+    color: var(--text-faint);
+}
+
+/* 블록이 놓이는 곳. 한 시간마다 가로줄이 그어져 있고, 빈 곳을 끌면 새 계획이 만들어진다 */
+.tl-grid {
+    position: absolute;
+    left: 48px;
+    right: 6px;
+    top: 0;
+    bottom: 0;
+    background-image: repeating-linear-gradient(to bottom, var(--border) 0, var(--border) 1px, transparent 1px, transparent var(--tl-hour, 64px));
+    border-bottom: 1px solid var(--border);
+    cursor: cell;
+    user-select: none;
+}
+
+/* 확대하면 한 시간 사이에 옅은 줄이 더해진다: 30분(.tl-half), 더 확대하면 15분(.tl-quarter)마다.
+   맨 앞의 그림이 위에 그려지므로 한 시간 줄(진함)이 먼저 오고 그 아래에 옅은 줄이 깔린다 */
+.tl-half .tl-grid {
+    background-image:
+        repeating-linear-gradient(to bottom, var(--border) 0, var(--border) 1px, transparent 1px, transparent var(--tl-hour, 64px)),
+        repeating-linear-gradient(to bottom, rgba(205, 212, 222, 0.45) 0, rgba(205, 212, 222, 0.45) 1px, transparent 1px, transparent calc(var(--tl-hour, 64px) / 2));
+}
+
+.tl-quarter .tl-grid {
+    background-image:
+        repeating-linear-gradient(to bottom, var(--border) 0, var(--border) 1px, transparent 1px, transparent var(--tl-hour, 64px)),
+        repeating-linear-gradient(to bottom, rgba(205, 212, 222, 0.45) 0, rgba(205, 212, 222, 0.45) 1px, transparent 1px, transparent calc(var(--tl-hour, 64px) / 4));
+}
+
+.tl-grid.drop-hover {
+    outline: 2px dashed var(--accent);
+    outline-offset: -2px;
+}
+
+.tl-block {
+    position: absolute;
+    box-sizing: border-box;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: calc(0.9em * var(--tl-fs, 1));  /* --tl-fs는 블록이 짧을 때 app.js(fitBlockText)가 1 아래로 내려 글자를 조금 줄인다 */
+    line-height: 1.3;
+    overflow: hidden;
+    cursor: pointer;
+    user-select: none;
+}
+
+/* 아주 짧은 블록(24px 미만): 위아래 여백과 줄 간격을 줄여 제목 한 줄이 들어가게 한다 */
+.tl-block.tl-short {
+    padding-top: 1px;
+    padding-bottom: 1px;
+    line-height: 1.15;
+}
+
+.tl-block .tl-title {
+    font-weight: 600;
     overflow-wrap: anywhere;
 }
 
-/* 일정에 붙인 메모: 제목 바로 아래(둘째 줄, 제목과 같은 칸)에 작은 회색 글씨로. 적은 그대로(줄바꿈 포함) 보인다.
-   고칠 수 있는 일정이면 눌러서 바로 고친다 */
-.event-memo {
-    grid-column: 3;
-    grid-row: 2;
-    margin: 3px 0 0 -4px;
-    padding: 2px 4px;
+.tl-time {
+    font-size: 0.88em;
     color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+/* 일정 메모: 블록이 충분히 길면 제목 아래에 보인다 */
+.tl-memo {
     font-size: 0.92em;
+    color: var(--text-muted);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-    border-radius: var(--radius-sm);
 }
 
-.event-memo.editable {
-    cursor: text;
+/* Google 일정: 캘린더 색(--c)의 띠와 옅은 바탕. 글자는 항상 진한 색이라 어떤 캘린더 색에서도 읽힌다 */
+.tl-event {
+    --c: #4a7cff;
+    border-left: 4px solid var(--c);
+    background-color: color-mix(in srgb, var(--c) 16%, var(--bg));
+    color: var(--text);
 }
 
-.event-memo.editable:hover {
-    background-color: var(--surface-strong);
+/* 내 계획: 점선 테두리와 옅은 줄무늬. 일정과 한눈에 구별된다. 끌어서 옮기고, 아래쪽 끝을 끌어서 길이를 바꾼다 */
+.tl-plan {
+    border: 1.5px dashed var(--accent);
+    background: repeating-linear-gradient(135deg, #f6f9ff 0, #f6f9ff 8px, #ebf2ff 8px, #ebf2ff 16px);
+    color: #123c7a;
+    cursor: grab;
 }
 
-/* 저장에 실패해서 Google에는 아직 없는 메모: 빨간 글씨로 알린다 (눌러서 고치면 다시 저장한다) */
-.event-memo.unsaved {
-    color: var(--danger);
+.tl-plan .tl-time {
+    color: #1558b0;
 }
 
-/* 메모가 없는 일정에 마우스를 올리면 줄 오른쪽에 나타나는 "+ 메모" 버튼 (task-actions와 같은 방식) */
-.event-memo-add {
-    display: none;
-    grid-column: 4;
-    grid-row: 1;
-    padding: 3px 7px;
+/* 연결된 할 일을 끝냈으면 흐리게 + 취소선 */
+.tl-plan.done {
+    opacity: 0.6;
+}
+
+.tl-plan.done .tl-title {
+    text-decoration: line-through;
+}
+
+.tl-resize {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 8px;
+    cursor: ns-resize;
+}
+
+.tl-block.dragging {
+    box-shadow: var(--shadow-md);
+    z-index: 5;
+}
+
+.tl-block.selected {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+/* 새 계획을 만드는 중(끄는 중)인 블록 */
+.tl-creating {
+    z-index: 5;
+    cursor: default;
+}
+
+.tl-title-input {
+    box-sizing: border-box;
+    width: 100%;
+    padding: 2px 6px;
+    font: inherit;
+    font-weight: 600;
+    color: var(--text);
+    background-color: var(--bg);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    outline: none;
+}
+
+/* 지금 시각을 가리키는 빨간 줄 (오늘을 볼 때만) */
+.tl-now {
+    position: absolute;
+    left: -8px;
+    right: 0;
+    height: 0;
+    border-top: 2px solid var(--danger);
+    pointer-events: none;
+    z-index: 4;
+}
+
+.tl-now::before {
+    content: "";
+    position: absolute;
+    left: -4px;
+    top: -5px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: var(--danger);
+}
+
+/* 할 일을 끌어다 놓을 때 놓일 자리를 미리 보여 주는 점선 상자 */
+.tl-drop-preview {
+    position: absolute;
+    left: 4px;
+    right: 4px;
+    box-sizing: border-box;
+    border: 2px dashed var(--accent);
+    border-radius: 6px;
+    background-color: rgba(26, 115, 232, 0.12);
+    pointer-events: none;
+    z-index: 5;
+    padding: 2px 8px;
+    font-size: 0.85em;
+    color: var(--accent);
+    overflow: hidden;
+}
+
+/* 블록을 눌렀을 때 뜨는 작은 창 (일정이면 메모, 계획이면 제목과 삭제) */
+.tl-popover {
+    position: fixed;
+    z-index: 150;
+    box-sizing: border-box;
+    width: 300px;
+    padding: 14px;
+    color: var(--text);
+    background-color: var(--bg);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    font-size: 13.5px;
+}
+
+.tl-popover h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.tl-pop-sub {
+    margin: 2px 0 12px;
+    color: var(--text-muted);
     font-size: 12px;
 }
 
-.today-event:hover .event-memo-add,
-.today-event:focus-within .event-memo-add {
+.tl-pop-label {
     display: block;
+    margin-bottom: 6px;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.tl-pop-tip {
+    margin: 6px 0 0;
+    color: var(--text-muted);
+    font-size: 11.5px;
+}
+
+.tl-pop-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 4px;
+}
+
+.tl-pop-buttons {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 14px;
+}
+
+.tl-pop-buttons .spacer {
+    flex: 1;
+}
+
+.tl-pop-readonly {
+    margin: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--text-muted);
+}
+
+/* 오늘 할 일 줄에 붙는 "16:30–18:30" (이 할 일을 시간표에 배치했다는 표시) */
+.task-slot {
+    flex-shrink: 0;
+    font-size: 0.85em;
+    color: var(--accent);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
 }
 
 /* 메모 입력 칸들(일정 줄, 하루 메모, 일정 창)이 같이 쓰는 모양 */
-.event-memo-input,
+.tl-popover textarea,
 .day-memo textarea,
 #event-memo {
     box-sizing: border-box;
@@ -1009,19 +1332,12 @@ input.color-dot::-webkit-color-swatch {
     resize: vertical;
 }
 
-.event-memo-input {
-    grid-column: 3;
-    grid-row: 2;
-    margin-top: 4px;
-    font-size: 0.92em;
-    resize: none;  /* 일정 줄 안의 입력 칸은 글이 늘어나는 만큼 저절로 높아진다 */
+.tl-popover textarea {
+    resize: none;  /* 창 안의 입력 칸은 글이 늘어나는 만큼 저절로 높아진다 */
     overflow: hidden;  /* 높이를 잴 때 세로 스크롤바가 생기면 폭이 10px 줄어 글이 한 줄 더 꺾인 채로 재진다. 높이를 직접 맞추므로 스크롤바는 필요 없다 */
-    /* 입력 칸을 열어도 글자가 옆으로 밀리지 않게, 테두리 1px + 안쪽 여백 10px = 11px만큼 왼쪽으로 내서 글자 위치를 제목과 맞춘다 */
-    margin-left: -11px;
-    width: calc(100% + 11px);
 }
 
-.event-memo-input:focus,
+.tl-popover textarea:focus,
 .day-memo textarea:focus,
 #event-memo:focus {
     outline: none;
@@ -1029,15 +1345,22 @@ input.color-dot::-webkit-color-swatch {
     box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-.event-memo-input::placeholder,
+.tl-popover textarea::placeholder,
 .day-memo textarea::placeholder,
 #event-memo::placeholder {
     color: var(--text-faint);
 }
 
-/* 하루 메모: 일정 목록 아래 */
+/* 하루 메모: 할 일 칸의 바닥에 고정된다 (위의 할 일 목록만 스크롤되므로 밀려나지 않는다) */
 .day-memo {
-    margin-top: 28px;
+    flex: none;
+    margin-top: 10px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+
+.day-memo h2 {
+    margin-bottom: 8px;
 }
 
 .day-memo textarea {
