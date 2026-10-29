@@ -976,6 +976,31 @@ def api_task_days():
     return jsonify(days)
 
 
+TASK_MEMO_MAX = 2000  # 할 일 메모의 최대 글자 수 (프로젝트 메모 5000자보다 짧게: 할 일 줄 아래에 보이는 짧은 메모라서)
+
+
+# 오늘 탭의 할 일 순서 정하기 (PUT): 그 날짜의 할 일들을 ids에 적힌 순서대로 1, 2, 3…번으로 정한다.
+# 화면은 "끝내지 않은 할 일 전부"를 새 순서대로 보낸다. 숫자 번호(id)의 리스트라서 한 번에 많아도 500개까지만 받는다
+MAX_REORDER_TASKS = 500
+
+
+@app.route("/api/tasks/order", methods=["PUT"])
+def api_reorder_tasks():
+    data = request.get_json()
+    error_response = missing_key(data, ("date", "ids"))
+    if error_response:
+        return error_response
+    if not valid_date(data["date"]):
+        return jsonify({"error": "'date'는 2026-10-19 같은 날짜여야 합니다."}), 400
+    ids = data["ids"]
+    # 정수(bool 제외)만, 중복 없이
+    if (not isinstance(ids, list) or len(ids) > MAX_REORDER_TASKS
+            or any(isinstance(i, bool) or not isinstance(i, int) for i in ids) or len(set(ids)) != len(ids)):
+        return jsonify({"error": "'ids'는 겹치지 않는 할 일 번호의 목록이어야 합니다."}), 400
+    database.reorder_tasks(data["date"], ids)
+    return jsonify({"ok": True})
+
+
 # 할 일 추가 (POST)
 @app.route("/api/tasks", methods=["POST"])
 def api_create_task():
@@ -1045,6 +1070,13 @@ def api_update_task(task_id):
         if error_response:
             return error_response
         changes.update(priority)
+    if "memo" in data:
+        memo = data["memo"]
+        if not isinstance(memo, str):
+            return jsonify({"error": "메모는 글자여야 합니다."}), 400
+        if len(memo) > TASK_MEMO_MAX:
+            return jsonify({"error": f"메모는 {TASK_MEMO_MAX}자까지 쓸 수 있습니다."}), 400
+        changes["memo"] = memo.strip()  # 앞뒤 공백과 줄바꿈은 정리한다. 내용이 없으면 빈 글자("")가 되어 메모가 지워진다
 
     if not changes:
         return jsonify({"error": "바꿀 값이 없습니다."}), 400

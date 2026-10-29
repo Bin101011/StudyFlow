@@ -119,6 +119,14 @@ def init_db():
         if name not in existing:
             run(f"ALTER TABLE tasks ADD COLUMN {name} {column_type}")
 
+    # sort_order: 오늘 탭의 할 일 목록에서 사용자가 끌어서 정한 순서(1, 2, 3…). 정한 적 없으면 NULL이고, NULL인 것은 정한 것들 뒤에 만든 순서로 온다.
+    # 할 일의 날짜가 바뀌면 NULL로 되돌린다(그 날짜의 맨 뒤로 가도록). 새로 만든 할 일도 NULL이라 맨 뒤에 붙는다
+    if "sort_order" not in existing:
+        run("ALTER TABLE tasks ADD COLUMN sort_order INTEGER")
+    # 할 일 메모: 할 일 줄 아래에 작은 글씨로 보이는 자유 메모. 이미 있던 할 일은 빈 글자("")로 시작한다 (DEFAULT '')
+    if "memo" not in existing:
+        run("ALTER TABLE tasks ADD COLUMN memo TEXT NOT NULL DEFAULT ''")
+
     # projects 표에도 folder_id(들어 있는 폴더, 없으면 NULL)를 덧붙인다
     columns, _ = run("PRAGMA table_info(projects)")
     if "folder_id" not in [column["name"] for column in columns]:
@@ -159,7 +167,9 @@ def list_tasks(date):
         "FROM tasks t LEFT JOIN projects p ON p.id = t.project_id "
         "LEFT JOIN tasks pt ON pt.id = t.parent_id "
         f"WHERE (t.date = ? OR (t.done = 1 AND substr(t.done_at, 1, 10) = ?)) AND {NO_CHILDREN} "
-        "ORDER BY t.done, t.id",
+        # 안 끝낸 것이 위, 끝낸 것이 아래. 그 안에서는 사용자가 정한 순서(sort_order), 정한 적 없는 것(NULL)은 그 뒤에 만든 순서로.
+        # "t.sort_order IS NULL"은 NULL이면 1, 아니면 0이라서 순서를 정한 것들이 먼저 온다
+        "ORDER BY t.done, t.sort_order IS NULL, t.sort_order, t.id",
         (date, date),
     )
     return rows
@@ -229,6 +239,21 @@ def list_open_tasks():
     return rows
 
 
+def reorder_tasks(date, ids):
+    """그 날짜의 할 일들의 순서를 ids에 적힌 순서(1, 2, 3…)로 정한다. ids에 없는 할 일(끝낸 것 등)은 건드리지 않는다.
+    날짜가 date가 아닌 할 일은 무시한다(다른 날의 순서를 망가뜨리지 않으려는 안전장치). 바꾼 개수를 돌려준다.
+    여러 줄을 고치므로 한 번의 거래(transaction)로 묶어서, 중간에 실패해도 순서가 반쯤만 바뀌지 않게 한다."""
+    changed = 0
+    with contextlib.closing(connect()) as connection:
+        with connection:
+            for position, task_id in enumerate(ids, start=1):
+                cursor = connection.execute(
+                    "UPDATE tasks SET sort_order = ? WHERE id = ? AND date = ?", (position, task_id, date)
+                )
+                changed += cursor.rowcount
+    return changed
+
+
 def get_task(task_id):
     """할 일 하나를 돌려준다. 없으면 None."""
     rows, _ = run("SELECT * FROM tasks WHERE id = ?", (task_id,))
@@ -251,7 +276,7 @@ def add_task(content, date, project_id=None, parent_id=None):
 
 # 수정할 수 있는 칸의 이름들. 아래 update_row가 SQL 문장에 칸 이름을 직접 넣는데,
 # 칸 이름은 ?로 안전하게 넘길 수 없다. 그래서 화면이 보낸 이름을 그대로 쓰지 않고, 이 목록에 있는 것만 쓴다
-EDITABLE_COLUMNS = ("content", "date", "done", "done_at", "deadline", "importance", "urgency")
+EDITABLE_COLUMNS = ("content", "date", "done", "done_at", "deadline", "importance", "urgency", "memo")
 
 
 def update_task(task_id, changes):
@@ -268,6 +293,8 @@ def update_task(task_id, changes):
     # 블록은 하루 안의 시각이라 다른 날로 옮겨진 할 일에는 의미가 없고, 남겨 두면 할 일이 없는 날에 계획만 남기 때문이다.
     # 같은 날짜로 다시 정하면 그 날짜의 블록은 그대로 둔다. 날짜를 비우면(None) 모든 블록을 지운다
     if updated and "date" in changes:
+        # 날짜가 바뀌면 이전 날짜에서 정했던 순서도 의미가 없으므로 비운다(새 날짜의 맨 뒤에서 시작한다)
+        run("UPDATE tasks SET sort_order = NULL WHERE id = ?", (task_id,))
         if changes["date"] is None:
             run("DELETE FROM time_blocks WHERE task_id = ?", (task_id,))
         else:

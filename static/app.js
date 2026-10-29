@@ -2637,6 +2637,7 @@ function makeTaskRow(task, options) {
     const item = document.createElement("li");
     item.className = "task-row";
     item.dataset.taskId = task.id;  // 시간표에 배치한 할 일 옆에 시간을 붙일 때(refreshTaskSlots) 이 줄을 찾는 이름표
+    item.dataset.done = task.done === 1 ? "1" : "0";  // 끌어서 순서를 바꿀 때 끝내지 않은 줄만 골라내는 이름표(taskInsertIndex)
     if (options.dragFrom) {
         item.classList.add("task-draggable");
         item.addEventListener("pointerdown", function (e) {
@@ -2657,6 +2658,16 @@ function makeTaskRow(task, options) {
     content.className = "task-content" + (task.done === 1 ? " done" : "");
     content.textContent = task.content;
 
+    // 오늘 탭 목록에서만: 끝내지 않은 할 일에 "1, 2, 3…" 번호를 붙인다. 끌어서 순서를 바꾸면 번호가 따라 바뀐다.
+    // 1번이 "첫 번째로 할 것"이라 파랗게 강조한다. 하나뿐이면 번호가 필요 없어서 loadTodayTasks가 rank를 주지 않는다
+    if (options.rank) {
+        const rank = document.createElement("span");
+        rank.className = "task-rank" + (options.rank === 1 ? " first" : "");
+        rank.textContent = options.rank;
+        rank.title = options.rank + "번째로 할 일 (줄을 끌어서 순서를 바꿉니다)";
+        item.classList.add("has-rank");  // 메모를 체크박스 글자 줄에 맞추려고 (style.css의 .task-memo-box)
+        item.appendChild(rank);
+    }
     item.append(checkbox, content);
 
     // 이름 고치기: 이름을 두 번 클릭하거나 줄의 "수정" 버튼을 누르면 이름 자리가 입력 칸으로 바뀐다.
@@ -2732,6 +2743,28 @@ function makeTaskRow(task, options) {
     // 버튼이 줄마다 항상 늘어서 있으면 화면이 복잡해서, 평소에는 숨겨두고 필요할 때만 보이게 한다
     const actions = document.createElement("span");
     actions.className = "task-actions";
+
+    // 메모: 줄 아래 칸에 작은 회색 글씨로 보인다 (모양은 style.css의 .task-memo-box. 메모가 있을 때만 줄이 두 줄이 된다).
+    // 메모가 없을 때는 마우스를 올리면 뜨는 "메모" 버튼으로 쓰기 시작한다 (메모가 생기면 버튼은 CSS로 숨겨진다)
+    const memoBox = makeInlineMemo({
+        text: task.memo,
+        placeholder: "예: 준비물, 참고 링크",
+        maxLength: TASK_MEMO_MAX,
+        boxClass: "task-memo-box",
+        viewClass: "task-memo",
+        inputClass: "task-memo-input",
+        save: async function (text) {
+            await sendRequest("/api/tasks/" + task.id, "PATCH", { memo: text });
+            task.memo = text;
+        },
+    });
+    item.appendChild(memoBox);
+    const memoButton = document.createElement("button");
+    memoButton.className = "task-memo-button";
+    memoButton.textContent = "메모";
+    memoButton.title = "이 할 일에 메모 붙이기";
+    memoButton.addEventListener("click", memoBox.startEditing);
+    actions.appendChild(memoButton);
 
     // 마감일: 프로젝트 카드에서는 눌러서 바꿀 수 있는 버튼, 그 밖에서는 글자로만 보여준다.
     // 마감일이 정해져 있으면 줄에 항상 보이고, 아직 없으면 "마감일" 버튼이 마우스를 올렸을 때만 뜬다
@@ -2846,8 +2879,22 @@ async function loadTodayTasks() {
     if (data.tasks.length === 0) {
         showEmptyMessage(todayTasksList, isToday ? "오늘 할 일이 없습니다." : "할 일이 없습니다.");
     }
+    // 끝내지 않은 할 일의 번호를 화면 순서대로 기억해 둔다 (끌어서 순서를 바꿀 때 새 순서를 만드는 데 쓴다).
+    // 끝내지 않은 할 일이 둘 이상일 때만 1, 2, 3… 번호를 보여준다
+    const openTasks = data.tasks.filter(function (task) {
+        return task.done !== 1;
+    });
+    todayTaskOrder = openTasks.map(function (task) {
+        return task.id;
+    });
+    let rankCounter = 0;
     data.tasks.forEach(function (task) {
+        const isOpen = task.done !== 1;
+        if (isOpen) {
+            rankCounter++;
+        }
         todayTasksList.appendChild(makeTaskRow(task, {
+            rank: isOpen && openTasks.length >= 2 ? rankCounter : null,
             reload: reloadTodayAndInbox,
             moveLabel: isToday ? "내일로" : "다음 날로",
             moveDate: addDaysToText(date, 1),
@@ -3218,13 +3265,90 @@ inboxInput.addEventListener("keydown", function (e) {
 //   할 일 목록 → 가운데 "할 일" 칸: 보고 있는 날짜로 정한다
 //   오늘 탭의 프로젝트 없는 할 일 → 오른쪽 "할 일 목록" 칸: 날짜를 뺀다
 
-let taskDrag = null;  // 끄는 중에만 값이 있다: { task, item, from, startX, startY, ghost, hover }
+let taskDrag = null;  // 끄는 중에만 값이 있다: { task, item, from, startX, startY, ghost, hover, insertIndex, dropMin }
+
+// ----- 오늘 할 일 순서 바꾸기 -----
+// 오늘 탭의 "오늘 할 일" 목록에서 줄을 끌어다 같은 목록의 다른 자리에 놓으면 그 자리로 순서가 바뀌고(서버에 날짜별로 저장된다),
+// 끝내지 않은 할 일 앞에 1, 2, 3… 번호가 붙는다. "밀린 할 일"이나 "할 일 목록"의 줄을 이 목록에 놓으면 오늘 할 일이 되면서 그 자리에 들어간다.
+// 끄는 동안에는 놓일 자리에 파란 줄이 보인다. 끝낸 할 일은 항상 맨 아래에 있고 끌 수 없다.
+let todayTaskOrder = [];  // 끝내지 않은 오늘 할 일의 번호들, 지금 화면의 순서대로 (loadTodayTasks가 채운다)
+
+// "오늘 할 일" 목록이 들어 있는 스크롤 상자 (밀린 할 일과 오늘 할 일이 함께 들어 있다). 여기에 놓으면 순서가 정해진다
+function tasksListArea() {
+    return document.querySelector("#tasks-column .column-scroll");
+}
+
+// 포인터(clientY)가 있는 자리가 끝내지 않은 오늘 할 일들 중 몇 번째 앞인지 구한다. 끌고 있는 줄은 뺀다.
+// 줄들을 위에서부터 보면서, 줄의 가운데 선이 포인터보다 위에 있는 줄이 몇 개인지 센다 (그 개수가 곧 들어갈 자리)
+function taskInsertIndex(clientY, draggedItem) {
+    const rows = Array.from(todayTasksList.querySelectorAll(".task-row")).filter(function (row) {
+        return row.dataset.done !== "1" && row !== draggedItem;
+    });
+    let index = 0;
+    for (const row of rows) {
+        const rect = row.getBoundingClientRect();
+        if (clientY > rect.top + rect.height / 2) {
+            index++;
+        } else {
+            break;
+        }
+    }
+    return { index: index, rows: rows };
+}
+
+// 놓일 자리에 파란 줄을 보여 준다. 줄은 스크롤 상자 안에 절대 위치로 놓여서 목록의 배치를 밀지 않는다
+function showTaskDropLine(index, rows) {
+    const area = tasksListArea();
+    let line = area.querySelector(".task-drop-line");
+    if (!line) {
+        line = document.createElement("div");
+        line.className = "task-drop-line";
+        area.appendChild(line);
+    }
+    let y;
+    if (rows.length === 0) {
+        y = todayTasksList.getBoundingClientRect().top;
+    } else if (index < rows.length) {
+        y = rows[index].getBoundingClientRect().top;
+    } else {
+        y = rows[rows.length - 1].getBoundingClientRect().bottom;
+    }
+    line.style.top = (y - area.getBoundingClientRect().top + area.scrollTop) + "px";
+}
+
+function hideTaskDropLine() {
+    const line = tasksListArea().querySelector(".task-drop-line");
+    if (line) {
+        line.remove();
+    }
+}
+
+// 줄을 오늘 할 일 목록의 index번째 자리에 놓는다. 이미 목록에 있던 줄이면 순서만 바꾸고,
+// 밀린 할 일이나 할 일 목록에서 온 줄이면 먼저 날짜를 보고 있는 날짜로 정한 뒤 그 자리에 넣는다
+async function dropTaskOnList(task, index, alreadyInList) {
+    const ids = todayTaskOrder.filter(function (id) {
+        return id !== task.id;
+    });
+    ids.splice(Math.min(index, ids.length), 0, task.id);
+    try {
+        if (!alreadyInList && task.date !== viewedDate) {
+            await sendRequest("/api/tasks/" + task.id, "PATCH", { date: viewedDate });  // 날짜가 바뀌면 서버가 이전 순서를 비운다
+        }
+        await sendRequest("/api/tasks/order", "PUT", { date: viewedDate, ids: ids });
+        if (!alreadyInList) {
+            showToast("'" + task.content + "'을(를) " + (viewedDate === todayText ? "오늘" : viewedDate.slice(5).replace("-", "/")) + " 할 일 " + (ids.indexOf(task.id) + 1) + "번째로 정했습니다");
+        }
+    } catch (error) {
+        showToast("순서를 바꾸지 못했습니다: " + error.message);
+    }
+    await reloadTodayAndInbox();  // 서버에 있는 실제 순서로 화면을 맞춘다 (실패했으면 제자리로 돌아온다)
+}
 
 function beginTaskDrag(e, item, task, from) {
     if (e.pointerType === "mouse" && e.button !== 0) {
         return;
     }
-    if (item.classList.contains("editing") || e.target.closest("button, input, select, .deadline-control, .date-pick")) {
+    if (item.classList.contains("editing") || e.target.closest("button, input, select, textarea, .task-memo-box, .deadline-control, .date-pick")) {
         return;
     }
     taskDrag = { task: task, item: item, from: from, startX: e.clientX, startY: e.clientY, ghost: null, hover: null };
@@ -3246,6 +3370,11 @@ function taskDropTarget(x, y, from) {
     const target = element.closest(".tl-grid") || element.closest(".mini-day");
     if (target) {
         return target;
+    }
+    // 오늘 할 일 목록 위: 어디서 끌었든 그 자리로 순서가 정해진다 (오늘 할 일이면 순서만 바뀌고, 다른 곳에서 온 줄은 오늘 할 일이 된다)
+    const listArea = element.closest("#tasks-column .column-scroll");
+    if (listArea) {
+        return listArea;
     }
     if (from === "inbox") {
         return element.closest("#tasks-column");
@@ -3290,6 +3419,21 @@ function moveTaskDrag(e) {
     } else {
         hideTimelineDropPreview();
     }
+
+    // 오늘 할 일 목록 위에서는 놓일 자리에 파란 줄을 보여 주고, 목록의 위/아래 끝에 가까우면 그쪽으로 스크롤한다
+    if (drag.hover && drag.hover === tasksListArea()) {
+        const place = taskInsertIndex(e.clientY, drag.item);
+        drag.insertIndex = place.index;
+        showTaskDropLine(place.index, place.rows);
+        const rect = drag.hover.getBoundingClientRect();
+        if (e.clientY < rect.top + 28) {
+            drag.hover.scrollTop -= 12;
+        } else if (e.clientY > rect.bottom - 28) {
+            drag.hover.scrollTop += 12;
+        }
+    } else {
+        hideTaskDropLine();
+    }
 }
 
 // 끌기를 마무리한다. drop이 true이고 놓을 수 있는 칸 위였다면 날짜를 바꾼다
@@ -3312,11 +3456,17 @@ function finishTaskDrag(drop) {
         drag.hover.classList.remove("drop-hover");
     }
     hideTimelineDropPreview();
+    hideTaskDropLine();
     if (!drop || !drag.hover || !drag.ghost) {
         return;
     }
     if (drag.hover.classList.contains("tl-grid")) {
         dropTaskOnTimeline(drag.task, drag.dropMin);  // 시간표에 놓으면 그 시간의 계획이 된다
+        return;
+    }
+    if (drag.hover === tasksListArea()) {
+        // 오늘 할 일 목록에 놓으면 그 자리로 순서가 정해진다 (이 목록의 줄이었는지는 끌기를 시작한 줄이 어디 있는지로 안다)
+        dropTaskOnList(drag.task, drag.insertIndex || 0, todayTasksList.contains(drag.item));
         return;
     }
     const hoverDate = drag.hover.dataset ? drag.hover.dataset.date : null;
@@ -3867,35 +4017,42 @@ function describeDeadline(deadline) {
     };
 }
 
-// 프로젝트 카드 하나를 만든다
-// 프로젝트 카드의 메모: 진행률 아래에 작은 회색 글씨로 보인다. 메모가 있으면 글자를 눌러서, 없으면 카드에 마우스를 올렸을 때 나오는 [+ 메모]를 눌러서 그 자리에서 바로 쓴다.
-// 일정 메모와 같은 방식이다: Enter를 누르면 저장하고 입력을 끝내고(줄바꿈은 Shift+Enter, 한글 조합 중의 Enter는 글자 확정이라 건드리지 않는다),
-// 입력을 멈추고 1.5초가 지나거나 다른 곳을 눌러도, Esc를 눌러도 저장한다. 모두 지우면 메모가 사라진다. 수정 창(수정 버튼)에도 같은 메모 칸이 있다.
-const PROJECT_MEMO_SAVE_DELAY_MS = 1500;
+// 줄 안에서 바로 쓰는 메모 (프로젝트 카드의 메모, 할 일 줄의 메모가 함께 쓴다).
+// 메모가 있으면 작은 회색 글씨로 보이고, 글자를 누르면 그 자리에서 고친다. 일정 메모와 같은 방식이다:
+// Enter를 누르면 저장하고 입력을 끝내고(줄바꿈은 Shift+Enter, 한글 조합 중의 Enter는 글자 확정이라 건드리지 않는다),
+// 입력을 멈추고 1.5초가 지나거나 다른 곳을 눌러도, Esc를 눌러도 저장한다. 모두 지우면 메모가 사라진다.
+// options:
+//   text: 처음 메모 / placeholder: 입력 칸의 예시 글자 / maxLength: 최대 글자 수 (서버와 같은 값)
+//   boxClass, viewClass, inputClass: 상자, 메모 글자, 입력 칸에 붙일 CSS 이름 (모양은 style.css)
+//   addClass, addTitle: 메모가 없을 때 보여줄 [+ 메모] 버튼의 CSS 이름과 설명. 안 주면 버튼 없이 빈 상자가 된다
+//     (이때는 바깥에서 box.startEditing()을 불러서 입력을 시작한다. 할 일 줄의 "메모" 버튼이 그렇게 쓴다)
+//   save(text): 서버에 저장하는 함수 (async). 실패하면 던지면 된다. 이 함수가 던지는 오류 글은 알림으로 보여준다
+const INLINE_MEMO_SAVE_DELAY_MS = 1500;
 const PROJECT_MEMO_MAX = 5000;  // 서버(app.py의 PROJECT_MEMO_MAX)와 같은 값
+const TASK_MEMO_MAX = 2000;  // 서버(app.py의 TASK_MEMO_MAX)와 같은 값
 
-function makeProjectMemo(project) {
+function makeInlineMemo(options) {
     const box = document.createElement("div");
-    box.className = "project-memo-box";
+    box.className = options.boxClass;
     // text: 화면에 보이는 메모, saved: 서버에 저장된 것으로 아는 메모. 둘이 다르면 아직 저장 전(또는 저장 실패)이다
-    const memo = { text: project.memo || "", saved: project.memo || "", saving: false, again: false, failed: false };
+    const memo = { text: options.text || "", saved: options.text || "", saving: false, again: false, failed: false };
 
     // 메모를 글자로 보여주는 상태로 그린다 (입력 칸이 있었다면 걷어낸다)
     function render() {
         box.replaceChildren();
         if (memo.text) {
             const view = document.createElement("div");
-            view.className = "project-memo" + (memo.failed ? " unsaved" : "");
+            view.className = options.viewClass + (memo.failed ? " unsaved" : "");
             view.textContent = memo.text;  // textContent: 메모에 < > 같은 글자가 있어도 HTML로 해석되지 않는다
             view.title = memo.failed ? "저장되지 않았어요. 눌러서 고치면 다시 저장합니다" : "눌러서 메모 고치기";
             view.addEventListener("click", startEditing);
             box.appendChild(view);
-        } else {
+        } else if (options.addClass) {
             const add = document.createElement("button");
             add.type = "button";
-            add.className = "project-memo-add";
+            add.className = options.addClass;
             add.textContent = "+ 메모";
-            add.title = "이 프로젝트에 메모 붙이기";
+            add.title = options.addTitle;
             add.addEventListener("click", startEditing);
             box.appendChild(add);
         }
@@ -3914,9 +4071,8 @@ function makeProjectMemo(project) {
         memo.failed = false;
         const text = memo.text;
         try {
-            await sendRequest("/api/projects/" + project.id, "PATCH", { memo: text });
+            await options.save(text);
             memo.saved = text;
-            project.memo = text;  // 수정 창이 열 때 읽는 값도 맞춰 둔다
         } catch (error) {
             memo.failed = true;
             showToast("메모를 저장하지 못했습니다: " + error.message);
@@ -3940,10 +4096,10 @@ function makeProjectMemo(project) {
         }
         box.replaceChildren();
         const input = document.createElement("textarea");
-        input.className = "project-memo-input";
+        input.className = options.inputClass;
         input.rows = 1;
-        input.maxLength = PROJECT_MEMO_MAX;
-        input.placeholder = "예: 제출 형식, 연락처, 참고 링크";
+        input.maxLength = options.maxLength;
+        input.placeholder = options.placeholder;
         input.value = memo.text;
         box.appendChild(input);
 
@@ -3963,7 +4119,7 @@ function makeProjectMemo(project) {
             timer = setTimeout(function () {
                 memo.text = input.value.trim();
                 save();
-            }, PROJECT_MEMO_SAVE_DELAY_MS);
+            }, INLINE_MEMO_SAVE_DELAY_MS);
         });
         // 입력 칸을 벗어나면(다른 곳을 누르거나 Enter, Esc) 바로 저장하고 글자로 보여주는 상태로 돌아간다
         input.addEventListener("blur", function () {
@@ -3983,10 +4139,30 @@ function makeProjectMemo(project) {
         });
     }
 
+    box.startEditing = startEditing;
     render();
     return box;
 }
 
+// 프로젝트 카드의 메모: 진행률 아래. 메모가 없으면 카드에 마우스를 올렸을 때 나오는 [+ 메모]를 눌러서 쓴다. 수정 창(수정 버튼)에도 같은 메모 칸이 있다.
+function makeProjectMemo(project) {
+    return makeInlineMemo({
+        text: project.memo,
+        placeholder: "예: 제출 형식, 연락처, 참고 링크",
+        maxLength: PROJECT_MEMO_MAX,
+        boxClass: "project-memo-box",
+        viewClass: "project-memo",
+        inputClass: "project-memo-input",
+        addClass: "project-memo-add",
+        addTitle: "이 프로젝트에 메모 붙이기",
+        save: async function (text) {
+            await sendRequest("/api/projects/" + project.id, "PATCH", { memo: text });
+            project.memo = text;  // 수정 창이 열 때 읽는 값도 맞춰 둔다
+        },
+    });
+}
+
+// 프로젝트 카드 하나를 만든다
 function makeProjectCard(project) {
     const card = document.createElement("div");
     card.className = "project-card";

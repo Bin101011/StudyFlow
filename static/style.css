@@ -902,6 +902,36 @@ input.color-dot::-webkit-color-swatch {
     overflow-y: auto;
     margin-right: -6px;
     padding-right: 6px;
+    position: relative;  /* 할 일을 끌 때 놓일 자리를 보여 주는 파란 줄(.task-drop-line)이 이 상자 안에서 위치를 잡는다 */
+}
+
+/* 할 일을 끌어서 순서를 바꿀 때 놓일 자리를 보여 주는 파란 줄 */
+.task-drop-line {
+    position: absolute;
+    left: 0;
+    right: 6px;
+    height: 3px;
+    margin-top: -1px;
+    border-radius: 2px;
+    background-color: var(--accent);
+    pointer-events: none;
+    z-index: 3;
+}
+
+/* 오늘 할 일 앞의 순서 번호: 1번(첫 번째로 할 것)은 파랗게 */
+.task-rank {
+    flex-shrink: 0;
+    width: 16px;
+    margin-right: -4px;
+    text-align: center;
+    font-size: 0.8em;
+    font-weight: 600;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.task-rank.first {
+    color: var(--accent);
 }
 
 /* 창이 좁으면(1100px 미만) 화면 높이 맞춤을 풀고, 시간표와 할 일을 위에, 작은 달력과 할 일 목록을 그 아래 한 줄로 둔다 */
@@ -1321,6 +1351,7 @@ input.color-dot::-webkit-color-swatch {
 .tl-popover textarea,
 .day-memo textarea,
 .project-memo-input,
+.task-memo-input,
 #project-memo,
 #event-memo {
     box-sizing: border-box;
@@ -1343,6 +1374,7 @@ input.color-dot::-webkit-color-swatch {
 .tl-popover textarea:focus,
 .day-memo textarea:focus,
 .project-memo-input:focus,
+.task-memo-input:focus,
 #project-memo:focus,
 #event-memo:focus {
     outline: none;
@@ -1353,6 +1385,7 @@ input.color-dot::-webkit-color-swatch {
 .tl-popover textarea::placeholder,
 .day-memo textarea::placeholder,
 .project-memo-input::placeholder,
+.task-memo-input::placeholder,
 #project-memo::placeholder,
 #event-memo::placeholder {
     color: var(--text-faint);
@@ -1662,7 +1695,8 @@ input.color-dot::-webkit-color-swatch {
     margin: 0 0 10px;
 }
 
-.project-memo {
+.project-memo,
+.task-memo {
     padding: 4px 8px;
     margin-left: -8px;
     color: var(--text-muted);
@@ -1674,12 +1708,14 @@ input.color-dot::-webkit-color-swatch {
     cursor: text;
 }
 
-.project-memo:hover {
+.project-memo:hover,
+.task-memo:hover {
     background-color: var(--surface-strong);
 }
 
 /* 저장에 실패해서 아직 서버에 없는 메모: 빨간 글씨로 알린다 (눌러서 고치면 다시 저장한다) */
-.project-memo.unsaved {
+.project-memo.unsaved,
+.task-memo.unsaved {
     color: var(--danger);
 }
 
@@ -1695,14 +1731,16 @@ input.color-dot::-webkit-color-swatch {
     display: inline-block;
 }
 
-.project-memo-input {
+.project-memo-input,
+.task-memo-input {
     resize: none;  /* 카드 안의 입력 칸은 글이 늘어나는 만큼 저절로 높아진다 */
     overflow: hidden;  /* 높이를 잴 때 세로 스크롤바가 생기면 폭이 10px 줄어 글이 한 줄 더 꺾인 채로 재진다 (일정 메모 칸과 같은 이유) */
     font-size: 0.88em;
 }
 
 /* 메모가 없을 때 빈 상자가 여백만 차지하지 않게 한다 */
-.project-memo-box:empty {
+.project-memo-box:empty,
+.task-memo-box:empty {
     display: none;
 }
 
@@ -2771,6 +2809,38 @@ body.priority-dragging * {
 
 .task-row.editing .task-actions {
     display: none;
+}
+
+/* 할 일 메모: 메모(또는 입력 칸)가 있는 줄만 둘째 줄이 생겨서 그 아래에 메모가 온다.
+   flex-wrap을 메모가 있는 줄에만 거는 건, 평소 줄은 마감일 같은 것이 많아도 줄바꿈 없이 한 줄로 줄어들게 두려는 것이다.
+   왼쪽 여백은 체크박스(18px)+간격(10px)만큼이라 메모 글자가 할 일 이름과 같은 선에서 시작한다. 번호표가 있으면 그만큼 더 민다 */
+.task-row:has(> .task-memo-box:not(:empty)) {
+    flex-wrap: wrap;
+    row-gap: 0;
+}
+
+.task-memo-box {
+    order: 10;  /* 줄의 다른 요소들(버튼 묶음 포함) 뒤, 곧 둘째 줄에 온다 */
+    flex: 0 0 calc(100% - 28px);  /* 줄 폭에서 왼쪽 여백을 뺀 만큼. 100%면 여백 때문에 넘쳐서 또 줄바꿈된다 */
+    min-width: 0;
+    margin-left: 28px;
+    cursor: auto;
+}
+
+.task-row.has-rank .task-memo-box {
+    flex-basis: calc(100% - 50px);
+    margin-left: 50px;  /* 번호표 폭(16px) - 당겨 붙인 간격(4px) + 간격(10px) = 22px 더 */
+}
+
+/* 메모가 이미 있으면 "메모" 버튼은 필요 없다 (글자를 눌러서 고친다) */
+.task-row:has(> .task-memo-box:not(:empty)) .task-memo-button {
+    display: none;
+}
+
+/* 끌 수 있는 줄 안에서도 메모 입력 칸은 글자를 고를 수 있게 한다 */
+.task-row.task-draggable .task-memo-input,
+.task-row.task-draggable .task-memo {
+    user-select: text;
 }
 
 /* ===== 시간 입력칸 (일정 창) ===== */
