@@ -403,6 +403,10 @@
             <!-- <input type="color">: 브라우저가 주는 색 선택 도구 -->
             <input type="color" id="project-color">
         </label>
+        <!-- 다른 프로젝트들이 이미 쓰는 색. app.js가 동그라미로 채우고, 누르면 그 색이 된다 -->
+        <div class="dialog-row" id="project-swatch-row" hidden><span class="dialog-label">쓰는 색</span>
+            <div id="project-color-swatches" class="color-swatches"></div>
+        </div>
         <!-- 메모: 프로젝트 카드에 글자로 보인다. 카드에서 바로 고칠 수도 있다 -->
         <label class="dialog-row top"><span class="dialog-label">메모</span>
             <textarea id="project-memo" rows="3" placeholder="예: 제출 형식, 연락처, 참고 링크"></textarea>
@@ -491,6 +495,10 @@
         <label class="dialog-row"><span class="dialog-label">색</span>
             <input type="color" id="dday-color">
         </label>
+        <!-- 다른 D-day와 프로젝트들이 이미 쓰는 색. app.js가 동그라미로 채우고, 누르면 그 색이 된다 -->
+        <div class="dialog-row" id="dday-swatch-row" hidden><span class="dialog-label">쓰는 색</span>
+            <div id="dday-color-swatches" class="color-swatches"></div>
+        </div>
 
         <p id="dday-error" class="dialog-error"></p>
 

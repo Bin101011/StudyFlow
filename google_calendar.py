@@ -1,10 +1,13 @@
 import datetime
+import http.client
 import json
 import os.path
+import time
+import uuid
 
 import google_auth_httplib2
 import httplib2
-from google.auth.exceptions import RefreshError
+from google.auth.exceptions import RefreshError, TransportError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -13,6 +16,12 @@ from googleapiclient.errors import HttpError
 
 # Google에 요청을 보내고 최대 몇 초까지 기다릴지. 인터넷이 불안정할 때 프로그램이 무한정 멈춰 있지 않게 한다
 REQUEST_TIMEOUT_SECONDS = 30
+
+# 연결이 이만큼(초) 놀았으면 이미 끊겼을 수 있다고 보고, 다음 요청 때 새 연결을 연다 (아래 ResilientHttp 설명 참고)
+IDLE_RECONNECT_SECONDS = 15
+
+# 연결 오류가 났을 때 새 연결로 다시 시도하기 전에 기다리는 시간(초). 항목 수만큼 다시 시도한다 (처음 시도 + 2번)
+RETRY_DELAYS = (0.3, 1.0)
 
 
 class SyncTokenExpired(Exception):
@@ -59,13 +68,21 @@ def get_credentials():
         refreshed = False
         if creds and creds.expired and creds.refresh_token:
             # 입장권(access token)만 만료됐다면, 재발급용 열쇠(refresh token)로 조용히 갱신
-            try:
-                creds.refresh(Request())
-                refreshed = True
-            except RefreshError:
-                # 열쇠 자체가 만료되거나 취소된 경우(예: OAuth 동의 화면이 Testing이면 7일마다 만료).
-                # 인터넷이 끊긴 것(TransportError)과는 다른 오류이므로, 이때만 다시 로그인한다
-                print("[로그인 만료] Google 로그인을 다시 해야 합니다. 브라우저가 열립니다.")
+            for attempt in range(len(RETRY_DELAYS) + 1):
+                try:
+                    creds.refresh(Request())
+                    refreshed = True
+                except RefreshError:
+                    # 열쇠 자체가 만료되거나 취소된 경우(예: OAuth 동의 화면이 Testing이면 7일마다 만료).
+                    # 인터넷이 끊긴 것(TransportError)과는 다른 오류이므로, 이때만 다시 로그인한다
+                    print("[로그인 만료] Google 로그인을 다시 해야 합니다. 브라우저가 열립니다.")
+                except TransportError:
+                    # 인터넷이 잠깐 흔들린 경우(주소를 못 찾음 등). 몇 번 다시 해 보고, 그래도 안 되면 오류를 그대로 올린다 (오프라인 처리)
+                    if attempt == len(RETRY_DELAYS):
+                        raise
+                    time.sleep(RETRY_DELAYS[attempt])
+                    continue
+                break
 
         if not refreshed:
             # 처음이거나 갱신도 불가능하면, 브라우저를 열어 사용자가 직접 로그인
@@ -92,10 +109,55 @@ def get_week_range():
     return monday, next_monday
 
 
+def is_connection_error(error):
+    """Google에 요청을 보내다 난 오류가 "연결이 끊겼다/찾지 못했다" 종류인지 알려준다. 이런 오류는 새 연결로 다시 시도해 볼 만하다.
+    - OSError: 연결이 강제로 끊김(WinError 10053/10054), 연결 거부, SSL 오류 등. 파이썬에서는 모두 OSError의 한 종류다
+    - HTTPException: 서버가 응답 도중 연결을 닫음 등
+    - ServerNotFoundError: 주소(DNS)를 찾지 못함. 와이파이가 잠깐 흔들릴 때 나온다
+    제한 시간 초과(TimeoutError)는 뺀다. 다시 하면 또 30초를 기다리게 되기 때문이다."""
+    if isinstance(error, TimeoutError):
+        return False
+    return isinstance(error, (OSError, http.client.HTTPException, httplib2.ServerNotFoundError))
+
+
+class ResilientHttp(httplib2.Http):
+    """끊긴 연결 때문에 요청이 실패하는 일을 줄이는 통신 부품. httplib2.Http를 이렇게 고쳤다.
+
+    왜 필요한가: httplib2는 한 번 연 연결을 계속 재사용한다(빠르려고). 그런데 한동안 놀던 연결은 공유기, 방화벽, 보안 프로그램, Google 쪽에서
+    소리 없이 끊어 버린다. 앱은 그걸 모르고 그 연결로 요청을 보내고, 그러면 [WinError 10053/10054] 오류가 난다.
+    httplib2는 이 오류를 다시 시도하지 않고 그대로 던지므로 화면에는 "인터넷 연결을 확인하세요"가 뜬다. 와이파이는 멀쩡한데도 말이다.
+
+    그래서 두 가지를 한다:
+    1) 예방: 마지막 사용 후 IDLE_RECONNECT_SECONDS(15초)가 넘었으면, 요청 전에 놀던 연결을 닫고 새로 연다.
+    2) 치료: 그래도 연결 오류가 나면 연결을 모두 닫고 새 연결로 다시 시도한다 (RETRY_DELAYS만큼 기다리며 최대 2번 더).
+    인터넷이 정말로 끊겨 있으면 몇 초 뒤에 똑같이 실패한다."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._last_used = time.monotonic()
+
+    def request(self, *args, **kwargs):
+        if time.monotonic() - self._last_used > IDLE_RECONNECT_SECONDS:
+            self.close()  # 놀던 연결은 이미 끊겼을 수 있다. 닫아 두면 아래 요청이 새 연결을 연다
+        for attempt in range(len(RETRY_DELAYS) + 1):
+            try:
+                result = super().request(*args, **kwargs)
+            except Exception as error:
+                if not is_connection_error(error) or attempt == len(RETRY_DELAYS):
+                    raise
+                print(f"[연결 재시도] {time.strftime('%m-%d %H:%M:%S')} 연결이 끊겨 새 연결로 다시 시도합니다 ({attempt + 1}/{len(RETRY_DELAYS)}): {error}")
+                self.close()
+                time.sleep(RETRY_DELAYS[attempt])
+            else:
+                self._last_used = time.monotonic()
+                return result
+
+
 def build_service(creds):
     """이미 있는 로그인 정보(creds)로 service 객체를 만든다. 파일을 읽지 않아 빠르다."""
-    # 로그인 정보(creds)를 붙여서 요청을 보내는 통로를 직접 만들고, 응답을 기다리는 시간에 제한(30초)을 둔다
-    http = google_auth_httplib2.AuthorizedHttp(creds, http=httplib2.Http(timeout=REQUEST_TIMEOUT_SECONDS))
+    # 로그인 정보(creds)를 붙여서 요청을 보내는 통로를 직접 만들고, 응답을 기다리는 시간에 제한(30초)을 둔다.
+    # 통로 맨 아래는 끊긴 연결을 알아서 새로 여는 ResilientHttp다
+    http = google_auth_httplib2.AuthorizedHttp(creds, http=ResilientHttp(timeout=REQUEST_TIMEOUT_SECONDS))
     # "calendar" API의 "v3" 버전을 쓰겠다는 뜻
     return build("calendar", "v3", http=http)
 
@@ -188,12 +250,21 @@ def build_time_fields(all_day, start, end):
 def create_event(service, calendar_id, title, all_day, start, end, description=None):
     """캘린더에 일정 하나를 새로 만들고, Google이 돌려준 일정 정보를 그대로 돌려준다.
     description은 일정의 메모(Google Calendar의 "설명" 칸)다. 없으면 보내지 않는다."""
-    body = {"summary": title, **build_time_fields(all_day, start, end)}
+    # 일정 번호를 우리가 미리 정해서 보낸다. 연결이 끊겨서 같은 요청을 다시 보내게 되었을 때, 첫 요청이 사실은 Google에 도착해 있었다면
+    # 같은 번호가 이미 있다고(409) 알려 주므로, 일정이 두 개 만들어지지 않는다. (번호는 영문 소문자와 숫자만 쓸 수 있어서 uuid의 16진수 글자를 쓴다)
+    event_id = uuid.uuid4().hex
+    body = {"id": event_id, "summary": title, **build_time_fields(all_day, start, end)}
     if description:
         body["description"] = description
 
     # insert: 새 일정을 만든다. 이게 HTTP의 POST 요청에 해당한다
-    return service.events().insert(calendarId=calendar_id, body=body).execute()
+    try:
+        return service.events().insert(calendarId=calendar_id, body=body).execute()
+    except HttpError as error:
+        if error.resp.status == 409:
+            # 다시 보낸 요청이 거절된 것 = 처음 요청이 성공했다는 뜻이다. 만들어진 일정을 그대로 가져와서 성공으로 처리한다
+            return service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+        raise
 
 
 def update_event(service, calendar_id, event_id, all_day=None, start=None, end=None, title=None, description=None):
@@ -267,7 +338,12 @@ def unsubscribe_calendar(service, calendar_id):
 
 def delete_event(service, calendar_id, event_id):
     """일정 하나를 지운다. 이게 HTTP의 DELETE 요청에 해당한다."""
-    service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+    try:
+        service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+    except HttpError as error:
+        # 404/410: 이미 없는 일정이다. 연결이 끊겨서 지우기를 다시 보냈을 때, 처음 요청이 이미 지웠다면 이렇게 된다. 목적은 이뤄졌으니 성공으로 본다
+        if error.resp.status not in (404, 410):
+            raise
 
 
 def format_event(event):

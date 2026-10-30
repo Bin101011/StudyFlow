@@ -3265,7 +3265,7 @@ inboxInput.addEventListener("keydown", function (e) {
 //   할 일 목록 → 가운데 "할 일" 칸: 보고 있는 날짜로 정한다
 //   오늘 탭의 프로젝트 없는 할 일 → 오른쪽 "할 일 목록" 칸: 날짜를 뺀다
 
-let taskDrag = null;  // 끄는 중에만 값이 있다: { task, item, from, startX, startY, ghost, hover, insertIndex, dropMin }
+let taskDrag = null;  // 끄는 중에만 값이 있다: { task, item, from, startX, startY, ghost, hover, insertIndex, dropMin, stepList }
 
 // ----- 오늘 할 일 순서 바꾸기 -----
 // 오늘 탭의 "오늘 할 일" 목록에서 줄을 끌어다 같은 목록의 다른 자리에 놓으면 그 자리로 순서가 바뀌고(서버에 날짜별로 저장된다),
@@ -3344,6 +3344,94 @@ async function dropTaskOnList(task, index, alreadyInList) {
     await reloadTodayAndInbox();  // 서버에 있는 실제 순서로 화면을 맞춘다 (실패했으면 제자리로 돌아온다)
 }
 
+// ----- 프로젝트 단계 순서 바꾸기 -----
+// 프로젝트 카드 안의 단계(맨 위 단계, 하위 단계)를 끌어서 같은 묶음 안의 다른 자리에 놓으면 순서가 바뀌고 서버에 저장된다.
+// 맨 위 단계는 맨 위 단계들끼리, 하위 단계는 같은 상위 단계 아래에서만 옮긴다. 끝낸 단계는 항상 맨 아래에 있고 끌 수 없다.
+// 순서를 정한 적 없는 단계는 마감일이 빠른 순으로 보인다(서버가 정렬한다. app.py의 step_sort_key).
+// 끌기 상태(taskDrag)와 이벤트는 오늘 할 일 끌기와 같은 것을 쓰고, from이 "step"일 때만 아래 함수들이 일한다.
+
+// 같은 묶음의 끝내지 않은 줄들 (끌고 있는 줄은 빼고 싶으면 except를 준다)
+function stepRows(list, except) {
+    return Array.from(list.children).filter(function (row) {
+        return row.classList.contains("task-row") && row.dataset.done !== "1" && row !== except;
+    });
+}
+
+// 줄 하나가 차지하는 아래쪽 끝. 하위 단계가 있는 단계는 그 아래 하위 단계 묶음(sub-wrapper)까지 한 덩어리로 본다
+function stepBlockBottom(row) {
+    const next = row.nextElementSibling;
+    return (next && next.classList.contains("sub-wrapper") ? next : row).getBoundingClientRect().bottom;
+}
+
+// 끄는 동안 호출된다: 포인터가 이 묶음 위에 있으면 놓일 자리에 파란 줄을 보여 주고, 화면 위/아래 끝에 가까우면 페이지를 스크롤한다
+function moveStepDrag(e, drag) {
+    const list = drag.item.parentElement;
+    const listRect = list.getBoundingClientRect();
+    const cardRect = list.closest(".project-card").getBoundingClientRect();
+    // 줄 목록의 위아래로 조금 여유를 둔다 (맨 위로 옮기거나 맨 아래로 보낼 때 정확히 줄 위에 놓지 않아도 되게)
+    const inside = e.clientX >= cardRect.left && e.clientX <= cardRect.right
+        && e.clientY >= listRect.top - 24 && e.clientY <= listRect.bottom + 24;
+    hideStepDropLine();
+    drag.stepList = inside ? list : null;
+    if (inside) {
+        const rows = stepRows(list, drag.item);
+        let index = 0;
+        for (const row of rows) {
+            const rect = row.getBoundingClientRect();
+            if (e.clientY > rect.top + rect.height / 2) {
+                index++;
+            } else {
+                break;
+            }
+        }
+        drag.insertIndex = index;
+        let y;
+        if (rows.length === 0) {
+            y = listRect.top;
+        } else if (index < rows.length) {
+            y = rows[index].getBoundingClientRect().top;
+        } else {
+            y = stepBlockBottom(rows[rows.length - 1]);
+        }
+        const line = document.createElement("div");
+        line.className = "task-drop-line";
+        line.style.top = (y - listRect.top) + "px";
+        list.appendChild(line);
+    }
+    if (e.clientY < 40) {
+        window.scrollBy(0, -14);
+    } else if (e.clientY > window.innerHeight - 40) {
+        window.scrollBy(0, 14);
+    }
+}
+
+function hideStepDropLine() {
+    document.querySelectorAll(".project-card .task-drop-line").forEach(function (line) {
+        line.remove();
+    });
+}
+
+// 단계를 목록의 index번째 자리에 놓는다. 순서가 그대로면 서버에 묻지 않는다
+async function dropStepOnList(task, list, index) {
+    const before = stepRows(list).map(function (row) {
+        return Number(row.dataset.taskId);
+    });
+    const ids = before.filter(function (id) {
+        return id !== task.id;
+    });
+    ids.splice(Math.min(index, ids.length), 0, task.id);
+    if (ids.join(",") === before.join(",")) {
+        return;
+    }
+    try {
+        // parentId가 null이면 맨 위 단계들의 순서, 숫자면 그 단계의 하위 단계들의 순서
+        await sendRequest("/api/projects/" + task.project_id + "/steps/order", "PUT", { parentId: task.parent_id, ids: ids });
+    } catch (error) {
+        showToast("순서를 바꾸지 못했습니다: " + error.message);
+    }
+    await loadProjects();  // 서버에 있는 실제 순서로 화면을 맞춘다 (실패했으면 제자리로 돌아온다)
+}
+
 function beginTaskDrag(e, item, task, from) {
     if (e.pointerType === "mouse" && e.button !== 0) {
         return;
@@ -3401,6 +3489,11 @@ function moveTaskDrag(e) {
     drag.ghost.style.left = (e.clientX + 14) + "px";
     drag.ghost.style.top = (e.clientY + 14) + "px";
 
+    if (drag.from === "step") {
+        moveStepDrag(e, drag);  // 프로젝트 단계는 날짜가 아니라 순서만 바꾼다
+        return;
+    }
+
     const target = taskDropTarget(e.clientX, e.clientY, drag.from);
     if (target !== drag.hover) {
         if (drag.hover) {
@@ -3457,6 +3550,13 @@ function finishTaskDrag(drop) {
     }
     hideTimelineDropPreview();
     hideTaskDropLine();
+    hideStepDropLine();
+    if (drag.from === "step") {
+        if (drop && drag.ghost && drag.stepList) {
+            dropStepOnList(drag.task, drag.stepList, drag.insertIndex || 0);
+        }
+        return;
+    }
     if (!drop || !drag.hover || !drag.ghost) {
         return;
     }
@@ -3725,6 +3825,8 @@ const ddayDialogTitle = document.getElementById("dday-dialog-title");
 const ddayNameInput = document.getElementById("dday-name");
 const ddayDateInput = document.getElementById("dday-date");
 const ddayColorInput = document.getElementById("dday-color");
+const ddaySwatchRow = document.getElementById("dday-swatch-row");
+const ddaySwatches = document.getElementById("dday-color-swatches");
 const ddayError = document.getElementById("dday-error");
 const ddayDeleteButton = document.getElementById("dday-delete");
 
@@ -3845,6 +3947,7 @@ function openDdayDialog(dday) {
     ddayNameInput.value = editingDday ? editingDday.name : "";
     ddayDateInput.value = editingDday ? editingDday.date : "";
     ddayColorInput.value = editingDday ? editingDday.color : PROJECT_COLORS[ddaysCache.length % PROJECT_COLORS.length];
+    renderDdaySwatches();
     ddayError.textContent = "";
 
     ddayDialog.showModal();
@@ -3916,6 +4019,8 @@ const projectMemoInput = document.getElementById("project-memo");
 const projectNameInput = document.getElementById("project-name");
 const projectDeadlineInput = document.getElementById("project-deadline");
 const projectColorInput = document.getElementById("project-color");
+const projectSwatchRow = document.getElementById("project-swatch-row");
+const projectSwatches = document.getElementById("project-color-swatches");
 const projectError = document.getElementById("project-error");
 const projectDeleteButton = document.getElementById("project-delete");
 const projectFolderSelect = document.getElementById("project-folder");
@@ -4252,6 +4357,38 @@ function makeProjectCard(project) {
 
     card.appendChild(makeProjectMemo(project));
 
+    // 단계 순서를 직접 정해 둔 카드에는 "마감일 순으로" 버튼이 있는 줄을 보여 준다. 누르면 직접 정한 순서를 모두 지워서
+    // 단계들이 다시 마감일이 빠른 순으로 보인다 (서버의 DELETE /steps/order). 순서를 정하지 않은 카드에는 나오지 않는다.
+    function hasManualOrder(steps) {
+        const open = steps.filter(function (step) {
+            return step.done !== 1;
+        });
+        return open.length >= 2 && open.some(function (step) {
+            return step.step_order !== null;
+        });
+    }
+    if (hasManualOrder(project.tasks) || project.tasks.some(function (step) {
+        return hasManualOrder(step.children);
+    })) {
+        const orderRow = document.createElement("div");
+        orderRow.className = "steps-order-row";
+        const orderText = document.createElement("span");
+        orderText.textContent = "단계를 직접 정한 순서로 보고 있습니다";
+        const orderReset = document.createElement("button");
+        orderReset.textContent = "마감일 순으로";
+        orderReset.title = "직접 정한 단계 순서를 지우고, 마감일이 빠른 순으로 되돌립니다";
+        orderReset.addEventListener("click", async function () {
+            try {
+                await sendRequest("/api/projects/" + project.id + "/steps/order", "DELETE");
+            } catch (error) {
+                showToast("순서를 되돌리지 못했습니다: " + error.message);
+            }
+            await loadProjects();
+        });
+        orderRow.append(orderText, orderReset);
+        card.appendChild(orderRow);
+    }
+
     // 단계 목록: 이 프로젝트에 연결된 단계들과, 각 단계 아래의 하위 단계들. 오늘 탭에서 연결한 할 일도 여기에 같이 나온다.
     // project.tasks는 위쪽 단계들의 리스트이고, 각 단계의 children에 하위 단계들이 들어 있다
     const today = toDateText(new Date());
@@ -4291,6 +4428,7 @@ function makeProjectCard(project) {
         });
 
         stepList.appendChild(makeTaskRow(step, stepOptions(step, {
+            dragFrom: step.done === 1 ? null : "step",  // 끝내지 않은 단계는 끌어서 순서를 바꿀 수 있다
             // 하위 단계가 있는 단계는 제목 역할이다. 체크와 오늘 하기는 그 아래 하위 단계들이 한다
             derived: hasChildren,
             moveLabel: hasChildren || step.date === today ? null : "오늘 하기",
@@ -4308,7 +4446,7 @@ function makeProjectCard(project) {
             const subList = document.createElement("ul");
             subList.className = "today-list";
             children.forEach(function (child) {
-                subList.appendChild(makeTaskRow(child, stepOptions(child, {})));
+                subList.appendChild(makeTaskRow(child, stepOptions(child, { dragFrom: child.done === 1 ? null : "step" })));
             });
             wrapper.appendChild(subList);
 
@@ -4808,6 +4946,8 @@ function slideProjectCards(before) {
     });
 }
 
+let releaseProjectListHeightTimer = null;  // renderProjects가 붙잡아 둔 목록 높이를 풀어 줄 타이머
+
 // 폴더와 프로젝트 카드들을 모두 다시 그린다.
 // options.repackFolderIds: 카드가 빠지거나 들어온 폴더들의 번호(폴더 없음은 null). 이 폴더들의 카드는 "있던 열"을 잊고 처음부터 다시 쌓아서 빈틈을 메운다.
 //   (평소에는 카드가 다른 열로 튀지 않게 열을 기억해 두는데, 카드가 빠졌을 때는 오히려 빈칸이 남기 때문이다)
@@ -4821,7 +4961,20 @@ function renderProjects(options) {
             }
         });
     }
+    // 목록을 비우고 다시 채우는 사이에 페이지 높이가 줄어서 브라우저가 스크롤을 맨 위로 되돌려 버린다.
+    // 그래서 다시 그리기 전의 스크롤 위치를 기억해 두었다가, 다 그린 뒤에 돌려놓는다 (단계 체크, 단계 순서 바꾸기 등 모든 새로고침이 같다).
+    // 또 새로 그린 카드는 마우스를 다시 움직이기 전까지 "마우스가 올라간 상태"가 아니라서(카드에 마우스를 올려야 보이는 [+ 메모] 버튼이 잠깐 사라져)
+    // 페이지가 조금 짧아지고 스크롤이 따라 줄어든다. 그것도 막으려고, 잠시 동안 목록의 높이를 이전 높이 이상으로 붙잡아 둔다.
+    const scrollY = window.scrollY;
+    projectListElement.style.minHeight = projectListElement.offsetHeight + "px";
     renderProjectsNow();
+    if (window.scrollY !== scrollY) {
+        window.scrollTo(0, scrollY);
+    }
+    clearTimeout(releaseProjectListHeightTimer);
+    releaseProjectListHeightTimer = setTimeout(function () {
+        projectListElement.style.minHeight = "";
+    }, 500);
     if (before) {
         slideProjectCards(before);
     }
@@ -4874,6 +5027,125 @@ function renderProjectsNow() {
     layoutProjectGrids();  // 모두 화면에 붙인 뒤에 열에 나눠 쌓는다
 }
 
+// ----- 프로젝트 색 고르기 도우미 -----
+// 1) 새 프로젝트의 기본 색: 같은 폴더에 앞 키워드(이름의 첫 띄어쓰기 앞까지)가 같은 프로젝트가 있으면 그 색으로 미리 맞춘다.
+//    예: "영어 단어"와 "영어 듣기"가 빨간색이면 새로 "영어 문법"을 적을 때 빨간색이 된다. 색이 여럿이면 가장 많이 쓴 색(같으면 가장 최근 것).
+//    없으면 팔레트에서 프로젝트 수에 따라 차례로 고른다. (서버의 default_project_color와 같은 규칙이다)
+// 2) 쓰고 있는 색 동그라미: 다른 프로젝트들이 이미 쓰는 색을 색 칸 아래에 동그라미로 보여 주고, 누르면 그 색이 된다 (Google 문서의 "사용한 색"처럼).
+// 사용자가 색을 직접 골랐으면(projectColorTouched) 이름을 고쳐도 색을 다시 바꾸지 않는다.
+let projectColorTouched = false;
+
+function firstWord(name) {
+    const words = name.trim().split(/\s+/);
+    return words[0].toLowerCase();
+}
+
+function suggestedProjectColor(name, folderId) {
+    const word = firstWord(name);
+    const colors = new Map();  // 색 → { count: 쓴 개수, newest: 그 색을 쓴 가장 큰 프로젝트 번호 }
+    if (word) {
+        projectsCache.forEach(function (project) {
+            if (project.folderId === folderId && firstWord(project.name) === word) {
+                const used = colors.get(project.color) || { count: 0, newest: 0 };
+                used.count++;
+                used.newest = Math.max(used.newest, project.id);
+                colors.set(project.color, used);
+            }
+        });
+    }
+    let best = null;
+    colors.forEach(function (used, color) {
+        const bestUsed = best === null ? null : colors.get(best);
+        if (best === null || used.count > bestUsed.count || (used.count === bestUsed.count && used.newest > bestUsed.newest)) {
+            best = color;
+        }
+    });
+    return best !== null ? best : PROJECT_COLORS[projectsCache.length % PROJECT_COLORS.length];
+}
+
+// 창의 폴더 칸에서 고른 폴더 번호 (폴더 없음은 null)
+function dialogFolderId() {
+    return projectFolderSelect.value ? Number(projectFolderSelect.value) : null;
+}
+
+// 새 프로젝트이고 색을 직접 고르지 않았다면, 지금 이름과 폴더에 맞는 기본 색으로 맞춘다
+function refreshSuggestedColor() {
+    if (!editingProject && !projectColorTouched) {
+        projectColorInput.value = suggestedProjectColor(projectNameInput.value, dialogFolderId());
+    }
+    renderProjectSwatches();
+}
+
+// 지금 이미 쓰이고 있는 색들: 프로젝트와 D-day가 쓰는 색 (색 이름표 { color, name }의 목록).
+// except: 지금 고치는 것 자신은 빼려는 것이다. { kind: "project" 또는 "dday", id }
+function usedColorEntries(except) {
+    const entries = [];
+    projectsCache.forEach(function (project) {
+        if (!(except.kind === "project" && except.id === project.id)) {
+            entries.push({ color: project.color, name: project.name });
+        }
+    });
+    ddaysCache.forEach(function (dday) {
+        if (!(except.kind === "dday" && except.id === dday.id)) {
+            entries.push({ color: dday.color, name: dday.name + " (D-day)" });
+        }
+    });
+    return entries;
+}
+
+// 쓰고 있는 색을 많이 쓴 순서로 동그라미로 그린다 (프로젝트 창과 D-day 창이 같이 쓴다). 지금 고른 색의 동그라미에는 테두리가 생긴다.
+// row: 줄 전체(동그라미가 하나도 없으면 숨긴다), box: 동그라미를 담는 상자, input: 색 칸, onPick: 동그라미를 눌러 색을 골랐을 때 부를 함수
+function renderColorSwatches(row, box, input, entries, onPick) {
+    const used = new Map();  // 색 → 그 색을 쓰는 이름들
+    entries.forEach(function (entry) {
+        const names = used.get(entry.color) || [];
+        names.push(entry.name);
+        used.set(entry.color, names);
+    });
+    const colors = Array.from(used.keys()).sort(function (a, b) {
+        return used.get(b).length - used.get(a).length;  // 안정 정렬이라 같으면 처음 나온 순서를 지킨다
+    });
+    box.replaceChildren();
+    row.hidden = colors.length === 0;
+    colors.forEach(function (color) {
+        const names = used.get(color);
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "color-swatch" + (color === input.value.toLowerCase() ? " selected" : "");
+        button.style.backgroundColor = color;
+        button.dataset.color = color;
+        button.title = names.slice(0, 3).join(", ") + (names.length > 3 ? " 외 " + (names.length - 3) + "개" : "") + " (" + names.length + "개가 쓰는 색)";
+        button.addEventListener("click", function () {
+            input.value = color;
+            onPick();
+        });
+        box.appendChild(button);
+    });
+}
+
+function renderProjectSwatches() {
+    renderColorSwatches(projectSwatchRow, projectSwatches, projectColorInput,
+        usedColorEntries(editingProject ? { kind: "project", id: editingProject.id } : {}),
+        function () {
+            projectColorTouched = true;
+            renderProjectSwatches();
+        });
+}
+
+function renderDdaySwatches() {
+    renderColorSwatches(ddaySwatchRow, ddaySwatches, ddayColorInput,
+        usedColorEntries(editingDday ? { kind: "dday", id: editingDday.id } : {}),
+        renderDdaySwatches);
+}
+ddayColorInput.addEventListener("input", renderDdaySwatches);
+
+projectNameInput.addEventListener("input", refreshSuggestedColor);
+projectFolderSelect.addEventListener("change", refreshSuggestedColor);
+projectColorInput.addEventListener("input", function () {
+    projectColorTouched = true;  // 직접 고른 색은 이름을 고쳐도 바꾸지 않는다
+    renderProjectSwatches();
+});
+
 // 프로젝트 추가/수정 창을 연다. project가 없으면 새 프로젝트. options.folderId는 새 프로젝트를 미리 넣어 둘 폴더다
 function openProjectDialog(project, options) {
     editingProject = project || null;
@@ -4892,9 +5164,9 @@ function openProjectDialog(project, options) {
     const folderId = editingProject ? editingProject.folderId : (options && options.folderId !== undefined ? options.folderId : null);
     projectFolderSelect.value = folderId === null || folderId === undefined ? "" : String(folderId);
     projectDeadlineInput.value = editingProject && editingProject.deadline ? editingProject.deadline : "";
-    projectColorInput.value = editingProject
-        ? editingProject.color
-        : PROJECT_COLORS[projectsCache.length % PROJECT_COLORS.length];
+    projectColorTouched = false;
+    projectColorInput.value = editingProject ? editingProject.color : suggestedProjectColor("", dialogFolderId());
+    renderProjectSwatches();
     // radio 칸 중 지금 방식에 해당하는 것을 체크한다. [value=...]는 value가 그 값인 요소를 찾는 선택자다
     const mode = editingProject ? editingProject.progressMode : "auto";
     document.querySelector('input[name="project-mode"][value="' + mode + '"]').checked = true;

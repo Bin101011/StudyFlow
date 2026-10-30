@@ -123,6 +123,10 @@ def init_db():
     # 할 일의 날짜가 바뀌면 NULL로 되돌린다(그 날짜의 맨 뒤로 가도록). 새로 만든 할 일도 NULL이라 맨 뒤에 붙는다
     if "sort_order" not in existing:
         run("ALTER TABLE tasks ADD COLUMN sort_order INTEGER")
+    # step_order: 프로젝트 탭에서 사용자가 끌어서 정한 단계 순서(같은 상위 단계 아래, 또는 맨 위 단계들끼리 1, 2, 3…).
+    # 정한 적 없으면 NULL이고, NULL인 것은 정한 것들 뒤에 마감일 순으로 온다 (app.py의 build_step_tree)
+    if "step_order" not in existing:
+        run("ALTER TABLE tasks ADD COLUMN step_order INTEGER")
     # 할 일 메모: 할 일 줄 아래에 작은 글씨로 보이는 자유 메모. 이미 있던 할 일은 빈 글자("")로 시작한다 (DEFAULT '')
     if "memo" not in existing:
         run("ALTER TABLE tasks ADD COLUMN memo TEXT NOT NULL DEFAULT ''")
@@ -251,6 +255,29 @@ def reorder_tasks(date, ids):
                     "UPDATE tasks SET sort_order = ? WHERE id = ? AND date = ?", (position, task_id, date)
                 )
                 changed += cursor.rowcount
+    return changed
+
+
+def reorder_steps(project_id, parent_id, ids):
+    """프로젝트 단계들의 순서를 ids에 적힌 순서(1, 2, 3…)로 정한다. parent_id가 None이면 맨 위 단계들끼리, 있으면 그 단계의 하위 단계들끼리다.
+    ids 중 그 프로젝트의 그 묶음에 속하지 않는 것은 무시한다(다른 묶음의 순서를 망가뜨리지 않으려는 안전장치). 바꾼 개수를 돌려준다.
+    "parent_id IS ?"는 값이 None일 때 "IS NULL"처럼 동작한다 ("= NULL"은 SQLite에서 항상 거짓이라 쓸 수 없다).
+    reorder_tasks와 같이 한 번의 거래로 묶는다."""
+    changed = 0
+    with contextlib.closing(connect()) as connection:
+        with connection:
+            for position, task_id in enumerate(ids, start=1):
+                cursor = connection.execute(
+                    "UPDATE tasks SET step_order = ? WHERE id = ? AND project_id = ? AND parent_id IS ?",
+                    (position, task_id, project_id, parent_id),
+                )
+                changed += cursor.rowcount
+    return changed
+
+
+def clear_step_order(project_id):
+    """그 프로젝트의 모든 단계(하위 단계 포함)에서 직접 정한 순서를 지운다. 그러면 단계들이 다시 마감일 순으로 보인다. 지운 개수를 돌려준다."""
+    _, changed = run("UPDATE tasks SET step_order = NULL WHERE project_id = ? AND step_order IS NOT NULL", (project_id,))
     return changed
 
 

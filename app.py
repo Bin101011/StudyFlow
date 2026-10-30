@@ -984,6 +984,12 @@ TASK_MEMO_MAX = 2000  # 할 일 메모의 최대 글자 수 (프로젝트 메모
 MAX_REORDER_TASKS = 500
 
 
+def is_id_list(ids):
+    """순서 바꾸기에 보내는 번호 목록이 올바른지: 목록이고, 너무 길지 않고, 정수(bool 제외)만, 중복 없이"""
+    return (isinstance(ids, list) and len(ids) <= MAX_REORDER_TASKS
+            and not any(isinstance(i, bool) or not isinstance(i, int) for i in ids) and len(set(ids)) == len(ids))
+
+
 @app.route("/api/tasks/order", methods=["PUT"])
 def api_reorder_tasks():
     data = request.get_json()
@@ -993,9 +999,7 @@ def api_reorder_tasks():
     if not valid_date(data["date"]):
         return jsonify({"error": "'date'는 2026-10-19 같은 날짜여야 합니다."}), 400
     ids = data["ids"]
-    # 정수(bool 제외)만, 중복 없이
-    if (not isinstance(ids, list) or len(ids) > MAX_REORDER_TASKS
-            or any(isinstance(i, bool) or not isinstance(i, int) for i in ids) or len(set(ids)) != len(ids)):
+    if not is_id_list(ids):
         return jsonify({"error": "'ids'는 겹치지 않는 할 일 번호의 목록이어야 합니다."}), 400
     database.reorder_tasks(data["date"], ids)
     return jsonify({"ok": True})
@@ -1116,9 +1120,25 @@ def build_step_tree(tasks):
         step["children"] = children_of.get(step["id"], [])
         if step["children"]:
             step["done"] = 1 if all(child["done"] for child in step["children"]) else 0
-    # 상위 단계의 done이 계산으로 바뀌었을 수 있으므로, 안 끝낸 것이 위로 오게 다시 정렬한다
-    top_steps.sort(key=lambda step: (step["done"], step["id"]))
+    # 상위 단계의 done이 계산으로 바뀌었을 수 있으므로, 정렬은 done을 다 정한 뒤에 한다
+    top_steps.sort(key=step_sort_key)
+    for step in top_steps:
+        step["children"].sort(key=step_sort_key)
     return top_steps
+
+
+def step_sort_key(step):
+    """단계를 보여 줄 순서를 정하는 열쇠. 앞의 것이 같을 때만 다음 것으로 비교한다:
+    1) 안 끝낸 것이 위, 끝낸 것이 아래  2) 사용자가 끌어서 정한 순서(step_order)가 있는 것이 먼저, 그 안에서는 정한 순서대로
+    3) 나머지는 마감일이 빠른 순(마감일 없는 것은 뒤)  4) 그래도 같으면 만든 순서.
+    하위 단계가 있는 단계는 자기 마감일이 없으면 안 끝낸 하위 단계 중 가장 빠른 마감일을 대신 쓴다(우선순위 탭과 같은 규칙).
+    튜플끼리 비교하면 앞에서부터 차례로 비교된다. 글자(날짜)는 "2026-10-29" 꼴이라 글자 순서가 곧 날짜 순서다."""
+    deadline = step.get("deadline")
+    if deadline is None:
+        open_deadlines = [child["deadline"] for child in step.get("children", []) if not child["done"] and child["deadline"]]
+        deadline = min(open_deadlines) if open_deadlines else None
+    order = step.get("step_order")
+    return (step["done"], order is None, order or 0, deadline is None, deadline or "", step["id"])
 
 
 def project_json(project, tasks):
@@ -1148,6 +1168,29 @@ def project_json(project, tasks):
         "percent": percent,
         "tasks": tasks,
     }
+
+
+def first_word(name):
+    """이름의 앞 키워드: 첫 번째 띄어쓰기 앞까지의 글자 (대소문자는 구분하지 않는다). 예: "영어 단어 외우기" → "영어"."""
+    words = name.split()
+    return words[0].lower() if words else ""
+
+
+def default_project_color(name, folder_id):
+    """새 프로젝트의 기본 색. 같은 폴더(폴더 없음끼리도 같은 폴더)에 앞 키워드가 같은 프로젝트가 있으면 그 색을 쓴다.
+    색이 여럿이면 가장 많이 쓴 색, 같으면 가장 최근에 만든 프로젝트의 색이다. 없으면 팔레트에서 차례로 고른다.
+    (화면의 새 프로젝트 창도 같은 규칙으로 미리 색을 맞춘다. 이 함수는 색을 안 보낸 요청을 위한 안전망이다)"""
+    projects = database.list_projects()
+    word = first_word(name)
+    colors = {}  # 색 → [쓴 개수, 그 색을 쓴 가장 큰 프로젝트 번호]
+    for project in projects:
+        if project["folder_id"] == folder_id and first_word(project["name"]) == word:
+            used = colors.setdefault(project["color"], [0, 0])
+            used[0] += 1
+            used[1] = max(used[1], project["id"])
+    if colors:
+        return max(colors, key=lambda color: colors[color])
+    return PROJECT_COLORS[len(projects) % len(PROJECT_COLORS)]
 
 
 PROJECT_MEMO_MAX = 5000  # 프로젝트 메모의 최대 글자 수
@@ -1230,8 +1273,8 @@ def api_create_project():
     if "name" not in fields:
         return jsonify({"error": "'name' 값이 없습니다."}), 400
 
-    # 안 보낸 값은 기본값을 쓴다. 색은 이미 있는 프로젝트 수를 이용해 팔레트에서 차례로 고른다
-    color = fields.get("color") or PROJECT_COLORS[len(database.list_projects()) % len(PROJECT_COLORS)]
+    # 안 보낸 값은 기본값을 쓴다. 색은 같은 폴더의 같은 키워드 프로젝트의 색, 없으면 팔레트에서 차례로 고른다
+    color = fields.get("color") or default_project_color(fields["name"], fields.get("folder_id"))
     project = database.add_project(
         fields["name"],
         fields.get("deadline"),
@@ -1254,6 +1297,35 @@ def api_update_project(project_id):
         return jsonify({"error": "바꿀 값이 없습니다."}), 400
     if not database.update_project(project_id, fields):
         return jsonify({"error": "그 프로젝트를 찾을 수 없습니다."}), 404
+    return jsonify({"ok": True})
+
+
+# 프로젝트 단계 순서 바꾸기 (PUT): 같은 묶음(맨 위 단계들, 또는 한 단계의 하위 단계들)의 순서를 ids의 순서로 정한다
+@app.route("/api/projects/<int:project_id>/steps/order", methods=["PUT"])
+def api_reorder_steps(project_id):
+    data = request.get_json()
+    error_response = missing_key(data, ("ids",))
+    if error_response:
+        return error_response
+    if not database.get_project(project_id):
+        return jsonify({"error": "그 프로젝트를 찾을 수 없습니다."}), 404
+    if not is_id_list(data["ids"]):
+        return jsonify({"error": "'ids'는 겹치지 않는 단계 번호의 목록이어야 합니다."}), 400
+    parent_id = data.get("parentId")  # 없으면(null) 맨 위 단계들의 순서
+    if parent_id is not None:
+        parent = database.get_task(parent_id) if isinstance(parent_id, int) and not isinstance(parent_id, bool) else None
+        if not parent or parent["project_id"] != project_id or parent["parent_id"] is not None:
+            return jsonify({"error": "그 상위 단계를 찾을 수 없습니다."}), 400
+    database.reorder_steps(project_id, parent_id, data["ids"])
+    return jsonify({"ok": True})
+
+
+# 단계 순서 되돌리기 (DELETE): 그 프로젝트의 직접 정한 단계 순서를 모두 지우고 마감일 순으로 되돌린다
+@app.route("/api/projects/<int:project_id>/steps/order", methods=["DELETE"])
+def api_clear_step_order(project_id):
+    if not database.get_project(project_id):
+        return jsonify({"error": "그 프로젝트를 찾을 수 없습니다."}), 404
+    database.clear_step_order(project_id)
     return jsonify({"ok": True})
 
 

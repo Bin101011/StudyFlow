@@ -1744,6 +1744,26 @@ input.color-dot::-webkit-color-swatch {
     display: none;
 }
 
+/* 단계를 끌 때 놓일 자리를 보여 주는 파란 줄(.task-drop-line)이 목록 안에서 위치를 잡도록 */
+.project-card .today-list {
+    position: relative;
+}
+
+/* 단계 순서를 직접 정해 둔 카드에서 단계 목록 위에 보이는 한 줄: 안내 글자 + [마감일 순으로] 버튼 */
+.steps-order-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 4px;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.steps-order-row button {
+    padding: 2px 8px;
+    font-size: 12px;
+}
+
 /* 프로젝트 카드 안의 단계 줄과 추가 줄 */
 .project-card .task-date {
     color: var(--text-muted);  /* 카드 안에서는 날짜가 "밀림"이 아니므로 빨간색을 쓰지 않는다 */
@@ -1987,6 +2007,31 @@ input.color-dot::-webkit-color-swatch {
 
 .dialog-row.top .dialog-label {
     padding-top: 8px;
+}
+
+/* 프로젝트 창의 "쓰는 색" 동그라미들: 다른 프로젝트가 이미 쓰는 색. 지금 고른 색은 바깥에 테두리가 생긴다 */
+.color-swatches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.color-swatch {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 2px solid var(--bg);
+    border-radius: 50%;
+    box-shadow: 0 0 0 1px var(--border-strong);
+    cursor: pointer;
+}
+
+.color-swatch:hover {
+    box-shadow: 0 0 0 2px var(--text-muted);
+}
+
+.color-swatch.selected {
+    box-shadow: 0 0 0 2px var(--accent);
 }
 
 /* 이름 글자 옆 남은 폭을 채운다 (width: 100%를 그대로 두면 이름 글자 폭만큼 삐져나온다) */
