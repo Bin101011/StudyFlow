@@ -90,8 +90,13 @@ Obsidian을 쓴다면 **설정 탭 → 노트 (Obsidian)** 에 vault 폴더 경�
 | `settings.json` | 설정 |
 | `events_cache.json` | 오프라인용으로 기억해 둔 일정 |
 | `notes_backup/` | 노트를 처음 고치기 전에 한 번씩 복사해 둔 백업 |
+| `db_backup/` | `studyflow.db`를 하루에 한 번 복사해 둔 백업 (`studyflow-20261031.db`처럼 날짜 이름, 최근 14개만 남김) |
 
 위 파일들은 `.gitignore`에 들어 있어서 Git에 올라가지 않습니다. 다른 컴퓨터로 옮기거나 백업하려면 `studyflow.db`와 `settings.json`을 복사하면 됩니다.
+
+**`db_backup/`은 실수로 지웠거나 데이터가 이상해졌을 때를 위한 것**이라 같은 폴더 안에 있습니다. 폴더 전체를 잃어버리는 경우(디스크 고장 등)까지 막으려면 가끔 이 폴더를 USB나 클라우드에 복사해 두세요. 되돌리려면 StudyFlow를 끄고, `db_backup`에서 원하는 날짜의 파일을 `studyflow.db`라는 이름으로 복사해 덮어쓴 뒤 다시 켜면 됩니다.
+
+창 안의 브라우저가 쓰는 작업 폴더만 프로젝트 밖의 `%LOCALAPPDATA%\StudyFlow\webview_profile`에 있습니다. 내 데이터는 없고, 프로그램을 끌 때 지워지거나(못 지우면 다음에 같은 폴더를 다시 씁니다) 해서 늘어나지 않으니 신경 쓰지 않아도 됩니다.
 
 > 이 저장소를 포크하거나 직접 수정해서 올릴 때도 `credentials.json`과 `token.json`은 **절대 GitHub에 올리지 마세요.**
 
@@ -106,12 +111,15 @@ Obsidian을 쓴다면 **설정 탭 → 노트 (Obsidian)** 에 vault 폴더 경�
 | 바로가기로 켰는데 창이 안 뜸 | 프로젝트 폴더의 `studyflow.log` 마지막 줄을 확인하세요. |
 | 와이파이는 되는데 "인터넷 연결을 확인하세요"가 가끔 뜸 | 놀던 연결이 끊긴 경우 프로그램이 새 연결로 알아서 다시 시도합니다. 그래도 계속 뜨면 `studyflow.log`에서 `[연결 재시도]`와 그 뒤의 오류(`WinError 10053/10054`는 공유기나 보안 프로그램이 연결을 끊은 것, `NameResolutionError`는 DNS 문제)를 확인하세요. |
 | 화면이 예전 모습 그대로임 | 프로그램을 완전히 닫았다가 다시 켜세요. |
+| "StudyFlow가 이미 켜져 있습니다"가 뜸 | StudyFlow는 한 번에 하나만 켜집니다. 작업 표시줄에 창이 있는지 보세요. 방금 닫았다면 몇 초 뒤에 다시 켜세요. 창이 없는데도 계속 뜨면 작업 관리자에서 `pythonw.exe`(또는 `python.exe`)를 끝내세요. |
 
 ## 만든 방식
 
 화면은 HTML/CSS/JavaScript, 로직은 Python(Flask), 창은 pywebview, 저장은 SQLite입니다. 캘린더 화면은 [FullCalendar](https://fullcalendar.io/), 노트는 [marked](https://marked.js.org/)와 [DOMPurify](https://github.com/cure53/DOMPurify)를 씁니다. 글꼴은 Google Sans Flex와 Noto Sans KR(둘 다 SIL Open Font License)이고, 각 라이선스 파일은 `static/` 폴더에 함께 들어 있습니다.
 
 만든 과정과 설계 결정은 [PLAN.md](PLAN.md)에 자세히 기록되어 있습니다. (Claude Code와 함께 단계별로 만들었습니다.)
+
+기능을 고친 뒤 예전 기능이 망가지지 않았는지 확인하는 자동 시험은 [tests/README.md](tests/README.md)에 있습니다. (`.venv\Scripts\python tests\run_tests.py` 한 줄이면 서버 쪽 시험이 모두 돌아갑니다.)
 
 ## 라이선스
 

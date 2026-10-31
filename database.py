@@ -35,6 +35,47 @@ def run(sql, params=()):
             return rows, cursor.rowcount
 
 
+# DB 백업: studyflow.db는 할 일, 프로젝트, 메모의 유일한 사본이다(Git에도 안 올라간다). 그래서 하루에 한 번 복사본을 남겨 둔다.
+# 복사본은 DB 파일 옆의 db_backup 폴더에 날짜 이름(studyflow-20261031.db)으로 쌓이고, 최근 KEEP_BACKUPS개만 남긴다.
+# 복원하려면: 프로그램을 끄고, db_backup의 원하는 날짜 파일을 studyflow.db라는 이름으로 복사해 덮어쓴 뒤 다시 켠다.
+BACKUP_FOLDER_NAME = "db_backup"
+BACKUP_PREFIX = "studyflow-"
+KEEP_BACKUPS = 14
+
+
+def backup_db():
+    """오늘 날짜의 백업이 아직 없으면 지금 DB를 복사해 둔다. 만든 파일의 경로를 돌려주고, 이미 있거나 만들 수 없으면 None이다.
+    실패해도 프로그램이 멈추면 안 되므로 오류는 글자로 남기기만 한다.
+
+    파일을 그냥 복사하면 그 순간 DB에 쓰는 중일 때 반쯤 쓰인 파일이 복사될 수 있다. 그래서 SQLite의 backup 기능을 쓴다.
+    이 기능은 쓰는 중이어도 어느 한 순간의 온전한 모습을 복사한다.
+    임시 이름(.tmp)으로 먼저 만든 뒤 이름을 바꾸므로, 복사하다 꺼져도 깨진 파일이 백업인 척 남지 않는다."""
+    if not os.path.exists(DB_PATH):
+        return None  # 처음 켜서 아직 DB가 없다
+    backup_dir = os.path.join(os.path.dirname(DB_PATH), BACKUP_FOLDER_NAME)
+    target = os.path.join(backup_dir, BACKUP_PREFIX + datetime.date.today().strftime("%Y%m%d") + ".db")
+    if os.path.exists(target):
+        return None  # 오늘 것은 이미 있다
+
+    temp = target + ".tmp"
+    try:
+        os.makedirs(backup_dir, exist_ok=True)
+        with contextlib.closing(sqlite3.connect(DB_PATH)) as source, contextlib.closing(sqlite3.connect(temp)) as copy:
+            source.backup(copy)
+        os.replace(temp, target)
+        # 날짜 이름이라 글자 순서가 곧 날짜 순서다. 가장 오래된 것부터 지워서 최근 KEEP_BACKUPS개만 남긴다
+        names = sorted(n for n in os.listdir(backup_dir) if n.startswith(BACKUP_PREFIX) and n.endswith(".db"))
+        for name in names[:-KEEP_BACKUPS]:
+            os.remove(os.path.join(backup_dir, name))
+    except (OSError, sqlite3.Error) as error:
+        print(f"[DB 백업 실패] {error}")
+        return None
+    finally:
+        with contextlib.suppress(OSError):
+            os.remove(temp)  # 실패해서 남은 임시 파일이 있으면 치운다 (성공했다면 이미 이름이 바뀌어 없다)
+    return target
+
+
 # 우선순위 탭의 중요도, 긴급도 범위는 -PRIORITY_LIMIT ~ PRIORITY_LIMIT (7×7 칸). 처음에는 5였다가 칸이 너무 작아 3으로 줄였다
 PRIORITY_LIMIT = 3
 
@@ -138,6 +179,16 @@ def init_db():
     # 프로젝트 메모: 프로젝트 카드에 붙이는 자유 메모. 이미 있던 프로젝트들은 빈 글자("")로 시작한다 (DEFAULT '')
     if "memo" not in [column["name"] for column in columns]:
         run("ALTER TABLE projects ADD COLUMN memo TEXT NOT NULL DEFAULT ''")
+
+    # 인덱스(색인): 책 뒤의 "찾아보기"처럼, 표 전체를 처음부터 끝까지 훑지 않고 원하는 줄을 바로 찾게 해 주는 장치다.
+    # 특히 parent_id가 중요하다. NO_CHILDREN("하위 단계가 있는가?")이 할 일 한 줄마다 "나를 부모로 삼는 줄이 있나?"를 묻는데,
+    # 인덱스가 없으면 그때마다 표 전체를 훑어서 할 일이 늘수록 제곱으로 느려진다 (3,000개에서 우선순위 탭이 0.8초, 9,000개에서 10초).
+    # 인덱스가 있으면 같은 일이 0.01초 안쪽이다. 끝낸 할 일도 지우지 않고 쌓이므로 오래 쓸수록 필요해진다.
+    # 칸을 덧붙이는 마이그레이션이 모두 끝난 뒤에 만들어야 한다 (옛 DB에는 parent_id 칸이 이때까지 없을 수 있다).
+    # IF NOT EXISTS라서 이미 있으면 아무것도 안 한다. 인덱스는 데이터를 바꾸지 않으므로 지워도 안전하다
+    run("CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks (parent_id)")
+    run("CREATE INDEX IF NOT EXISTS idx_tasks_date ON tasks (date)")
+    run("CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks (project_id)")
 
     # 범위가 줄어들기 전(-5~5)에 평가해 둔 값이 있으면 새 범위 안으로 맞춘다. MAX/MIN은 두 값 중 큰/작은 쪽을 고른다.
     # 이미 범위 안인 값은 그대로이고, 평가 안 한(NULL) 할 일은 건드리지 않는다

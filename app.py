@@ -45,6 +45,9 @@ import database
 # Flask 앱(서버) 하나를 만든다. __name__은 "이 파일이 어디 있는지" 알려주는 값이다
 app = Flask(__name__)
 
+# 오늘의 DB 백업을 남겨 둔다. 표 구조를 바꿀 수 있는 init_db보다 먼저 해야, 구조 변경이 잘못돼도 변경 전 모습이 남는다
+database.backup_db()
+
 # 할 일 테이블이 없으면 만든다. 서버가 켜질 때 한 번 실행된다
 database.init_db()
 
@@ -279,6 +282,8 @@ def sync_loop():
     first = True
     while True:
         run_sync_cycle()
+        # 프로그램을 켜 둔 채 날짜가 바뀌면 그날의 백업도 만든다. 오늘 것이 이미 있으면 파일이 있는지만 보고 바로 돌아온다
+        database.backup_db()
         if first:
             first = False
             prefetch_around_today()

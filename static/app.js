@@ -1970,8 +1970,38 @@ function updateNowLine() {
 setInterval(function () {
     if (document.getElementById("today").classList.contains("active")) {
         updateNowLine();
+        checkDayRollover();
     }
 }, 60000);
+// 노트북을 덮었다 열거나 최소화했던 창을 다시 열었을 때는 1분 타이머를 기다리지 않고 바로 확인한다
+document.addEventListener("visibilitychange", function () {
+    if (!document.hidden && document.getElementById("today").classList.contains("active")) {
+        checkDayRollover();
+    }
+});
+
+// 오늘 탭을 켜 둔 채 자정이 지나면 "오늘"이 바뀐다. todayText는 탭을 열 때만 새로 구하므로, 그냥 두면 어제가 계속 "오늘 할 일"로 보인다
+// (그리고 빨간 현재 시각 줄도 사라진다). 날짜가 바뀐 것을 알아채면 오늘 탭을 다시 열 때와 똑같이 새로 불러온다.
+function checkDayRollover() {
+    if (toDateText(new Date()) === todayText) {
+        return;
+    }
+    // 글자를 쓰는 중이거나 시간표를 끄는 중이면 건드리지 않고 다음 확인 때 다시 본다.
+    // 메모를 쓰다가 갑자기 다음 날의 빈 메모 칸으로 바뀌면 안 되기 때문이다. (할 일 입력 칸은 화면을 다시 그려도 지워지지 않으므로 제외한다)
+    const active = document.activeElement;
+    const typing = active && document.getElementById("today").contains(active) &&
+        active.id !== "task-input" && active.id !== "inbox-input" &&
+        (active.tagName === "TEXTAREA" || (active.tagName === "INPUT" && active.type === "text"));
+    if (typing || isTimelineBusy()) {
+        return;
+    }
+    // 어제를 "오늘"로 보고 있었으면 새 오늘로 따라가고, 다른 날을 보고 있었으면 그 날짜를 그대로 둔다.
+    // 어느 쪽이든 loadToday가 오늘 날짜(todayText)를 새로 구하고 제목, 버튼, 밀린 할 일, D-day를 새 오늘 기준으로 맞춘다
+    pendingTodayDate = viewedDate === todayText ? null : viewedDate;
+    loadToday().catch(function (error) {
+        console.error("날짜가 바뀐 뒤 오늘 탭을 새로 불러오지 못했습니다:", error);
+    });
+}
 
 // 오늘 할 일 줄 옆에 "16:30–18:30"을 붙인다 (시간표에 배치한 할 일이라는 표시). 시간표나 할 일 목록을 다시 그릴 때마다 맞춘다
 function refreshTaskSlots() {

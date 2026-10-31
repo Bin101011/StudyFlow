@@ -11,6 +11,8 @@ token.json
 
 # 개인 데이터
 studyflow.db
+# DB를 하루에 한 번 복사해 둔 백업 (내 할 일과 메모가 들어 있다)
+db_backup/
 settings.json
 settings.json.tmp
 
@@ -18,5 +20,7 @@ settings.json.tmp
 events_cache.json
 events_cache.json.tmp
 studyflow.log
+# 프로그램이 켜져 있는 동안 잡고 있는 잠금 파일 (StudyFlow를 두 번 켜지 못하게 한다)
+studyflow.lock
 # 노트 탭이 수정 전에 한 번씩 복사해 두는 노트 백업 (내 노트 내용이 들어 있다)
 notes_backup/
