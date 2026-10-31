@@ -44,6 +44,8 @@
 | `pmemo_test` / `tmemo_test` | 프로젝트 메모 / 할 일 메모 | `memo_server.py` |
 | `memo_test_cal` | 달력의 일정 메모, 하루 메모 | `memo_server.py` |
 | `month_test` | 월간 달력 6/7줄, 이전/다음 이동 | `memo_server.py` |
+| `rollover_test` | 오늘 탭을 켜 둔 채 자정이 지났을 때 새 날짜로 넘어가기 | `memo_server.py` |
+| `purify_test` | 노트 읽기 화면: 평소 마크다운이 서식대로 보이는지, 공격 문장(`<script>`, `onerror`, `javascript:` 링크 등 23개)이 실행되지 않는지. 임시 vault 폴더를 만들어 쓰고 끝나면 지운다. **`static/lib/`의 `marked`나 `DOMPurify`를 새 버전으로 바꿀 때마다 돌린다** | `memo_server.py` |
 
 ### 알려진 함정
 
