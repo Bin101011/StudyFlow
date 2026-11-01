@@ -7,6 +7,7 @@ Oct 16, 2026 · @Brian
 > - [docs/screens.md](docs/screens.md): 화면 구성 (탭마다 기능과 사용자와 정한 것)
 > - [docs/google-calendar.md](docs/google-calendar.md): Google Calendar 연동 설계와 알려진 함정
 > - [docs/feature-notes.md](docs/feature-notes.md): 기능별 구현 기록 (결정과 이유, 알려진 한계)
+> - [docs/review-2026-11.md](docs/review-2026-11.md): 2026-11-01 전체 정밀 검토 결과 (발견한 문제와 상태, 문제 없음으로 확인된 것, 측정 방법)
 
 ## 개요
 
