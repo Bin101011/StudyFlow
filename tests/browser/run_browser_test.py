@@ -10,6 +10,7 @@
 시험마다 서버를 새로 띄우는 이유: 이전 시험이 만든 계획/메모가 남아 있으면 엉뚱하게 실패하기 때문이다.
 같은 5057번 포트를 쓰므로 시험을 동시에 돌리면 안 된다 (이 파일은 차례로 돌린다)."""
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -25,6 +26,46 @@ PORT = 5057
 # 시험마다 맞는 시험 서버(시드 데이터가 다르다). 적혀 있지 않은 시험은 memo_server.py를 쓴다
 SERVER_FOR = {"steps_test": "pro_server.py", "nocred_test": "nocred_server.py"}
 DEFAULT_SERVER = "memo_server.py"
+
+
+def edge_profile_dirs():
+    """시험 파일이 Edge를 띄울 때 임시 폴더에 만드는 프로필 폴더들(이름이 edge_t_로 시작한다)의 경로 집합.
+    한 개가 약 300MB라서 시험이 끝나도 안 지우면 쌓인다 (실제로 112개, 약 32GB가 쌓였던 적이 있다)."""
+    temp = tempfile.gettempdir()
+    return {os.path.join(temp, name) for name in os.listdir(temp) if name.startswith("edge_t_")}
+
+
+def remove_folders(folders):
+    """폴더들을 지우고, 못 지운 폴더만 돌려준다. (Edge가 막 꺼진 직후에는 파일을 아직 쥐고 있어서 지우기가 실패할 수 있다)"""
+    for folder in folders:
+        shutil.rmtree(folder, ignore_errors=True)
+    return [folder for folder in folders if os.path.exists(folder)]
+
+
+def kill_edge_using(folders):
+    """folders를 프로필로 쓰는 시험용 Edge가 아직 살아 있으면 끈다 (시험이 오류로 죽으면 Edge가 남는다).
+    명령줄에 폴더 이름(edge_t_xxxxxx)이 든 msedge만 대상이라, 내가 평소 쓰는 Edge는 건드리지 않는다."""
+    if os.name != "nt" or not folders:
+        return
+    conditions = " -or ".join(f"$_.CommandLine -like '*{os.path.basename(folder)}*'" for folder in folders)
+    script = ("Get-CimInstance Win32_Process -Filter \"Name='msedge.exe'\" | Where-Object { " + conditions + " } | "
+              "ForEach-Object { taskkill /PID $_.ProcessId /T /F | Out-Null }")
+    subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True)
+
+
+def remove_new_edge_profiles(before):
+    """시험 하나가 끝난 뒤, 그 시험이 새로 만든 Edge 프로필 폴더(지금 목록 - before)만 지운다. 이전부터 있던 폴더는 건드리지 않는다."""
+    remaining = remove_folders(edge_profile_dirs() - before)
+    if remaining:
+        kill_edge_using(remaining)
+        for _ in range(10):  # 최대 5초 기다리며 다시 시도한다
+            time.sleep(0.5)
+            remaining = remove_folders(remaining)
+            if not remaining:
+                break
+    if remaining:
+        # 못 지워도 시험 결과에는 영향이 없다. 알려만 준다
+        print("(참고) 시험용 Edge 임시 폴더를 못 지웠습니다. 나중에 직접 지우세요:", ", ".join(remaining), flush=True)
 
 
 def port_in_use():
@@ -110,7 +151,12 @@ def main():
     for name in wanted:
         # 'steps'처럼 줄여 써도 되고 'steps_test.mjs' 전체를 써도 된다
         full = next((a for a in available if a in (name, name + "_test", name[:-4] if name.endswith(".mjs") else name)), name)
-        results[full] = run_one(full)
+        before = edge_profile_dirs()
+        try:
+            results[full] = run_one(full)
+        finally:
+            # 시험이 성공하든 실패하든(Ctrl+C로 멈춰도) 그 시험이 만든 Edge 프로필 폴더는 지운다
+            remove_new_edge_profiles(before)
     print("\n=== 결과")
     for name, code in results.items():
         print(("통과  " if code == 0 else "실패  ") + name)
