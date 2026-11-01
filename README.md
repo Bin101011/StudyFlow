@@ -117,7 +117,7 @@ Obsidian을 쓴다면 **설정 탭 → 노트 (Obsidian)** 에 vault 폴더 경�
 
 화면은 HTML/CSS/JavaScript, 로직은 Python(Flask), 창은 pywebview, 저장은 SQLite입니다. 캘린더 화면은 [FullCalendar](https://fullcalendar.io/), 노트는 [marked](https://marked.js.org/)와 [DOMPurify](https://github.com/cure53/DOMPurify)를 씁니다. 글꼴은 Google Sans Flex와 Noto Sans KR(둘 다 SIL Open Font License)이고, 각 라이선스 파일은 `static/` 폴더에 함께 들어 있습니다.
 
-만든 과정과 설계 결정은 [PLAN.md](PLAN.md)에 자세히 기록되어 있습니다. (Claude Code와 함께 단계별로 만들었습니다.)
+만든 과정과 설계 결정은 [PLAN.md](PLAN.md)에 기록되어 있고, 화면별 설명([docs/screens.md](docs/screens.md))과 Google Calendar 연동([docs/google-calendar.md](docs/google-calendar.md)), 기능별 구현 기록([docs/feature-notes.md](docs/feature-notes.md))은 `docs/` 폴더에 나눠 두었습니다. (Claude Code와 함께 단계별로 만들었습니다.)
 
 기능을 고친 뒤 예전 기능이 망가지지 않았는지 확인하는 자동 시험은 [tests/README.md](tests/README.md)에 있습니다. (`.venv\Scripts\python tests\run_tests.py` 한 줄이면 서버 쪽 시험이 모두 돌아갑니다.)
 
