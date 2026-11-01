@@ -1,5 +1,5 @@
 # 할 일 메모 API 테스트 (임시 DB, Flask 테스트 클라이언트. 실제 DB/Google은 건드리지 않는다)
-import os, sqlite3, sys
+import datetime, os, sqlite3, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fake_google
 fake = fake_google.install()
@@ -100,11 +100,14 @@ else:
     print("SKIP 프로젝트 단계 만들기 엔드포인트 확인 필요", step.status_code)
 
 # 순서 바꾸기/날짜 이동이 메모를 지우지 않는다
-a = post("/api/tasks", {"content": "A", "date": "2026-11-01"}).get_json()
-b = post("/api/tasks", {"content": "B", "date": "2026-11-01"}).get_json()
+# 날짜는 "오늘로부터 30일 뒤"로 한다. 오늘 날짜로 고정해 두면, 그날에는 앞 시험에서 오늘 완료한 날짜 없는 할 일이
+# "오늘 완료한 일"로 이 목록에 같이 나와서 실패한다 (2026-11-01에 실제로 그랬다)
+later = (datetime.date.today() + datetime.timedelta(days=30)).isoformat()
+a = post("/api/tasks", {"content": "A", "date": later}).get_json()
+b = post("/api/tasks", {"content": "B", "date": later}).get_json()
 patch("/api/tasks/%d" % a["id"], {"memo": "A 메모"})
-r = c.put("/api/tasks/order", json={"date": "2026-11-01", "ids": [b["id"], a["id"]]})
-after = c.get("/api/tasks?date=2026-11-01").get_json()["tasks"]
+r = c.put("/api/tasks/order", json={"date": later, "ids": [b["id"], a["id"]]})
+after = c.get("/api/tasks?date=" + later).get_json()["tasks"]
 check("순서를 바꿔도 메모가 유지된다", r.status_code == 200 and [x["content"] for x in after] == ["B", "A"] and after[1]["memo"] == "A 메모", after)
 
 # 삭제

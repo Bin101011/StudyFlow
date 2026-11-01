@@ -6713,10 +6713,14 @@ async function loadCalendarList() {
     }
     editableCalendars.length = 0;
 
+    // 목록을 못 불러왔을 때 칸에 보여줄 문장. 서버가 이유를 알려주면 그걸로 바꾼다
+    // (예: credentials.json이 없으면 "인터넷을 확인하세요"가 아니라 그 파일을 넣으라는 안내가 와야 한다)
+    let failureText = "캘린더 목록을 불러오지 못했습니다.";
     try {
         // Flask의 /api/calendars에 캘린더 목록을 요청한다
         const response = await fetch("/api/calendars");
         if (!response.ok) {
+            failureText = await errorMessageFrom(response);
             throw new Error("서버 오류: " + response.status);
         }
         const calendars = await response.json();
@@ -6841,7 +6845,7 @@ async function loadCalendarList() {
         console.error("캘린더 목록을 불러오지 못했습니다:", error);
         const message = document.createElement("p");
         message.className = "calendar-list-error";
-        message.textContent = "캘린더 목록을 불러오지 못했습니다.";
+        message.textContent = failureText;
         listElement.appendChild(message);
     }
 }

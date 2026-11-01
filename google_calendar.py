@@ -27,6 +27,21 @@ RETRY_DELAYS = (0.3, 1.0)
 class SyncTokenExpired(Exception):
     """syncToken이 너무 오래되어 Google이 더는 인정하지 않을 때(410 오류)."""
 
+
+class CredentialsProblem(Exception):
+    """credentials.json이 없거나 읽을 수 없을 때. 메시지가 그대로 화면에 보이므로, 무엇을 하면 되는지 적어 둔다.
+    (이 오류가 없던 때는 "인터넷 연결을 확인하세요"가 떠서, 처음 설치한 사람이 엉뚱한 곳을 헤맸다)"""
+
+# 화면에 보여줄 안내 문장
+CREDENTIALS_MISSING_MESSAGE = (
+    "credentials.json 파일이 없습니다. README의 'Google 연결하기'를 따라 만든 파일을 프로젝트 폴더(main.py가 있는 폴더)에 넣으세요. "
+    "이름이 credentials.json.json이 아닌지도 확인하세요."
+)
+CREDENTIALS_UNREADABLE_MESSAGE = (
+    "credentials.json 파일을 읽을 수 없습니다. README의 'Google 연결하기'에서 받은 파일(애플리케이션 유형: 데스크톱 앱)이 맞는지, "
+    "내용이 잘리거나 바뀌지 않았는지 확인하세요."
+)
+
 # 이 파일이 있는 폴더. 어디서 실행하든 credentials.json, token.json을 이 폴더에서 찾기 위함
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CREDENTIALS_PATH = os.path.join(BASE_DIR, "credentials.json")  # Google에서 받은 앱 신분증
@@ -86,7 +101,13 @@ def get_credentials():
 
         if not refreshed:
             # 처음이거나 갱신도 불가능하면, 브라우저를 열어 사용자가 직접 로그인
-            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_PATH, SCOPES)
+            try:
+                flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_PATH, SCOPES)
+            except FileNotFoundError:
+                raise CredentialsProblem(CREDENTIALS_MISSING_MESSAGE) from None
+            except (ValueError, KeyError):
+                # 파일은 있지만 JSON이 깨졌거나(ValueError), 다른 종류의 JSON이다 (예: 서비스 계정 키)
+                raise CredentialsProblem(CREDENTIALS_UNREADABLE_MESSAGE) from None
             creds = flow.run_local_server(port=0)
 
         # 3) 다음 실행 때 다시 로그인하지 않도록 결과를 파일에 저장

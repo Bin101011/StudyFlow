@@ -19,7 +19,7 @@ Google Calendar와 양방향으로 연동되는 **Windows용 데스크톱 플래
 ## 준비물
 
 - Windows 10 또는 11 (창을 띄우는 데 Edge WebView2를 씁니다. 최신 Windows에는 이미 들어 있습니다.)
-- [Python](https://www.python.org/downloads/) (개발은 3.14로 했습니다. 설치할 때 **"Add python.exe to PATH"** 에 체크하세요.)
+- [Python](https://www.python.org/downloads/) **3.11 이상** (3.10 이하는 필요한 라이브러리가 설치되지 않습니다. 개발과 시험은 3.14로 했습니다. 설치할 때 **"Add python.exe to PATH"** 에 체크하세요.)
 - Google 계정
 - 이 프로젝트 폴더. GitHub 페이지의 초록색 **Code → Download ZIP** 으로 받아 압축을 풀거나, Git이 있으면 `git clone https://github.com/Bin101011/StudyFlow.git` 을 쓰세요.
 
@@ -53,6 +53,8 @@ Google 화면은 가끔 바뀌어서 메뉴 이름이 조금 다를 수 있습�
      - `https://www.googleapis.com/auth/calendar.app.created`
 5. **API 및 서비스 → 사용자 인증 정보 → 사용자 인증 정보 만들기 → OAuth 클라이언트 ID**를 누르고, 애플리케이션 유형을 **데스크톱 앱**으로 만듭니다.
 6. 만든 뒤 나오는 **JSON 다운로드**를 누르고, 받은 파일 이름을 `credentials.json`으로 바꿔 **프로젝트 폴더(이 README가 있는 곳)** 에 넣습니다.
+
+> **파일 이름이 `credentials.json.json`이 되기 쉽습니다.** Windows 탐색기는 기본으로 `.json` 같은 확장자를 숨깁니다. 그 상태에서 이름을 `credentials.json`이라고 적으면 실제 이름은 `credentials.json.json`이 되어 StudyFlow가 파일을 못 찾습니다. 탐색기 위쪽 **보기 → 표시 → 파일 확장명**을 켜고 이름을 확인하세요.
 
 > **7일마다 다시 로그인하게 되는 경우:** OAuth 동의 화면이 "테스트" 상태이면 Google이 로그인을 7일마다 만료시킵니다. 번거로우면 동의 화면에서 **앱 게시(In production)** 로 바꾸세요. 그러면 로그인할 때 "확인되지 않은 앱" 경고가 뜨는데, 본인이 만든 앱이므로 **고급 → 계속**을 누르면 됩니다.
 
@@ -104,7 +106,8 @@ Obsidian을 쓴다면 **설정 탭 → 노트 (Obsidian)** 에 vault 폴더 경�
 
 | 증상 | 확인할 것 |
 | --- | --- |
-| 실행하자마자 `credentials.json`을 찾을 수 없다는 오류 | 6번 단계의 파일이 프로젝트 폴더에 `credentials.json`이라는 이름으로 있는지 확인하세요. |
+| 창은 뜨는데 왼쪽 캘린더 목록 칸에 "`credentials.json` 파일이 없습니다…"가 보임 (오른쪽 위에는 "오프라인"도 뜸) | 6번 단계의 파일이 프로젝트 폴더(`main.py`가 있는 곳)에 `credentials.json`이라는 이름으로 있는지 확인하세요. `credentials.json.json`이 아닌지도 보세요(위의 파일 이름 안내). 고친 뒤 StudyFlow를 껐다 켜세요. |
+| "`credentials.json` 파일을 읽을 수 없습니다…" | 파일은 있지만 내용이 올바르지 않은 것입니다. 5번 단계에서 애플리케이션 유형을 **데스크톱 앱**으로 만들었는지 확인하고, 6번 단계의 JSON을 다시 받아 바꿔 넣으세요. |
 | 로그인할 때 "액세스 차단됨" | 4번 단계에서 본인 이메일을 **테스트 사용자**에 추가했는지 확인하세요. |
 | 갑자기 로그인 화면이 다시 뜸 | 동의 화면이 "테스트" 상태라서 7일이 지난 것입니다. 다시 로그인하면 되고, 위의 "앱 게시"로 막을 수 있습니다. |
 | "권한이 부족하다"는 오류 | `token.json`을 지우고 다시 실행해서 새로 로그인하세요. 4번 단계의 권한 세 개가 모두 등록되어 있어야 합니다. |

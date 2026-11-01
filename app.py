@@ -99,6 +99,15 @@ def get_creds():
         return google_calendar.get_credentials()
 
 
+def google_failure_message(error, internet_message):
+    """Google 요청이 실패했을 때 화면에 보여줄 이유를 고른다.
+    credentials.json 문제는 그 안내를 그대로 보여주고, 그 밖의 오류는 대부분 인터넷 문제이므로 internet_message를 쓴다.
+    (처음 설치한 사람에게 "인터넷 연결을 확인하세요"만 보이면, 파일이 없는 것을 인터넷 탓으로 오해한다)"""
+    if isinstance(error, google_calendar.CredentialsProblem):
+        return str(error)
+    return internet_message
+
+
 def get_calendar_list():
     """캘린더 목록을 돌려준다. 최근에 가져온 게 있으면 Google에 묻지 않고 그걸 쓴다.
     인터넷이 끊겨서 못 가져오면, 파일에 저장해둔 지난번 목록을 대신 쓴다."""
@@ -311,7 +320,7 @@ def api_calendars():
         calendars = get_calendar_list()
     except Exception as error:
         print(f"[캘린더 목록 실패] {error}")
-        return jsonify({"error": "캘린더 목록을 불러오지 못했습니다. 인터넷 연결을 확인하세요."}), 502
+        return jsonify({"error": google_failure_message(error, "캘린더 목록을 불러오지 못했습니다. 인터넷 연결을 확인하세요.")}), 502
 
     # Google이 주는 정보는 너무 많으므로, 화면에 필요한 것만 골라서 새 리스트로 만든다
     result = []
@@ -385,7 +394,7 @@ def api_delete_calendar():
         target = next((c for c in get_calendar_list() if c["id"] == calendar_id), None)
     except Exception as error:
         print(f"[캘린더 목록 실패] {error}")
-        return jsonify({"error": "캘린더 목록을 불러오지 못했습니다. 인터넷 연결을 확인하세요."}), 502
+        return jsonify({"error": google_failure_message(error, "캘린더 목록을 불러오지 못했습니다. 인터넷 연결을 확인하세요.")}), 502
     if target is None:
         return jsonify({"error": "그 캘린더를 찾을 수 없습니다."}), 404
     if target.get("primary"):
@@ -439,7 +448,7 @@ def api_events():
     except Exception as error:
         # 인터넷이 끊겼고 기억해둔 일정도 없는 경우 등. 화면이 이유를 보여줄 수 있게 알려준다
         print(f"[일정 불러오기 실패] {error}")
-        return jsonify({"error": "Google Calendar에서 일정을 불러오지 못했습니다. 인터넷 연결을 확인하세요."}), 502
+        return jsonify({"error": google_failure_message(error, "Google Calendar에서 일정을 불러오지 못했습니다. 인터넷 연결을 확인하세요.")}), 502
 
     # [[A의 일정들], [B의 일정들], ...] 형태를 [A의 일정, ..., B의 일정, ...]로 한 줄로 펼친다
     result = [event for events in per_calendar for event in events]
@@ -503,7 +512,7 @@ def run_google_write(failure_message, operation, calendar_id=None):
     except Exception as error:
         # HttpError가 아닌 오류는 대부분 인터넷 문제다 (연결 끊김, 시간 초과 등)
         print(f"[Google 쓰기 실패] {failure_message} {error}")
-        return jsonify({"error": f"Google에 {failure_message} (인터넷 연결을 확인하세요.)"}), 502
+        return jsonify({"error": f"Google에 {failure_message} ({google_failure_message(error, '인터넷 연결을 확인하세요.')})"}), 502
 
     if calendar_id is not None:
         for changed_id in (calendar_id if isinstance(calendar_id, (list, tuple)) else [calendar_id]):
@@ -584,7 +593,7 @@ def api_update_event(event_id):
             target = next((c for c in get_calendar_list() if c["id"] == destination), None)
         except Exception as error:
             print(f"[캘린더 목록 실패] {error}")
-            return jsonify({"error": "캘린더 목록을 불러오지 못했습니다. 인터넷 연결을 확인하세요."}), 502
+            return jsonify({"error": google_failure_message(error, "캘린더 목록을 불러오지 못했습니다. 인터넷 연결을 확인하세요.")}), 502
         # 옮겨 갈 캘린더가 없거나 일정을 쓸 수 없는 캘린더(공휴일 등)이면, 아무것도 고치기 전에 거절한다
         if target is None or not can_edit(target):
             return jsonify({"error": "그 캘린더로는 일정을 옮길 수 없습니다."}), 400

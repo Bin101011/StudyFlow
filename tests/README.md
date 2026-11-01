@@ -20,6 +20,7 @@
 | `test_connection.py` | 끊긴 연결을 새 연결로 다시 시도하는 부분 (로컬 가짜 서버로 재현) |
 | `test_db_indexes_backup.py` | DB 인덱스(할 일 9,000개에서의 속도)와 하루 한 번 DB 백업 |
 | `test_single_instance.py` | StudyFlow를 두 번 켜지 못하게 하는 잠금 (프로세스를 실제로 여러 개 띄운다) |
+| `test_credentials_missing.py` | `credentials.json`이 없거나 깨졌을 때, "인터넷 연결을 확인하세요" 대신 그 파일 안내가 나오는지. 다른 오류는 예전처럼 인터넷 안내인지. 정상 파일은 로그인 단계로 가는지(브라우저는 열지 않는다) |
 
 `fake_google.py`가 가짜 Google입니다. 시험이 `app`을 가져오기 전에 DB와 설정 파일의 위치를 임시 폴더로 바꿔 둡니다. **새 시험 파일을 만들 때도 `import fake_google`을 `import app`보다 먼저 하세요.** 안 그러면 진짜 DB에 씁니다.
 
@@ -46,6 +47,7 @@
 | `month_test` | 월간 달력 6/7줄, 이전/다음 이동 | `memo_server.py` |
 | `rollover_test` | 오늘 탭을 켜 둔 채 자정이 지났을 때 새 날짜로 넘어가기 | `memo_server.py` |
 | `purify_test` | 노트 읽기 화면: 평소 마크다운이 서식대로 보이는지, 공격 문장(`<script>`, `onerror`, `javascript:` 링크 등 23개)이 실행되지 않는지. 임시 vault 폴더를 만들어 쓰고 끝나면 지운다. **`static/lib/`의 `marked`나 `DOMPurify`를 새 버전으로 바꿀 때마다 돌린다** | `memo_server.py` |
+| `nocred_test` | `credentials.json`이 없는 첫 실행 모습(친구가 Google 설정을 하기 전): 왼쪽 캘린더 목록 칸과 알림에 파일 안내가 나오는지, 모든 탭이 오류 없이 열리는지. `NOCRED_SHOT=저장할경로.png`를 주면 그 화면을 사진으로 저장한다 | `nocred_server.py` (가짜 Google 없음) |
 
 ### 알려진 함정
 

@@ -164,7 +164,11 @@ await js(`document.documentElement.style.setProperty("--month-cell-height", "170
 await js(`document.querySelector(".fc-today-button").click()`); await sleep(400);
 await js(`calendar.next()`); await sleep(900); await js(`calendar.prev()`); await sleep(3200);
 const sc = JSON.parse(await js(`(() => { const cell = document.querySelector(".fc-daygrid-day.fc-day-today"); const sc = cell.closest(".fc-scroller"); const a = cell.getBoundingClientRect(), b = sc.getBoundingClientRect(); return JSON.stringify({ top: sc.scrollTop, max: sc.scrollHeight - sc.clientHeight, visible: a.top >= b.top - 1 && a.bottom <= b.bottom + 1, off: Math.round((a.top + a.height / 2) - (b.top + b.height / 2)) }); })()`));
-check("오늘 칸 가운데로 맞추기: 오늘이 있는 달로 돌아오면 오늘 칸이 보이고 스크롤이 내려가 있다(가운데이거나 맨 아래)", sc.visible && sc.top > 0 && (Math.abs(sc.off) <= 4 || sc.top >= sc.max - 1), sc);
+// 오늘이 달의 첫 줄(예: 1일이 일요일인 달의 1일)이면 가운데로 맞추려 해도 스크롤은 0 밑으로 못 올라가서 맨 위(top 0)에 남는다.
+// 그때는 오늘 칸이 화면 가운데보다 위에 있다(off <= 4). 스크롤이 안 일어난 버그라면 오늘이 가운데보다 아래에 있어서 off가 크게 양수다.
+const centeredOrBottom = sc.top > 0 && (Math.abs(sc.off) <= 4 || sc.top >= sc.max - 1);
+const clampedAtTop = sc.top === 0 && sc.off <= 4;
+check("오늘 칸 가운데로 맞추기: 오늘이 있는 달로 돌아오면 오늘 칸이 보이고 가운데로 맞춰진다(가운데이거나 맨 아래, 오늘이 첫 줄이면 맨 위)", sc.visible && (centeredOrBottom || clampedAtTop), sc);
 await js(`document.documentElement.style.removeProperty("--month-cell-height"); calendar.updateSize();`);
 
 // 서버가 줄 수 값을 검사한다
