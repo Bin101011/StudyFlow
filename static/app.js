@@ -6449,6 +6449,8 @@ vaultPathInput.addEventListener("change", async function () {
 
 // 현재 설정값. 서버에서 불러오기 전에도 코드가 안전하도록 최소한의 모양을 미리 만들어 둔다
 let settings = { defaultCalendarId: "" };
+// 서버에서 설정을 제대로 불러왔는가. 못 불러온 채 저장하면 위의 거의 빈 값이 진짜 설정(vault 경로 등)을 덮을 수 있어서 저장하지 않는다
+let settingsLoaded = false;
 // 일정을 쓸 수 있는 캘린더 목록 ({id, primary}). loadCalendarList가 채운다
 const editableCalendars = [];
 
@@ -6500,6 +6502,10 @@ function applySettings() {
 
 // 설정을 서버에 보내 settings.json에 저장한다
 async function saveSettings() {
+    if (!settingsLoaded) {
+        showToast("설정을 불러오지 못한 상태라 저장하지 않았습니다. StudyFlow를 껐다 켜 주세요.", 6000);
+        return;
+    }
     try {
         await sendRequest("/api/settings", "PUT", settings);
     } catch (error) {
@@ -6550,10 +6556,11 @@ async function loadSettings() {
     try {
         const response = await fetch("/api/settings");
         if (!response.ok) {
-            throw new Error("서버 오류: " + response.status);
+            throw new Error(await errorMessageFrom(response));
         }
         const data = await response.json();
         settings = data.values;
+        settingsLoaded = true;  // 서버의 진짜 설정을 받았으니 이제부터 저장해도 된다
         wrapAllDayCheckbox.checked = settings.wrapAllDay !== false;
 
         // 저장되어 있던 "숨기기로 한 캘린더"를 숨김 목록(Set)에 옮겨 담는다
@@ -6582,10 +6589,14 @@ async function loadSettings() {
         (data.pomodoroSliders || []).forEach(function (def) {
             buildSlider(def, pomodoroSliderListElement);
         });
+        // 설정 파일이 깨져서 서버가 옆에 옮겨 두고 기본값으로 시작했다면 그 안내를 보여 준다
+        if (data.warning) {
+            showToast(data.warning, 10000);
+        }
     } catch (error) {
-        // 실패해도 기본 모양으로 계속 쓸 수 있다
+        // 실패해도 기본 모양으로 계속 쓸 수 있다. 다만 settingsLoaded가 false라서 설정은 저장하지 않는다
         console.error("설정을 불러오지 못했습니다:", error);
-        showToast("설정을 불러오지 못해 기본값으로 표시합니다.");
+        showToast("설정을 불러오지 못해 기본값으로 표시합니다. " + error.message, 8000);
     }
     applySettings();
 }
@@ -6854,7 +6865,7 @@ async function loadCalendarList() {
 // "내 캘린더" 제목 옆의 + 로 Google에 새 캘린더를 만들고, 줄 끝의 ✕로 지운다. 폰과 웹의 Google Calendar에도 똑같이 반영된다.
 // 지우기는 두 가지다. StudyFlow에서 만든 캘린더는 "삭제"(일정까지 완전히 지움, 되돌릴 수 없음), 그 밖의 캘린더는 "목록에서 빼기"(캘린더와 일정은 그대로).
 // 이 구분은 Google의 권한 범위(calendar.app.created = 이 앱이 만든 캘린더만)와 같아서, 실수로 다른 캘린더를 지울 수 없다.
-// 어떤 캘린더를 StudyFlow가 만들었는지는 만들 때 id를 설정(createdCalendarIds)에 적어 둬서 안다.
+// 어떤 캘린더를 StudyFlow가 만들었는지는 만들 때 서버가 id를 설정(createdCalendarIds)에 적어 둬서 안다.
 
 const calendarAddButton = document.getElementById("calendar-add-button");
 const calendarAddDialog = document.getElementById("calendar-add-dialog");
@@ -6904,9 +6915,9 @@ async function createCalendar() {
             throw new Error(await errorMessageFrom(response));
         }
         const created = await response.json();
-        // 이 캘린더는 StudyFlow가 만들었다고 기억해 둔다 (그래서 "삭제"를 보여 줄 수 있다)
+        // 이 캘린더는 StudyFlow가 만들었다고 기억해 둔다 (그래서 "삭제"를 보여 줄 수 있다).
+        // settings.json에는 서버가 만들 때 이미 적었다. 여기서는 화면의 사본에만 더한다 (다음 설정 저장이 이 id를 빼먹지 않게)
         settings.createdCalendarIds = (settings.createdCalendarIds || []).concat(created.id);
-        saveSettings();
         calendarAddDialog.close();
         showToast("'" + name + "' 캘린더를 만들었습니다");
         await refreshAfterCalendarChange();

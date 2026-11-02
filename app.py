@@ -400,6 +400,12 @@ def api_create_calendar():
         return error_response
 
     calendar_id = created[0]["id"]
+    # "StudyFlow가 만든 캘린더" 표시를 서버가 바로 적는다. 화면에 맡기면 그 저장이 실패하거나 앱이 꺼졌을 때
+    # 이 캘린더를 StudyFlow에서 "삭제"할 수 없게 된다. 적지 못해도 캘린더는 만들어졌으니 오류로 돌려주지 않는다
+    try:
+        settings_store.add_created_calendar(calendar_id)
+    except (settings_store.SettingsUnreadable, OSError) as error:
+        print(f"[만든 캘린더 기록 실패] {calendar_id}: {error}")
     forget_calendar_list()  # 목록이 바뀌었으니 다음에 Google에서 새로 받는다
     if color:
         # 색은 덤이다. 실패해도 캘린더는 만들어졌으므로 오류로 돌려주지 않는다 (Google이 정한 색으로 남는다)
@@ -707,19 +713,36 @@ def api_calendar_color():
 # 화면은 sliders를 보고 슬라이더를 만들고, values로 현재 위치를 맞춘다
 @app.route("/api/settings")
 def api_get_settings():
-    return jsonify({
-        "values": settings_store.load_settings(),
+    # settings.json을 읽지 못하면 기본값 대신 오류를 준다. 503은 "지금은 잠시 처리할 수 없음"이라는 뜻의 HTTP 상태 번호다.
+    # 화면은 이걸 보고 설정 저장을 멈춘다 (기본값으로 저장하면 진짜 설정을 덮어쓰기 때문이다)
+    try:
+        values = settings_store.load_settings()
+    except settings_store.SettingsUnreadable as error:
+        return jsonify({"error": str(error)}), 503
+    body = {
+        "values": values,
         "sliders": settings_store.SLIDER_DEFINITIONS,
         "pomodoroSliders": settings_store.POMODORO_SLIDER_DEFINITIONS,
         "todaySliders": settings_store.TODAY_SLIDER_DEFINITIONS,
-    })
+    }
+    notice = settings_store.pop_broken_notice()
+    if notice:
+        body["warning"] = notice  # 깨진 설정 파일을 옮겨 두었다는 안내 (화면이 알림으로 보여 준다)
+    return jsonify(body)
 
 
-# 설정 저장: 화면이 보낸 값을 정리(범위 밖 값 보정)해서 저장하고, 실제로 저장된 값을 돌려준다.
-# PUT은 "이 자리의 내용을 통째로 이걸로 바꿔라"라는 뜻의 HTTP 메서드다
+# 설정 저장: 화면이 보낸 값을 정리(범위 밖 값 보정)해서 지금 저장된 설정에 합쳐 저장하고, 저장된 설정 전체를 돌려준다.
+# 보내지 않은 설정은 그대로 남는다. PUT은 "이 자리의 내용을 이걸로 바꿔라"라는 뜻의 HTTP 메서드다
 @app.route("/api/settings", methods=["PUT"])
 def api_save_settings():
-    saved = settings_store.save_settings(request.get_json())
+    # silent=True: JSON이 아니면 오류를 내는 대신 None을 준다 → 아래에서 400으로 거절한다
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "설정은 {이름: 값} 모양의 JSON이어야 합니다."}), 400
+    try:
+        saved = settings_store.save_settings(data)
+    except settings_store.SettingsUnreadable as error:
+        return jsonify({"error": str(error)}), 503
     return jsonify(saved)
 
 
@@ -727,7 +750,10 @@ def api_save_settings():
 
 def vault_path():
     """설정 탭에 적힌 Obsidian vault 폴더 경로 (안 정했으면 빈 글자)"""
-    return settings_store.load_settings()[settings_store.VAULT_PATH_KEY]
+    try:
+        return settings_store.load_settings()[settings_store.VAULT_PATH_KEY]
+    except settings_store.SettingsUnreadable:
+        return ""  # 설정 파일을 잠깐 못 읽으면 예전처럼 "vault를 안 정함"으로 둔다 (노트 파일은 건드리지 않는다)
 
 
 def note_error_response(error):

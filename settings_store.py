@@ -1,3 +1,4 @@
+import datetime
 import json
 import os
 import threading
@@ -89,6 +90,17 @@ TIMELINE_HOUR_PX_DEFAULT = 64
 # 저장 파일을 읽고 쓰는 동안 다른 요청이 끼어들지 못하게 하는 열쇠
 _lock = threading.Lock()
 
+# 깨진 settings.json을 옆으로 옮겨 두었다는 안내. 다음 설정 읽기(/api/settings)가 한 번 화면에 전하고 비운다
+_broken_notice = None
+
+
+class SettingsUnreadable(Exception):
+    """settings.json이 있는데 읽지 못했다(다른 프로그램이 잡고 있는 등).
+    이때 기본값을 주거나 저장하면 진짜 설정을 기본값으로 덮어쓰게 되므로, 읽기와 저장을 모두 거부한다."""
+
+
+UNREADABLE_MESSAGE = "설정 파일(settings.json)을 읽지 못했습니다. 다른 프로그램이 쓰고 있을 수 있어요. 잠시 뒤 StudyFlow를 껐다 켜 보세요."
+
 
 def default_settings():
     """모든 설정의 기본값을 딕셔너리로 만든다."""
@@ -108,10 +120,11 @@ def default_settings():
     return settings
 
 
-def clean_settings(raw):
+def clean_settings(raw, base=None):
     """받은 값에서 알고 있는 설정만 골라, 숫자는 허용 범위 안으로 맞춰서 돌려준다.
-    파일이 망가졌거나 이상한 값이 와도 프로그램이 멈추지 않게 하는 안전장치다."""
-    settings = default_settings()
+    파일이 망가졌거나 이상한 값이 와도 프로그램이 멈추지 않게 하는 안전장치다.
+    base(지금 저장된 설정)를 주면 raw에 없거나 틀린 값은 base의 값을 그대로 쓴다. 안 주면 기본값으로 채운다."""
+    settings = dict(base) if base is not None else default_settings()
     if not isinstance(raw, dict):
         return settings
 
@@ -139,7 +152,10 @@ def clean_settings(raw):
         settings[POMODORO_SOUND_KEY] = sound
 
     position = raw.get(POMODORO_POSITION_KEY)
-    if isinstance(position, dict):
+    if position is None and POMODORO_POSITION_KEY in raw:
+        # null은 "원래 자리로 되돌리기"라는 뜻이다 (base에 위치가 있어도 지운다)
+        settings[POMODORO_POSITION_KEY] = None
+    elif isinstance(position, dict):
         x, y = position.get("x"), position.get("y")
         # 숫자(bool 제외)이고 한계 안일 때만 인정한다. nan, 무한대는 비교가 거짓이 되어 걸러진다
         if all(isinstance(v, (int, float)) and not isinstance(v, bool) and -MAX_POSITION <= v <= MAX_POSITION for v in (x, y)):
@@ -175,25 +191,84 @@ def clean_settings(raw):
     return settings
 
 
-def load_settings():
-    """settings.json을 읽어서 돌려준다. 파일이 없거나 읽을 수 없으면 기본값을 돌려준다."""
-    with _lock:
+def _move_broken_file():
+    """깨진 settings.json을 같은 폴더의 settings.broken-날짜-시각.json으로 옮기고 그 경로를 돌려준다.
+    옮기지 않으면 다음 저장이 덮어써서 옛 내용을 영영 볼 수 없다 (손으로 되살릴 기회를 남긴다)."""
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    base = os.path.join(os.path.dirname(SETTINGS_PATH), "settings.broken-" + stamp)
+    path, number = base + ".json", 1
+    while os.path.exists(path):  # 같은 초에 두 번 깨지는 일은 드물지만, 그래도 앞의 사본을 덮지 않게 번호를 붙인다
+        number += 1
+        path = f"{base}-{number}.json"
+    os.rename(SETTINGS_PATH, path)
+    return path
+
+
+def _read_locked():
+    """settings.json을 읽어 정리한 값을 돌려준다. _lock을 쥔 채로 불러야 한다.
+    - 파일이 없으면(처음 실행) 기본값
+    - 내용이 깨졌으면(정전으로 빈 파일이 된 경우 등) 그 파일을 옆으로 옮겨 두고 기본값
+    - 그 밖의 이유로 읽지 못하면 SettingsUnreadable"""
+    global _broken_notice
+    try:
+        with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+            return clean_settings(json.load(f))
+    except FileNotFoundError:
+        return default_settings()
+    # ValueError: JSON 형식이 깨졌거나(JSONDecodeError) 글자 인코딩이 이상한(UnicodeDecodeError) 경우를 모두 포함한다
+    except ValueError:
         try:
-            with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
-                return clean_settings(json.load(f))
-        # ValueError: JSON 형식이 깨졌거나(JSONDecodeError) 글자 인코딩이 이상한(UnicodeDecodeError) 경우를 모두 포함한다
-        except (OSError, ValueError):
-            return default_settings()
+            moved = _move_broken_file()
+        except OSError as error:
+            raise SettingsUnreadable(UNREADABLE_MESSAGE) from error
+        print(f"[설정 파일 깨짐] {moved}로 옮겨 두고 기본값으로 시작합니다")
+        _broken_notice = f"설정 파일이 깨져 있어서 기본값으로 시작했습니다. 옛 파일은 {os.path.basename(moved)}로 남겨 두었습니다."
+        return default_settings()
+    except OSError as error:
+        print(f"[설정 읽기 실패] {error}")
+        raise SettingsUnreadable(UNREADABLE_MESSAGE) from error
+
+
+def _write_locked(settings):
+    """정리된 설정을 settings.json에 쓴다. _lock을 쥔 채로 불러야 한다."""
+    # 임시 파일에 먼저 쓰고 한 번에 바꿔치기(os.replace)한다.
+    # 쓰는 도중에 프로그램이 꺼져도 settings.json이 반쯤 쓰인 채로 남지 않는다
+    temp_path = SETTINGS_PATH + ".tmp"
+    with open(temp_path, "w", encoding="utf-8") as f:
+        json.dump(settings, f, ensure_ascii=False, indent=2)
+    os.replace(temp_path, SETTINGS_PATH)
+
+
+def load_settings():
+    """settings.json을 읽어서 돌려준다. 파일이 없거나 깨졌으면 기본값, 읽지 못하면 SettingsUnreadable."""
+    with _lock:
+        return _read_locked()
+
+
+def pop_broken_notice():
+    """깨진 설정 파일을 옮겨 두었다는 안내를 한 번 꺼낸다 (없으면 None)."""
+    global _broken_notice
+    with _lock:
+        notice, _broken_notice = _broken_notice, None
+    return notice
 
 
 def save_settings(raw):
-    """설정을 정리해서 settings.json에 저장하고, 저장된 값을 돌려준다."""
-    settings = clean_settings(raw)
+    """받은 값을 지금 저장된 설정에 합쳐서 settings.json에 저장하고, 저장된 설정 전체를 돌려준다.
+    받은 값에 없는 설정이나 틀린 값은 저장된 값을 그대로 둔다(일부만 보내도 나머지가 기본값으로 지워지지 않는다).
+    지금 설정을 읽지 못하면 덮어쓰지 않고 SettingsUnreadable을 낸다."""
     with _lock:
-        # 임시 파일에 먼저 쓰고 한 번에 바꿔치기(os.replace)한다.
-        # 쓰는 도중에 프로그램이 꺼져도 settings.json이 반쯤 쓰인 채로 남지 않는다
-        temp_path = SETTINGS_PATH + ".tmp"
-        with open(temp_path, "w", encoding="utf-8") as f:
-            json.dump(settings, f, ensure_ascii=False, indent=2)
-        os.replace(temp_path, SETTINGS_PATH)
+        settings = clean_settings(raw, base=_read_locked())
+        _write_locked(settings)
     return settings
+
+
+def add_created_calendar(calendar_id):
+    """StudyFlow가 만든 캘린더의 id를 기록한다. 캘린더를 만든 서버가 바로 적어 두므로,
+    그 뒤 화면의 설정 저장이 실패하거나 앱이 꺼져도 그 캘린더를 StudyFlow에서 "삭제"할 수 있다."""
+    with _lock:
+        settings = _read_locked()
+        ids = [i for i in settings[CREATED_CALENDARS_KEY] if i != calendar_id] + [calendar_id]
+        # 개수 한계를 넘으면 오래된 것부터 뺀다 (새로 만든 것이 잘리지 않게)
+        settings = clean_settings({CREATED_CALENDARS_KEY: ids[-MAX_CREATED_CALENDARS:]}, base=settings)
+        _write_locked(settings)

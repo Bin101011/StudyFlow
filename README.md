@@ -104,6 +104,7 @@ Obsidian을 쓴다면 **설정 탭 → 노트 (Obsidian)** 에 vault 폴더 경�
 | `token.json` | Google 로그인 결과. 비밀번호와 같으니 남에게 주지 마세요. |
 | `studyflow.db` | 할 일, 프로젝트, 우선순위 |
 | `settings.json` | 설정 |
+| `settings.broken-날짜.json` | `settings.json`이 깨졌을 때(정전 등) StudyFlow가 옆에 옮겨 둔 옛 파일. 평소에는 없고, 생기면 화면에 알림이 나옵니다. 필요 없으면 지워도 됩니다 |
 | `events_cache.json` | 오프라인용으로 기억해 둔 일정 |
 | `notes_backup/` | 노트를 처음 고치기 전에 한 번씩 복사해 둔 백업 |
 | `db_backup/` | `studyflow.db`를 하루에 한 번 복사해 둔 백업 (`studyflow-20261031.db`처럼 날짜 이름, 최근 14개만 남김) |

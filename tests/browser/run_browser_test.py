@@ -24,7 +24,7 @@ PROJECT_DIR = os.path.dirname(TESTS_DIR)
 PORT = 5057
 
 # 시험마다 맞는 시험 서버(시드 데이터가 다르다). 적혀 있지 않은 시험은 memo_server.py를 쓴다
-SERVER_FOR = {"steps_test": "pro_server.py", "nocred_test": "nocred_server.py", "login_test": "login_server.py"}
+SERVER_FOR = {"steps_test": "pro_server.py", "nocred_test": "nocred_server.py", "login_test": "login_server.py", "settings_test": "settings_server.py"}
 DEFAULT_SERVER = "memo_server.py"
 
 
