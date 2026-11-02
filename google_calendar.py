@@ -46,14 +46,24 @@ CREDENTIALS_UNREADABLE_MESSAGE = (
 LOGIN_NOT_FINISHED_MESSAGE = (
     "Google 로그인이 끝나지 않았습니다. 위쪽의 '새로고침' 버튼을 누르면 로그인 창을 다시 엽니다."
 )
+LOGIN_EXPIRED_MESSAGE = (
+    "Google 로그인이 만료되었습니다. 위쪽의 '새로고침' 버튼을 누르면 로그인 창을 다시 엽니다."
+)
 
 # 브라우저 로그인을 기다리는 최대 시간(초). 제한이 없으면 로그인 창을 그냥 닫았을 때 영원히 기다리고,
 # 그동안 Google에 가는 다른 요청(일정 불러오기, 새로고침 등)이 모두 멈춘다
 LOGIN_TIMEOUT_SECONDS = 180
 
-# 로그인 창을 열었는데 끝내지 않았으면 True. 그동안은 로그인 창을 저절로 다시 열지 않는다
-# (1분마다 도는 동기화가 그때마다 브라우저 탭을 새로 여는 일을 막는다). 새로고침 버튼이 allow_login_again으로 다시 False로 만든다
-_login_abandoned = False
+# 로그인 상태. 화면 오른쪽 위의 동기화 표시가 이걸 보고 안내한다 (login_status)
+# None: 문제 없음 / "waiting": 브라우저 로그인 창을 열고 기다리는 중 / "needed": 다시 로그인해야 함
+# "needed"인 동안은 로그인 창을 저절로 다시 열지 않는다 (1분마다 도는 동기화가 그때마다 브라우저 탭을 새로 여는 일을 막는다).
+# 새로고침 버튼이 allow_login_again으로 풀어 준다
+_login_state = None
+_login_message = ""  # "needed"일 때 화면에 보여줄 이유 (로그인을 끝내지 않음 / 로그인 만료)
+
+# 브라우저 로그인을 새로 끝낼 때마다 1씩 올라가는 번호. app.py가 이 번호를 보고,
+# 옛 로그인 정보로 만들어 둔 Google 연결을 버리고 새로 만든다 (안 그러면 다시 로그인해도 껐다 켜기 전까지 계속 실패한다)
+login_generation = 0
 
 # 이 파일이 있는 폴더. 어디서 실행하든 credentials.json, token.json을 이 폴더에서 찾기 위함
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -80,16 +90,35 @@ def has_all_scopes():
     return set(SCOPES) <= saved_scopes  # <= : 앞의 집합이 뒤의 집합에 모두 들어 있는가
 
 
+def login_status():
+    """화면에 보여줄 로그인 상태와 안내 문장을 (상태, 문장)으로 돌려준다. 문제가 없으면 (None, "")."""
+    return _login_state, (_login_message if _login_state == "needed" else "")
+
+
 def allow_login_again():
-    """로그인을 끝내지 않아 멈춰 둔 로그인 창 열기를 다시 허락한다. 사용자가 새로고침 버튼을 누를 때 부른다."""
+    """로그인이 필요해서 멈춰 둔 로그인 창 열기를 다시 허락한다. 사용자가 새로고침 버튼을 누를 때 부른다."""
     # global: 함수 안에서 바깥(모듈)의 변수 값을 바꾸겠다는 표시. 없으면 함수 안에 같은 이름의 새 변수가 생긴다
-    global _login_abandoned
-    _login_abandoned = False
+    global _login_state
+    if _login_state == "needed":  # 로그인 창을 기다리는 중("waiting")이면 그대로 둔다
+        _login_state = None
+
+
+def mark_login_expired():
+    """Google 요청 중에 로그인 갱신이 거절됐다(재발급 열쇠가 만료되거나 취소됨). 다시 로그인해야 한다고 표시한다.
+    로그인 창은 저절로 열지 않고, 사용자가 새로고침 버튼을 누를 때 연다."""
+    global _login_state, _login_message
+    if _login_state is None:  # 이미 "로그인 필요"이거나 로그인 창을 기다리는 중이면 그 상태를 그대로 둔다
+        print("[로그인 만료] Google 로그인을 다시 해야 합니다. 화면 위쪽의 '새로고침'을 누르면 로그인 창을 엽니다.")
+        _login_state = "needed"
+        _login_message = LOGIN_EXPIRED_MESSAGE
 
 
 def get_credentials():
     """로그인 정보(creds)를 돌려준다. 저장된 게 있으면 재사용하고, 없으면 브라우저로 로그인한다."""
-    global _login_abandoned
+    global _login_state, _login_message, login_generation
+    if _login_state == "needed":
+        # 다시 로그인해야 하는데 아직 새로고침 버튼을 누르지 않았다. 로그인 창을 다시 열지 않고 바로 안내한다
+        raise CredentialsProblem(_login_message)
     creds = None
 
     # 1) 이전에 로그인해서 저장해둔 token.json이 있으면 읽어온다
@@ -129,15 +158,20 @@ def get_credentials():
             except (ValueError, KeyError):
                 # 파일은 있지만 JSON이 깨졌거나(ValueError), 다른 종류의 JSON이다 (예: 서비스 계정 키)
                 raise CredentialsProblem(CREDENTIALS_UNREADABLE_MESSAGE) from None
-            if _login_abandoned:
-                # 지난번 로그인 창을 끝내지 않았다. 새로고침 버튼을 누를 때까지 창을 다시 열지 않고 바로 안내한다
-                raise CredentialsProblem(LOGIN_NOT_FINISHED_MESSAGE)
+            _login_state = "waiting"  # 화면에 "브라우저에서 로그인을 끝내세요"가 보인다
             try:
                 creds = flow.run_local_server(port=0, timeout_seconds=LOGIN_TIMEOUT_SECONDS)
             except (WSGITimeoutError, AccessDeniedError):
-                # 제한 시간 안에 로그인하지 않았다(창을 닫았거나 그냥 두었다), 또는 Google 로그인 화면에서 "취소"를 눌렀다
-                _login_abandoned = True
+                # 제한 시간 안에 로그인하지 않았다(창을 닫았거나 그냥 두었다), 또는 Google 로그인 화면에서 "취소"를 눌렀다.
+                # 새로고침 버튼을 누를 때까지 창을 다시 열지 않고 바로 안내한다
+                _login_state = "needed"
+                _login_message = LOGIN_NOT_FINISHED_MESSAGE
                 raise CredentialsProblem(LOGIN_NOT_FINISHED_MESSAGE) from None
+            except Exception:
+                _login_state = None  # 그 밖의 오류(로그인 대기용 포트를 못 여는 등)로 끝났다. "기다리는 중"으로 남겨 두지 않는다
+                raise
+            _login_state = None
+            login_generation += 1
 
         # 3) 다음 실행 때 다시 로그인하지 않도록 결과를 파일에 저장
         with open(TOKEN_PATH, "w", encoding="utf-8") as token_file:
@@ -168,6 +202,31 @@ def is_connection_error(error):
     if isinstance(error, TimeoutError):
         return False
     return isinstance(error, (OSError, http.client.HTTPException, httplib2.ServerNotFoundError))
+
+
+def is_offline_error(error):
+    """오류가 인터넷 문제(연결 끊김, 주소 못 찾음, 시간 초과 등)인지 알려준다. 화면에 "오프라인"으로 보여도 되는 오류다.
+    그 밖의 오류(로그인 문제, 프로그램 버그 등)를 "오프라인"으로 보이면 진짜 원인을 알 수 없게 된다.
+    TransportError: 로그인 갱신 요청을 보내다 연결이 안 됐을 때 로그인 라이브러리가 내는 오류"""
+    return isinstance(error, (OSError, http.client.HTTPException, httplib2.HttpLib2Error, TransportError))
+
+
+class LoginCheckingHttp(google_auth_httplib2.AuthorizedHttp):
+    """요청마다 로그인 정보를 붙이고, 만료된 입장권(access token)은 알아서 갱신하는 통로(AuthorizedHttp)에 한 가지를 더했다.
+
+    갱신이 거절되면(RefreshError: 재발급 열쇠가 만료되거나 취소됨. OAuth 동의 화면이 Testing이면 7일마다) "다시 로그인 필요"로
+    표시하고, 화면에 그대로 보일 안내(CredentialsProblem)로 바꿔서 알린다.
+    예전에는 이 오류가 "오프라인"과 "인터넷 연결을 확인하세요"로 잘못 보였고, 껐다 켜야만 다시 로그인할 수 있었다."""
+
+    def request(self, *args, **kwargs):
+        try:
+            return super().request(*args, **kwargs)
+        except RefreshError as error:
+            if error.retryable:
+                raise  # Google 쪽의 잠깐 오류다(서버 오류 등). 로그인 문제가 아니다
+            mark_login_expired()
+            message = _login_message if _login_state == "needed" else LOGIN_EXPIRED_MESSAGE
+            raise CredentialsProblem(message) from error
 
 
 class ResilientHttp(httplib2.Http):
@@ -206,8 +265,8 @@ class ResilientHttp(httplib2.Http):
 def build_service(creds):
     """이미 있는 로그인 정보(creds)로 service 객체를 만든다. 파일을 읽지 않아 빠르다."""
     # 로그인 정보(creds)를 붙여서 요청을 보내는 통로를 직접 만들고, 응답을 기다리는 시간에 제한(30초)을 둔다.
-    # 통로 맨 아래는 끊긴 연결을 알아서 새로 여는 ResilientHttp다
-    http = google_auth_httplib2.AuthorizedHttp(creds, http=ResilientHttp(timeout=REQUEST_TIMEOUT_SECONDS))
+    # 통로 맨 아래는 끊긴 연결을 알아서 새로 여는 ResilientHttp, 그 위는 로그인 만료를 알아채는 LoginCheckingHttp다
+    http = LoginCheckingHttp(creds, http=ResilientHttp(timeout=REQUEST_TIMEOUT_SECONDS))
     # "calendar" API의 "v3" 버전을 쓰겠다는 뜻
     return build("calendar", "v3", http=http)
 

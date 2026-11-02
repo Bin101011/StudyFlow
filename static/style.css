@@ -379,6 +379,16 @@ nav {
     background-color: var(--danger);
 }
 
+/* 브라우저에서 Google 로그인을 기다리는 중: 오류는 아니라서 빨강 대신 주황 */
+#sync-status.login-waiting #sync-text {
+    color: var(--warn);
+    font-weight: 600;
+}
+
+#sync-status.login-waiting #sync-text::before {
+    background-color: var(--warn);
+}
+
 #sync-refresh {
     padding: 4px 10px;
     font-size: 12.5px;

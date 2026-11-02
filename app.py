@@ -13,6 +13,9 @@ import threading
 # 시간을 재는 도구. 캘린더 목록을 기억해둔 지 얼마나 됐는지 계산하는 데 쓴다
 import time
 
+# 오류가 난 자리(어느 파일 몇 번째 줄)를 글자로 만드는 도구. 예상 못 한 오류를 로그에 남길 때 쓴다
+import traceback
+
 # 웹 주소를 분해해서 http/https인지 확인하는 도구, 그리고 주소를 컴퓨터의 기본 브라우저로 여는 도구 (노트 안의 링크용)
 import urllib.parse
 import webbrowser
@@ -142,12 +145,15 @@ def forget_calendar_list():
 
 
 def get_thread_service():
-    """지금 실행 중인 스레드 전용 Google 연결을 돌려준다. 없으면 한 번 만들고, 이후엔 재사용한다."""
+    """지금 실행 중인 스레드 전용 Google 연결을 돌려준다. 없으면 한 번 만들고, 이후엔 재사용한다.
+    그사이 브라우저로 다시 로그인했으면(login_generation이 바뀜) 옛 로그인 정보로 만든 연결은 버리고 새로 만든다."""
     service = getattr(_thread_data, "service", None)
-    if service is None:
+    if service is None or _thread_data.generation != google_calendar.login_generation:
         # 로그인 정보는 연결을 새로 만들 때만 꺼낸다. (일정이 이미 기억되어 있으면 로그인 정보 없이도 보여줄 수 있다)
         service = google_calendar.build_service(get_creds())
         _thread_data.service = service
+        # get_creds 안에서 로그인을 새로 했을 수 있으므로, 번호는 그 뒤에 읽는다
+        _thread_data.generation = google_calendar.login_generation
     return service
 
 
@@ -181,11 +187,14 @@ def fetch_calendar_events(calendar, start, end):
 
 
 def prefetch_one(calendar_id, months):
-    """일정을 미리 받아서 기억해둔다. 뒤에서 하는 일이라 실패해도 조용히 넘어간다."""
+    """일정을 미리 받아서 기억해둔다. 뒤에서 하는 일이라 실패해도 화면에는 알리지 않는다."""
     try:
         event_store.load_months(calendar_id, months, get_thread_service)
-    except Exception:
-        pass
+    except Exception as error:
+        # 인터넷 문제, Google의 거절, 로그인 문제는 조용히 넘어간다 (화면이 그 달을 열 때 다시 받고, 그때 이유를 보여준다).
+        # 그 밖의 오류는 프로그램 문제일 수 있어서 원인을 알 수 있게 로그에 한 번 남긴다
+        if not (google_calendar.is_offline_error(error) or isinstance(error, (HttpError, google_calendar.CredentialsProblem))):
+            report_unexpected("일정 미리 받기", error)
 
 
 def prefetch_neighbors(calendars, months):
@@ -233,10 +242,20 @@ def warm_up():
 _reported_errors = set()
 
 
+def report_unexpected(where, error):
+    """예상하지 못한 오류(프로그램 문제일 수 있다)를 오류가 난 자리(traceback)와 함께 로그(studyflow.log)에 남긴다.
+    같은 곳의 같은 오류는 한 번만 남겨서, 1분마다 같은 내용이 쌓이지 않게 한다. except 블록 안에서 불러야 자리가 찍힌다."""
+    marker = (where, type(error).__name__, str(error))
+    if marker in _reported_errors:
+        return
+    _reported_errors.add(marker)
+    print(f"[예상 밖 오류] {where}: {type(error).__name__}: {error}\n{traceback.format_exc()}")
+
+
 def check_one(calendar):
     """캘린더 하나에 "마지막으로 확인한 뒤 바뀐 게 있나?" 묻고 결과를 글자로 돌려준다.
     "changed"(바뀜), "same"(그대로), "skipped"(바뀐 것을 확인할 수 없는 캘린더라 묻지 않음),
-    "offline"(인터넷 문제), "error"(Google이 거절)"""
+    "offline"(인터넷 문제), "error"(Google이 거절, 로그인 필요, 그 밖의 오류)"""
     try:
         changed = event_store.check_calendar(calendar["id"], get_thread_service)
         if changed is None:
@@ -248,9 +267,16 @@ def check_one(calendar):
             _reported_errors.add(marker)
             print(f"[동기화 건너뜀] '{calendar['summary']}' 캘린더를 확인하지 못했습니다: {error.resp.status}")
         return "error"
-    except Exception:
-        # HttpError가 아닌 오류는 대부분 인터넷 문제다. 상태 표시는 아래에서 한 번에 처리한다
-        return "offline"
+    except google_calendar.CredentialsProblem:
+        # 다시 로그인해야 한다. 화면 위쪽의 동기화 표시가 로그인 안내를 보여준다 (/api/sync-status의 login)
+        return "error"
+    except Exception as error:
+        if google_calendar.is_offline_error(error):
+            # 인터넷 문제다. 상태 표시는 아래 run_sync_cycle에서 한 번에 처리한다
+            return "offline"
+        # 그 밖의 오류는 프로그램 문제일 수 있다. 예전에는 로그 없이 "오프라인"으로만 보여서 원인을 알 수 없었다
+        report_unexpected(f"동기화 확인 '{calendar['summary']}'", error)
+        return "error"
 
 
 def run_sync_cycle():
@@ -290,12 +316,17 @@ def sync_loop():
     """1분마다 run_sync_cycle을 되풀이한다. 프로그램이 켜져 있는 동안 계속 돈다."""
     first = True
     while True:
-        run_sync_cycle()
-        # 프로그램을 켜 둔 채 날짜가 바뀌면 그날의 백업도 만든다. 오늘 것이 이미 있으면 파일이 있는지만 보고 바로 돌아온다
-        database.backup_db()
-        if first:
-            first = False
-            prefetch_around_today()
+        try:
+            run_sync_cycle()
+            # 프로그램을 켜 둔 채 날짜가 바뀌면 그날의 백업도 만든다. 오늘 것이 이미 있으면 파일이 있는지만 보고 바로 돌아온다
+            database.backup_db()
+            if first:
+                first = False
+                prefetch_around_today()
+        except Exception as error:
+            # 위의 일 중 하나에서 예상 못 한 오류가 나도 이 반복은 멈추면 안 된다.
+            # 멈추면 자동 동기화와 하루 한 번 DB 백업이 아무 표시 없이 끊긴다. 로그에 남기고 1분 뒤 다시 한다
+            report_unexpected("자동 동기화", error)
         time.sleep(SYNC_INTERVAL_SECONDS)
 
 
@@ -459,10 +490,17 @@ def api_events():
 
 
 # 동기화 상태: 화면이 15초마다 물어본다. version이 달라졌으면 다른 곳에서 일정이 바뀐 것이니 화면이 일정을 다시 불러온다.
-# lastSync는 마지막으로 동기화에 성공한 시각(초 단위 숫자), online이 False면 지금 Google에 연결할 수 없는 상태다
+# lastSync는 마지막으로 동기화에 성공한 시각(초 단위 숫자), online이 False면 지금 Google에 연결할 수 없는 상태다.
+# login이 "waiting"이면 브라우저 로그인 창을 기다리는 중, "needed"면 다시 로그인해야 한다(이유는 loginMessage)
+def sync_status():
+    status = event_store.status()
+    status["login"], status["loginMessage"] = google_calendar.login_status()
+    return status
+
+
 @app.route("/api/sync-status")
 def api_sync_status():
-    return jsonify(event_store.status())
+    return jsonify(sync_status())
 
 
 # 새로고침 버튼: 기억해둔 일정을 모두 "오래된 일정"으로 만들어서, 화면이 일정을 Google에서 새로 받게 한다.
@@ -477,7 +515,7 @@ def api_refresh():
             event_store.invalidate_all([calendar["id"] for calendar in get_calendar_list()])
         except Exception as error:
             print(f"[새로고침 실패] {error}")
-    return jsonify(event_store.status())
+    return jsonify(sync_status())
 
 
 def missing_key(data, keys):

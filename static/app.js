@@ -6993,9 +6993,18 @@ const syncRefreshButton = document.getElementById("sync-refresh");
 let lastSeenVersion = null;
 // 새로고침 요청이 진행 중인지
 let refreshing = false;
+// 서버가 마지막으로 알려준 로그인 상태. null이면 문제 없음, "waiting"은 브라우저 로그인을 기다리는 중, "needed"는 다시 로그인해야 함
+let lastLoginState = null;
 
 // 동기화 상태 글자를 만든다. 예: "14:32 동기화", "오프라인 · 마지막 동기화 14:32"
 function describeSync(status) {
+    // 로그인 문제가 있으면 연결 상태보다 먼저 알린다 (예전에는 "오프라인"만 보여서 로그인이 필요한 줄 몰랐다)
+    if (status.login === "waiting") {
+        return "브라우저에서 Google 로그인을 끝내세요";
+    }
+    if (status.login === "needed") {
+        return "Google 로그인 필요 · 새로고침을 누르세요";
+    }
     let when = "아직 동기화 안 됨";
     if (status.lastSync) {
         const date = new Date(status.lastSync * 1000);  // 서버는 초 단위, 자바스크립트는 밀리초 단위
@@ -7006,9 +7015,21 @@ function describeSync(status) {
     return status.online ? when : "오프라인 · 마지막 " + when;
 }
 
+// 동기화 상태를 화면에 보인다. 방금 로그인이 끝났으면(로그인 필요/기다리는 중이었다가 풀림) true를 돌려준다
 function showSyncStatus(status) {
     syncTextElement.textContent = describeSync(status);
-    syncStatusElement.classList.toggle("offline", !status.online);
+    // 로그인이 필요하거나 (로그인 문제 없이) 연결이 끊겼으면 빨간색(offline), 로그인을 기다리는 중이면 주황색(login-waiting)
+    syncStatusElement.classList.toggle("offline", status.login === "needed" || (!status.online && !status.login));
+    syncStatusElement.classList.toggle("login-waiting", status.login === "waiting");
+    const loggedInNow = lastLoginState !== null && !status.login;
+    lastLoginState = status.login || null;
+    return loggedInNow;
+}
+
+// 로그인이 막 끝났을 때: 로그인 전에 비어 있거나 지난번 것이던 캘린더 목록과 일정을 새로 받는다
+function reloadAfterLogin() {
+    loadCalendarList();
+    reloadVisibleEvents();
 }
 
 // 지금 화면에 보이는 일정을 Google(서버)에서 다시 받아 온다. 캘린더 탭은 항상, 오늘 탭은 열려 있을 때만 새로고침한다
@@ -7030,9 +7051,10 @@ async function pollSyncStatus() {
             return;
         }
         const status = await response.json();
-        showSyncStatus(status);
-        // 번호가 달라졌다 = 서버가 다른 곳에서 일정이 바뀐 것을 발견했다
-        if (lastSeenVersion !== null && status.version !== lastSeenVersion) {
+        if (showSyncStatus(status)) {
+            reloadAfterLogin();
+        } else if (lastSeenVersion !== null && status.version !== lastSeenVersion) {
+            // 번호가 달라졌다 = 서버가 다른 곳에서 일정이 바뀐 것을 발견했다
             reloadVisibleEvents();
         }
         lastSeenVersion = status.version;
@@ -7064,9 +7086,14 @@ syncRefreshButton.addEventListener("click", async function () {
             throw new Error(await errorMessageFrom(response));
         }
         const status = await response.json();
-        showSyncStatus(status);
+        const loggedInNow = showSyncStatus(status);
         lastSeenVersion = status.version;  // 이 새로고침이 일으킨 변화로 한 번 더 불러오지 않게 번호를 맞춰둔다
-        if (status.online) {
+        if (status.login) {
+            // 로그인 창을 닫았거나 취소했다. 인터넷 탓이 아니라 로그인이 필요하다고 알린다
+            showToast(status.loginMessage || "브라우저에서 Google 로그인을 끝내세요.");
+        } else if (loggedInNow) {
+            reloadAfterLogin();
+        } else if (status.online) {
             reloadVisibleEvents();
         } else {
             showToast("인터넷에 연결할 수 없어 새로 불러오지 못했습니다. 마지막으로 받은 일정을 보여줍니다.");
