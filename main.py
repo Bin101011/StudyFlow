@@ -3,6 +3,7 @@ import os
 import sys
 
 # StudyFlow가 이미 켜져 있으면 두 번째 창을 띄우지 않고 안내만 하고 끝낸다 (자세한 이유는 single_instance.py).
+# 방금 창을 닫아서 앞 프로그램이 아직 끝나는 중이면, 안내를 띄우기 전에 최대 5초 기다렸다가 켠다.
 # 로그 파일을 여는 것보다 먼저 해야 한다: 켜져 있는 쪽이 쓰고 있는 로그를 두 번째 프로그램이 지워 버리지 않도록
 import single_instance
 
@@ -41,6 +42,11 @@ webview.create_window("StudyFlow", app, width=1200, height=800)
 # 주의 2: private_mode=False로 바꾸지 않았다. 그러면 pywebview가 서버 포트를 고정값(42001)으로 바꿔서, 그 포트를 다른 프로그램이 쓰고 있으면 앱이 안 뜬다.
 # 폴더는 프로젝트 안이 아니라 %LOCALAPPDATA%에 둔다 (클라우드 동기화나 Git에 섞이지 않게)
 WEBVIEW_PROFILE = os.path.join(os.environ.get("LOCALAPPDATA") or BASE_DIR, "StudyFlow", "webview_profile")
+
+# 방금 창을 닫고 다시 켰다면 앞 창의 브라우저가 아직 이 폴더를 쥐고 있거나 폴더가 반쯤 지워져 있을 수 있다.
+# 그대로 켜면 화면만 뜨고 달력이 비어 있었다. 앞 브라우저가 놓을 때까지(최대 10초) 기다렸다가 폴더를 비우고 켠다 (single_instance.py)
+if not single_instance.clear_webview_profile(WEBVIEW_PROFILE):
+    print("[시작] 앞 창의 브라우저가 작업 폴더를 놓지 않아 그대로 켭니다. 화면이 비어 보이면 StudyFlow를 껐다 켜 주세요.")
 
 # 창을 실제로 띄운다. 창을 닫을 때까지 여기서 멈춰 있다
 webview.start(storage_path=WEBVIEW_PROFILE)
