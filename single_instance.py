@@ -8,6 +8,8 @@
 # "꺼졌는데 잠금이 남아서 영영 못 켜는" 일이 없다.
 import os
 import shutil
+import sys
+import threading
 import time
 
 try:
@@ -53,35 +55,92 @@ def acquire(lock_path, wait_seconds=WAIT_SECONDS):
     return True
 
 
-# 창 안 브라우저의 작업 폴더를 비울 때 기다리는 최대 시간(초). 앞 브라우저가 이 안에 끝나지 않으면 그냥 켠다
-PROFILE_WAIT_SECONDS = 10
-PROFILE_FOLDER_NAME = "webview_profile"
+def release():
+    """잡고 있던 잠금을 푼다(잡은 적이 없으면 아무것도 안 한다). 프로그램을 끝내기 직전에 exit_now가 부른다.
+    왜: os._exit를 불러도 윈도우가 프로세스를 실제로 거둬 가기까지 2초쯤 걸려서(측정), 그동안 다시 켠 쪽이 잠금을 기다렸다(N25)."""
+    global _lock_file
+    if _lock_file is None:
+        return None
+    try:
+        _lock_file.seek(0)
+        msvcrt.locking(_lock_file.fileno(), msvcrt.LK_UNLCK, 1)  # LK_UNLCK: 잠갔던 첫 1바이트를 푼다
+    except OSError:
+        pass  # 풀기에 실패해도 아래에서 파일을 닫으면 풀린다
+    try:
+        _lock_file.close()
+    except OSError:
+        pass
+    _lock_file = None
+    return None
 
 
-def clear_webview_profile(profile_path, wait_seconds=PROFILE_WAIT_SECONDS):
-    """창 안 브라우저(WebView2)의 작업 폴더를 켜기 직전에 비운다.
+# 창 안 브라우저(WebView2)의 작업 폴더 이름. 실행마다 "webview_profile-날짜시각-프로세스번호"로 새로 만든다.
+#
+# 왜 실행마다 새 폴더인가(docs/review-2026-11.md의 N25): 창을 닫아도 그 브라우저는 몇 초 더 살아 있으면서 작업 폴더를 쥐고 있다.
+# 폴더가 하나뿐이면 닫자마자 다시 켤 때 새 창이 아직 쓰이는 중인(반쯤 지워진) 폴더로 시작해서 화면만 뜨고 달력이 비었고,
+# 놓을 때까지 기다리게 하면 창이 2초쯤 늦게 떴다. 새 폴더를 쓰면 기다릴 필요가 없다.
+# 남은 옛 폴더는 다음에 켤 때 remove_old_webview_profiles가 뒤에서 지운다. 이 폴더들은 창을 닫으면 버리는 임시 폴더라 지워도 잃는 것이 없다
+PROFILE_PREFIX = "webview_profile"
 
-    왜: 창을 닫으면 pywebview가 브라우저가 끝나기를 3초까지만 기다린 뒤 이 폴더를 지운다. 브라우저가 더 오래 살아 있으면
-    폴더가 반쯤만 지워진 채 앞 StudyFlow가 끝나고, 그때 새로 켜면 새 창이 아직 쓰이는 중인 폴더로 시작해서 화면만 뜨고
-    달력이 비었다(docs/review-2026-11.md의 N25). 그래서 앞 브라우저가 폴더를 놓을 때까지(= 지워질 때까지) 다시 시도한다.
-    이 폴더는 원래 창을 닫을 때마다 지우는 임시 폴더라 지워도 잃는 것이 없다.
 
-    다 지웠으면(또는 원래 없었으면) True, 시간 안에 못 지웠으면 False를 돌려준다(그래도 켜기는 계속한다)."""
-    # 실수 방지: 이 용도의 전용 폴더가 아니면 절대 지우지 않는다 (경로를 잘못 넘겨 내 데이터를 지우는 일이 없게)
-    if os.path.basename(os.path.normpath(profile_path)) != PROFILE_FOLDER_NAME:
-        return False
-    deadline = time.monotonic() + wait_seconds
-    while True:
-        if not os.path.exists(profile_path):
-            return True
+def new_webview_profile(root):
+    """이번 실행이 쓸 새 작업 폴더의 경로를 정한다 (만들기는 pywebview가 한다)."""
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    # time_ns로 같은 초에 두 번 불러도 이름이 겹치지 않게 한다
+    return os.path.join(root, f"{PROFILE_PREFIX}-{stamp}-{os.getpid()}-{time.time_ns() % 1000000}")
+
+
+def remove_old_webview_profiles(root, keep):
+    """root 안의 옛 작업 폴더(webview_profile, webview_profile-…)를 keep만 빼고 지운다.
+    앞 브라우저가 아직 쥐고 있는 파일은 기다리지 않고 남겨 둔다(다음에 켤 때 다시 지운다). 오류로 멈추지 않는다."""
+    try:
+        names = os.listdir(root)
+    except OSError:
+        return None
+    for name in names:
+        # 실수 방지: 이 용도의 폴더 이름만 지운다 (같은 폴더에 다른 것이 있어도 건드리지 않게)
+        if name != PROFILE_PREFIX and not name.startswith(PROFILE_PREFIX + "-"):
+            continue
+        path = os.path.join(root, name)
+        if os.path.normcase(os.path.abspath(path)) == os.path.normcase(os.path.abspath(keep)) or not os.path.isdir(path):
+            continue
+        # ignore_errors: 쥐고 있는 파일은 건너뛰고 나머지만 지운다
+        shutil.rmtree(path, ignore_errors=True)
+    return None
+
+
+# 창을 닫은 뒤 화면 요청(노트·메모 저장 등)이 끝나기를 기다리는 최대 시간(초)
+REQUEST_WAIT_SECONDS = 5
+
+
+def wait_for_other_threads(timeout=REQUEST_WAIT_SECONDS):
+    """데몬이 아닌 다른 스레드(화면 요청을 처리하는 스레드 등)가 끝나기를 최대 timeout초 기다린다.
+    창을 닫는 순간 화면이 보낸 노트·하루 메모 저장이 중간에 끊기지 않게 하려는 것이다.
+    그래도 안 끝난 스레드의 이름 목록을 돌려준다 (다 끝났으면 빈 목록)."""
+    deadline = time.monotonic() + timeout
+    for thread in threading.enumerate():
+        if thread is threading.current_thread() or thread.daemon:
+            continue
+        thread.join(max(0.0, deadline - time.monotonic()))
+    return [t.name for t in threading.enumerate() if t is not threading.current_thread() and not t.daemon and t.is_alive()]
+
+
+def exit_now(code=0):
+    """파이썬의 종료 뒤처리를 건너뛰고 프로그램을 바로 끝낸다.
+
+    왜(docs/review-2026-11.md의 N25): 창을 닫은 뒤 파이썬이 끝나는 절차에서 pywebview가 쓰는 .NET 연결 도구(pythonnet)가
+    .NET을 "완전 종료"하는 데 3~6초가 걸렸다(측정). 그동안 두 번 켜기 방지 잠금이 풀리지 않아서, 닫고 바로 다시 켜면 그만큼 늦게 떴다.
+    os._exit는 그 절차 없이 프로세스를 끝내고, 메모리·파일·잠금은 윈도우가 거둬 간다.
+    그 전에 반드시 wait_for_other_threads로 화면 요청이 끝나기를 기다려야 한다. 출력(로그)은 여기서 비우고 끝낸다.
+    두 번 켜기 방지 잠금도 여기서 직접 푼다. 이때는 저장할 것이 다 끝났고 브라우저 작업 폴더도 실행마다 따로라서, 새 StudyFlow가 바로 켜져도 부딪히지 않는다."""
+    for stream in (sys.stdout, sys.stderr):
         try:
-            shutil.rmtree(profile_path)
-            return True
-        except OSError:
-            # 앞 브라우저가 아직 파일을 쥐고 있다(WinError 32). 조금 뒤 남은 것을 다시 지워 본다
-            if time.monotonic() >= deadline:
-                return False
-            time.sleep(RETRY_INTERVAL)
+            if stream is not None:
+                stream.flush()
+        except Exception:
+            pass
+    release()
+    os._exit(code)
 
 
 def show_already_running_message():

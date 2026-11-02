@@ -20,8 +20,11 @@ import traceback
 import urllib.parse
 import webbrowser
 
-# 여러 일을 동시에 시키는 도구. 캘린더 8개를 한꺼번에 조회하는 데 쓴다
-from concurrent.futures import ThreadPoolExecutor
+# 여러 일을 동시에 시키는 도구. 캘린더 8개를 한꺼번에 조회하는 데 쓴다.
+# Future: "나중에 결과가 들어올 자리". 작업자에게 일을 맡기면 이걸 돌려받고, .result()로 결과를 기다린다
+# queue: 작업자들이 할 일을 하나씩 꺼내 가는 줄
+import queue
+from concurrent.futures import Future
 
 # Google API가 돌려주는 오류(404 등)를 잡기 위해 가져온다
 from googleapiclient.errors import HttpError
@@ -83,13 +86,51 @@ SYNC_INTERVAL_SECONDS = 60
 # "#" 다음에 16진수(0-9, a-f) 6글자. 예: #9fc6e7
 COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
 
+class WorkerPool:
+    """작업자(스레드) 여러 명을 미리 만들어 두고 일을 나눠 맡기는 묶음. 파이썬의 ThreadPoolExecutor처럼 submit과 map을 쓴다.
+
+    ThreadPoolExecutor를 쓰지 않는 이유(docs/review-2026-11.md의 N25): 그 작업자들은 프로그램이 끝날 때 하던 일을 마칠 때까지
+    프로그램을 붙잡아 둔다. Google 확인이 재시도 중이면 창을 닫은 뒤에도 3~4초 더 살아 있어서, 닫고 바로 다시 켜면 그만큼 늦게 떴다.
+    이 작업자들은 데몬(daemon) 스레드라서 창을 닫으면 하던 일을 버리고 같이 끝난다.
+    버려도 되는 이유: 맡기는 일은 Google에서 읽어 오기이거나, 화면 요청이 결과를 기다리는 일이다. 화면 요청 스레드는 끝까지 기다려
+    주므로(데몬이 아님), 그 요청이 기다리는 Google 쓰기는 끝까지 처리된다. 일정 기억 파일 저장은 임시 파일 뒤 바꿔치기라 끊겨도 원래 파일이 남는다."""
+
+    def __init__(self, workers, name):
+        self._jobs = queue.SimpleQueue()
+        for number in range(workers):
+            threading.Thread(target=self._work, name=f"{name}-{number + 1}", daemon=True).start()
+
+    def _work(self):
+        while True:
+            future, function, args = self._jobs.get()
+            if not future.set_running_or_notify_cancel():  # 맡긴 쪽이 그사이 취소했으면 건너뛴다
+                continue
+            try:
+                result = function(*args)
+            except BaseException as error:
+                future.set_exception(error)  # 오류는 맡긴 쪽의 .result()에서 다시 난다. 작업자는 계속 일한다
+            else:
+                future.set_result(result)
+
+    def submit(self, function, *args):
+        """일을 맡기고 Future(나중에 결과가 들어올 자리)를 돌려받는다."""
+        future = Future()
+        self._jobs.put((future, function, args))
+        return future
+
+    def map(self, function, items):
+        """items 하나하나에 function을 동시에 실행하고, 결과를 넣은 순서대로 하나씩 돌려준다."""
+        futures = [self.submit(function, item) for item in items]
+        return (future.result() for future in futures)
+
+
 # 일정을 가져오는 작업자(스레드) 8명을 미리 만들어 계속 살려둔다.
 # 요청 때마다 새로 만들면 그때마다 Google 연결도 새로 만들어야 해서 느리다
-_pool = ThreadPoolExecutor(max_workers=8)
+_pool = WorkerPool(8, "일정 작업자")
 
 # 화면이 기다리지 않는 뒤쪽 일(바뀐 게 있는지 확인, 앞뒤 달 미리 받기)을 하는 작업자 2명.
 # 위의 8명과 따로 두어서, 뒤쪽 일 때문에 사용자가 누른 동작이 늦어지지 않게 한다
-_background_pool = ThreadPoolExecutor(max_workers=2)
+_background_pool = WorkerPool(2, "뒤쪽 작업자")
 
 # 스레드마다 따로 보관하는 저장 공간. 각 작업자가 자기 Google 연결을 여기에 담아둔다
 _thread_data = threading.local()
