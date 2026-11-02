@@ -173,5 +173,50 @@ check("새로고침 뒤 로그인을 끝내면 로그인 정보를 돌려준다"
 check("로그인 대기에 시간 제한을 준다", login_calls and login_calls[0].get("timeout_seconds") == 2, login_calls)
 check("로그인 결과를 token.json에 저장한다", os.path.exists(google_calendar.TOKEN_PATH))
 
+# ===== 5) Google 로그인 화면에서 "취소"를 누른 경우 (docs/review-2026-11.md의 H1b) =====
+# Google은 취소하면 로그인 대기 주소로 error=access_denied를 보낸다. 예전에는 "인터넷 연결을 확인하세요"가 나오고,
+# Google 요청이 갈 때마다(1분마다 도는 동기화 포함) 로그인 탭을 새로 열었다
+import urllib.parse  # noqa: E402
+import urllib.request  # noqa: E402
+
+
+class CancelBrowser:
+    """로그인 주소를 받으면, 사람이 Google 화면에서 "취소"를 누른 것처럼 로그인 대기 주소로 error=access_denied를 보낸다."""
+    def open(self, url, new=0, autoraise=True):
+        opened.append(url)
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+        # localhost 대신 127.0.0.1: 윈도우에서 localhost는 연결에 2초 넘게 걸릴 때가 있어서, 취소보다 제한 시간이 먼저 끝나 버린다
+        redirect = query["redirect_uri"][0].replace("localhost", "127.0.0.1")
+        back = redirect + "?" + urllib.parse.urlencode({"error": "access_denied", "state": query["state"][0]})
+        threading.Thread(target=lambda: (time.sleep(0.3), urllib.request.urlopen(back, timeout=10).read()), daemon=True).start()
+        return True
+
+
+os.remove(google_calendar.TOKEN_PATH)  # 다시 처음 실행처럼
+app._calendar_cache["data"] = None
+google_calendar.allow_login_again()
+webbrowser.get = lambda using=None: CancelBrowser()
+opened.clear()
+# 제한 시간을 넉넉히 둔다. 그보다 훨씬 빨리 끝나야 "제한 시간"이 아니라 "취소"를 알아챈 것이다
+google_calendar.LOGIN_TIMEOUT_SECONDS = 10
+
+r, seconds = request_in_thread("get", "/api/calendars", 20)
+if r is None:
+    give_up("취소: 캘린더 목록 요청이 끝난다")
+check("취소: 로그인 창을 한 번 열었다", len(opened) == 1, len(opened))
+check("취소: 제한 시간(10초)을 기다리지 않고 바로 끝난다", seconds < 5, seconds)
+check("취소: 캘린더 목록이 로그인 안내와 함께 끝난다", r.status_code == 502 and "로그인" in error_of(r) and "새로고침" in error_of(r), error_of(r))
+check("취소: 인터넷 탓이라고 하지 않는다", "인터넷" not in error_of(r), error_of(r))
+
+r, seconds = request_in_thread("get", "/api/calendars", 15)
+check("취소 뒤 다음 요청은 바로 끝나고 로그인 탭을 또 열지 않는다", r is not None and seconds < 1 and len(opened) == 1, f"{seconds} {len(opened)}")
+done = threading.Event()
+threading.Thread(target=lambda: (app.run_sync_cycle(), done.set()), daemon=True).start()
+check("취소 뒤 1분마다 도는 동기화도 로그인 탭을 열지 않는다", done.wait(15) and len(opened) == 1, len(opened))
+
+r, seconds = request_in_thread("post", "/api/refresh", 20)
+check("취소 뒤 새로고침을 누르면 로그인 창을 다시 연다", r is not None and len(opened) == 2, len(opened))
+check("취소해도 token.json을 만들지 않는다", not os.path.exists(google_calendar.TOKEN_PATH))
+
 print(f"\n실패 {len(failures)}개")
 sys.exit(1 if failures else 0)

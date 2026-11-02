@@ -13,6 +13,8 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow, WSGITimeoutError
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+# Google 로그인 화면에서 "취소"를 눌렀을 때 나는 오류. oauthlib는 로그인 라이브러리(google_auth_oauthlib)가 안에서 쓰는 라이브러리라 이미 설치돼 있다
+from oauthlib.oauth2.rfc6749.errors import AccessDeniedError
 
 # Google에 요청을 보내고 최대 몇 초까지 기다릴지. 인터넷이 불안정할 때 프로그램이 무한정 멈춰 있지 않게 한다
 REQUEST_TIMEOUT_SECONDS = 30
@@ -132,8 +134,8 @@ def get_credentials():
                 raise CredentialsProblem(LOGIN_NOT_FINISHED_MESSAGE)
             try:
                 creds = flow.run_local_server(port=0, timeout_seconds=LOGIN_TIMEOUT_SECONDS)
-            except WSGITimeoutError:
-                # 제한 시간 안에 로그인하지 않았다(창을 닫았거나 그냥 두었다)
+            except (WSGITimeoutError, AccessDeniedError):
+                # 제한 시간 안에 로그인하지 않았다(창을 닫았거나 그냥 두었다), 또는 Google 로그인 화면에서 "취소"를 눌렀다
                 _login_abandoned = True
                 raise CredentialsProblem(LOGIN_NOT_FINISHED_MESSAGE) from None
 
