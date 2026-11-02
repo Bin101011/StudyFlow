@@ -469,6 +469,7 @@ def api_sync_status():
 # 인터넷이 끊겨 있으면 기억해둔 일정을 그대로 두고 상태만 알려준다 (지우면 보여줄 것이 사라지기 때문)
 @app.route("/api/refresh", methods=["POST"])
 def api_refresh():
+    google_calendar.allow_login_again()  # 지난번 로그인 창을 끝내지 않았다면, 이번에는 로그인 창을 다시 연다
     _calendar_cache["time"] = 0  # 캘린더 목록(색, 새로 생긴 캘린더)도 다시 받게 한다
     run_sync_cycle()  # 지금 연결이 되는지, 바뀐 게 있는지 확인한다
     if event_store.online:

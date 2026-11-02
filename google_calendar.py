@@ -10,7 +10,7 @@ import httplib2
 from google.auth.exceptions import RefreshError, TransportError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google_auth_oauthlib.flow import InstalledAppFlow, WSGITimeoutError
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
@@ -41,6 +41,17 @@ CREDENTIALS_UNREADABLE_MESSAGE = (
     "credentials.json 파일을 읽을 수 없습니다. README의 'Google 연결하기'에서 받은 파일(애플리케이션 유형: 데스크톱 앱)이 맞는지, "
     "내용이 잘리거나 바뀌지 않았는지 확인하세요."
 )
+LOGIN_NOT_FINISHED_MESSAGE = (
+    "Google 로그인이 끝나지 않았습니다. 위쪽의 '새로고침' 버튼을 누르면 로그인 창을 다시 엽니다."
+)
+
+# 브라우저 로그인을 기다리는 최대 시간(초). 제한이 없으면 로그인 창을 그냥 닫았을 때 영원히 기다리고,
+# 그동안 Google에 가는 다른 요청(일정 불러오기, 새로고침 등)이 모두 멈춘다
+LOGIN_TIMEOUT_SECONDS = 180
+
+# 로그인 창을 열었는데 끝내지 않았으면 True. 그동안은 로그인 창을 저절로 다시 열지 않는다
+# (1분마다 도는 동기화가 그때마다 브라우저 탭을 새로 여는 일을 막는다). 새로고침 버튼이 allow_login_again으로 다시 False로 만든다
+_login_abandoned = False
 
 # 이 파일이 있는 폴더. 어디서 실행하든 credentials.json, token.json을 이 폴더에서 찾기 위함
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -67,8 +78,16 @@ def has_all_scopes():
     return set(SCOPES) <= saved_scopes  # <= : 앞의 집합이 뒤의 집합에 모두 들어 있는가
 
 
+def allow_login_again():
+    """로그인을 끝내지 않아 멈춰 둔 로그인 창 열기를 다시 허락한다. 사용자가 새로고침 버튼을 누를 때 부른다."""
+    # global: 함수 안에서 바깥(모듈)의 변수 값을 바꾸겠다는 표시. 없으면 함수 안에 같은 이름의 새 변수가 생긴다
+    global _login_abandoned
+    _login_abandoned = False
+
+
 def get_credentials():
     """로그인 정보(creds)를 돌려준다. 저장된 게 있으면 재사용하고, 없으면 브라우저로 로그인한다."""
+    global _login_abandoned
     creds = None
 
     # 1) 이전에 로그인해서 저장해둔 token.json이 있으면 읽어온다
@@ -108,7 +127,15 @@ def get_credentials():
             except (ValueError, KeyError):
                 # 파일은 있지만 JSON이 깨졌거나(ValueError), 다른 종류의 JSON이다 (예: 서비스 계정 키)
                 raise CredentialsProblem(CREDENTIALS_UNREADABLE_MESSAGE) from None
-            creds = flow.run_local_server(port=0)
+            if _login_abandoned:
+                # 지난번 로그인 창을 끝내지 않았다. 새로고침 버튼을 누를 때까지 창을 다시 열지 않고 바로 안내한다
+                raise CredentialsProblem(LOGIN_NOT_FINISHED_MESSAGE)
+            try:
+                creds = flow.run_local_server(port=0, timeout_seconds=LOGIN_TIMEOUT_SECONDS)
+            except WSGITimeoutError:
+                # 제한 시간 안에 로그인하지 않았다(창을 닫았거나 그냥 두었다)
+                _login_abandoned = True
+                raise CredentialsProblem(LOGIN_NOT_FINISHED_MESSAGE) from None
 
         # 3) 다음 실행 때 다시 로그인하지 않도록 결과를 파일에 저장
         with open(TOKEN_PATH, "w", encoding="utf-8") as token_file:
