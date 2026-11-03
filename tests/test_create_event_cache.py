@@ -378,6 +378,22 @@ check("늦게 끝난 옛 확인 뒤에도 폰에서 고친 것을 알아챔", cl
 check("그 뒤 폰에서 고친 제목이 보임", "그 뒤 폰에서 고침" in titles(get_events("2026-09-27", "2026-11-08")[1]))
 drain()
 
+# --- 24. 화면이 정한 번호로 만든다 (저장을 기다리지 않고 먼저 그린 일정을 같은 번호로 이어받으려고)
+chosen = "0123456789abcdef0123456789abcdef"
+response = client.post("/api/events", json={"id": chosen, "calendarId": "me@test", "title": "화면이 정한 번호", "allDay": False,
+                                            "start": "2026-10-24T09:00", "end": "2026-10-24T10:00"})
+fake.reset_calls()
+events = get_events("2026-10-24", "2026-10-25")[1]
+check("화면이 정한 번호로 만들어지고 Google 없이 그 번호로 보임",
+      response.status_code == 201 and chosen in fake.events["me@test"] and [e["id"] for e in events if e["title"] == "화면이 정한 번호"] == [chosen]
+      and fake.calls["get_events"] == 0, f"{response.status_code} {fake.calls}")
+for bad in ("ABC12", "abc", "abc_def", "w" * 5, 12345, "a" * 1025):
+    response = client.post("/api/events", json={"id": bad, "calendarId": "me@test", "title": "틀린 번호", "allDay": True,
+                                                "start": "2026-10-24", "end": "2026-10-25"})
+    check(f"틀린 번호({str(bad)[:12]})는 400이고 만들지 않음", response.status_code == 400 and "틀린 번호" not in titles(get_events("2026-10-24", "2026-10-25")[1]),
+          str(response.status_code))
+drain()
+
 # --- 15. 다시 켜도(기억 파일에서 읽어도) 추가한 일정이 남아 있다
 app.event_store.save(force=True)
 app.event_store = event_cache.EventCache(app.event_store.path)

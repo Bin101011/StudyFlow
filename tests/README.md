@@ -49,12 +49,26 @@
 | `order_test` | 오늘 할 일 순서 바꾸기 | `memo_server.py` |
 | `pmemo_test` / `tmemo_test` | 프로젝트 메모 / 할 일 메모 | `memo_server.py` |
 | `memo_test_cal` | 달력의 일정 메모, 하루 메모 | `memo_server.py` |
+| `fast_event_test` | 새 일정(붙여넣기, 일정 추가 창)을 Google 저장을 기다리지 않고 바로 그리는지: 저장 중에는 흐리게 보이고 눌러도 수정 창이 안 열리는지, 저장이 끝나면 같은 번호의 일정 하나로 이어받는지(20ms마다 지켜봐서 잠깐 사라지거나 두 개가 되는 순간도 잡는다), 연달아 붙여넣기, 키를 꾹 눌러 반복된 Ctrl+V 무시, 저장 실패 때 지우고 알리기, 일정 추가 창은 쓴 내용 그대로 다시 열기. Google이 느리거나 실패하는 상황은 아래 늦추기 스위치로 만든다 | `memo_server.py` |
 | `month_test` | 월간 달력 6/7줄, 이전/다음 이동 | `memo_server.py` |
 | `rollover_test` | 오늘 탭을 켜 둔 채 자정이 지났을 때 새 날짜로 넘어가기 | `memo_server.py` |
 | `purify_test` | 노트 읽기 화면: 평소 마크다운이 서식대로 보이는지, 공격 문장(`<script>`, `onerror`, `javascript:` 링크 등 23개)이 실행되지 않는지. 임시 vault 폴더를 만들어 쓰고 끝나면 지운다. **`static/lib/`의 `marked`나 `DOMPurify`를 새 버전으로 바꿀 때마다 돌린다** | `memo_server.py` |
 | `login_test` | Google 로그인이 필요할 때 오른쪽 위 동기화 표시: 켜자마자 로그인 창을 기다리는 동안 "브라우저에서 Google 로그인을 끝내세요", 창을 닫거나 취소하면 "Google 로그인 필요"(오프라인이 아님), 새로고침 알림, 로그인을 끝내면 캘린더 목록을 새로 받는지. 지난번 캘린더·일정이 저장된 상태로 시작한다 | `login_server.py` (로그인 부분은 진짜 코드, 브라우저는 여는 척만) |
 | `settings_test` | 설정 저장: 켤 때 settings.json을 못 읽으면 알림이 나오고 설정을 바꿔도 파일을 덮지 않는지, 정상으로 켜면 설정 하나만 바뀌는지, 화면의 설정 저장이 실패해도 새로 만든 캘린더가 다시 켠 뒤 "삭제"로 보이는지, 깨진 파일이면 알림과 옛 파일 사본이 남는지 | `settings_server.py` (잠김·저장 실패·깨진 파일 스위치) |
 | `nocred_test` | `credentials.json`이 없는 첫 실행 모습(친구가 Google 설정을 하기 전): 왼쪽 캘린더 목록 칸과 알림에 파일 안내가 나오는지, 모든 탭이 오류 없이 열리는지. `NOCRED_SHOT=저장할경로.png`를 주면 그 화면을 사진으로 저장한다 | `nocred_server.py` (가짜 Google 없음) |
+
+### 응답 늦추기·실패 스위치 (`memo_server.py`)
+
+화면 시험이 "서버나 Google이 느릴 때", "저장에 실패할 때"를 만들 때 쓴다. 시험 안에서 이 주소를 부르면 그 뒤로 맞는 요청이 늦어지거나 실패한다.
+
+```
+/__test/rule?method=POST&path=/api/events&ms=2000&count=1             다음 일정 저장 한 번을 2초 늦춘다
+/__test/rule?method=POST&path=/api/events&ms=500&status=502&count=1   0.5초 뒤 502로 실패시킨다(저장하지 않음)
+/__test/rule?method=GET&path=/api/time-blocks&ms=2000,0&count=2&after=1   처리한 뒤 응답만 늦춘다(옛 내용이 늦게 도착), 두 번째는 바로
+/__test/rule                                                           모든 스위치를 끈다
+```
+
+`ms`를 여러 개 주면 맞는 요청마다 차례로 쓴다. `count`가 없으면 끌 때까지 계속 적용된다.
 
 ### 알려진 함정
 

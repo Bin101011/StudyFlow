@@ -715,6 +715,12 @@ input.color-dot::-webkit-color-swatch {
     overflow-wrap: anywhere;  /* 띄어쓰기 없이 너무 긴 제목만 칸 끝에서 끊는다 */
 }
 
+/* 저장을 기다리지 않고 먼저 그린 새 일정: Google 저장이 끝날 때까지 흐리게 보인다 (app.js의 createEventDrawnFirst) */
+.fc .event-saving {
+    opacity: 0.55;
+    cursor: progress;
+}
+
 /* 월간 보기: 일정 블록 위쪽 간격 */
 .fc .fc-daygrid-event {
     margin-top: var(--event-gap);

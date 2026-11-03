@@ -71,6 +71,13 @@ tabButtons.forEach(function (button) {
 // Set은 중복 없이 값을 담는 상자다 (파이썬의 set과 같다)
 const hiddenCalendarIds = new Set();
 
+// 저장을 기다리지 않고 달력에 먼저 그린 새 일정들 (아래 "새 일정을 저장 전에 먼저 그리기").
+// Map: 일정 번호 → { event: 먼저 그린 FullCalendar 일정, savedAt: 저장이 끝난 시각(아직이면 null) }.
+// 달력이 처음 그려질 때 일정 함수가 이것을 읽으므로 달력보다 먼저 선언한다
+const drawnBeforeSave = new Map();
+// 달력이 일정을 불러온 횟수. FullCalendar는 불러오기가 겹치면 마지막 것의 결과만 쓰므로, 먼저 그린 일정도 마지막 불러오기에서만 넘긴다
+let eventFetchCount = 0;
+
 // 달력이 그려질 빈 칸(index.html의 id="calendar-view")을 찾는다
 const calendarElement = document.getElementById("calendar-view");
 
@@ -231,6 +238,8 @@ const calendar = new FullCalendar.Calendar(calendarElement, {
     // 일정이 필요할 때마다 FullCalendar가 이 함수를 불러준다.
     // info: 지금 화면에 보이는 기간 정보, successCallback: 일정을 넘겨줄 때 부르는 함수
     events: async function (info, successCallback, failureCallback) {
+        const fetchStarted = Date.now();  // 먼저 그린 일정을 이어받을 때 쓴다 (takeOverDrawnEvents)
+        const fetchNumber = ++eventFetchCount;
         try {
             // Flask의 /api/events에 "이 기간의 일정 주세요" 하고 요청한다
             const response = await fetch(
@@ -251,6 +260,12 @@ const calendar = new FullCalendar.Calendar(calendarElement, {
                     event.display = "none";
                 }
             });
+
+            // 먼저 그려 둔 새 일정 중 서버에서 같은 번호가 온 것은 빼서, 서버 것이 그 자리를 이어받게 한다 (두 개로 보이지 않게).
+            // 이 뒤에 시작한 불러오기가 있으면 FullCalendar가 이 결과를 버리므로, 여기서 빼면 그 일정이 잠깐 사라진다. 그래서 마지막 것만
+            if (fetchNumber === eventFetchCount) {
+                takeOverDrawnEvents(events, info.start, info.end, fetchStarted);
+            }
 
             // FullCalendar에게 일정을 넘겨주면 달력에 표시된다
             successCallback(events);
@@ -562,8 +577,6 @@ let hoveredEvent = null;
 let hoveredDate = null;
 // Ctrl+C로 복사해둔 일정 정보. null이면 복사한 게 없다
 let copiedEvent = null;
-// 붙여넣는 요청이 진행 중인지 (Ctrl+V를 연타해도 중복으로 만들어지지 않게 한다)
-let pasting = false;
 
 // 지금 수정 중인 일정. null이면 "새 일정 추가" 모드다
 let editingEvent = null;
@@ -1101,6 +1114,11 @@ function openAddDialog(info) {
 // 일정을 클릭했을 때: 그 일정의 값으로 채운 수정 창을 연다
 function openEditDialog(info) {
     const event = info.event;
+    // 저장을 기다리지 않고 먼저 그린 새 일정은 아직 Google에 없어서 고칠 수 없다
+    if (event.extendedProps.saving) {
+        showToast("아직 저장하는 중입니다. 잠시 뒤 다시 눌러 주세요.");
+        return;
+    }
     // 공휴일 캘린더처럼 쓸 수 없는 캘린더의 일정은 수정 창을 열지 않는다
     if (!event.extendedProps.canEdit) {
         showToast("이 캘린더의 일정은 수정할 수 없습니다.");
@@ -1166,6 +1184,88 @@ function readTimeFields() {
     return { allDay: false, start: start, end: end };
 }
 
+// ---------- 새 일정을 저장 전에 먼저 그리기 (docs/review-2026-11.md의 N26 ②) ----------
+// 새 일정(붙여넣기, 일정 추가 창)은 Google 저장(0.4~1.4초)을 기다리지 않고 달력에 먼저 그린다.
+// 일정 번호를 화면이 미리 정해서 서버에 보내므로, 먼저 그린 일정과 저장된 일정의 번호가 같다.
+// 그래서 다시 불러온 일정이 도착하면 먼저 그린 것을 빼고 서버 것이 그 자리를 이어받는다 (깜빡이거나 두 개로 보이지 않는다).
+// 저장하는 동안은 흐리게 보이고 누르거나 끌 수 없다(아직 Google에 없어서 고칠 수 없다). 실패하면 지운다.
+
+// Google 일정 번호로 쓸 글자 32개(0-9, a-f)를 무작위로 만든다. Google은 영문 소문자와 숫자로 된 번호를 받는다
+function newEventId() {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    return Array.from(bytes, function (b) {
+        return b.toString(16).padStart(2, "0");
+    }).join("");
+}
+
+// 새 일정을 달력에 먼저 그리고 Google에 저장한다. body는 POST /api/events에 보낼 내용이다(번호는 여기서 붙인다).
+// 저장에 실패하면 먼저 그린 일정을 지우고 오류를 던진다
+async function createEventDrawnFirst(body) {
+    body.id = newEventId();
+    const color = (editableCalendars.find(function (cal) {
+        return cal.id === body.calendarId;
+    }) || {}).color;
+    const event = calendar.addEvent({
+        id: body.id,
+        title: body.title,
+        start: body.start,
+        end: body.end,
+        allDay: body.allDay,
+        color: color,
+        // 서버가 보내는 일정과 같은 값들 (툴팁, 복사, 캘린더 숨기기가 그대로 동작하게)
+        calendarId: body.calendarId,
+        canEdit: true,
+        description: body.description,
+        saving: true,                 // 저장하는 중: 누르면 안내만 한다 (openEditDialog)
+        editable: false,              // 저장하는 중에는 끌 수 없다
+        classNames: ["event-saving"], // 흐리게 보인다 (style.css)
+        display: hiddenCalendarIds.has(body.calendarId) ? "none" : "auto",
+    });
+    drawnBeforeSave.set(body.id, { event: event, savedAt: null });
+
+    try {
+        await sendRequest("/api/events", "POST", body);
+    } catch (error) {
+        const entry = drawnBeforeSave.get(body.id);
+        if (entry) {
+            entry.event.remove();
+            drawnBeforeSave.delete(body.id);
+        }
+        throw error;
+    }
+
+    // 저장이 끝났다. 서버 것이 이어받기 전이라도 평소 일정처럼 보이고 누를 수 있게 한다 (번호가 같아서 고쳐도 된다)
+    const entry = drawnBeforeSave.get(body.id);
+    if (entry) {
+        entry.savedAt = Date.now();
+        entry.event.setExtendedProp("saving", false);
+        entry.event.setProp("editable", true);
+        entry.event.setProp("classNames", []);
+    }
+    calendar.refetchEvents();  // 서버의 일정이 같은 번호로 이어받는다 (서버 기억에서 바로 와서 빠르다)
+}
+
+// 달력이 일정을 새로 받을 때(위 events 함수) 부른다. 먼저 그린 일정을 언제 빼는지 정한다:
+//  - 서버에서 같은 번호가 왔으면 뺀다. 서버 것이 그 자리를 이어받는다
+//  - 저장이 끝난 뒤에 시작한 불러오기인데 그 기간에 있어야 할 일정이 안 왔으면(그사이 다른 곳에서 지움) 뺀다
+//  - 아직 저장 중이면 그대로 둔다 (15초마다 다시 불러와도 사라지지 않는다)
+function takeOverDrawnEvents(serverEvents, rangeStart, rangeEnd, fetchStarted) {
+    if (drawnBeforeSave.size === 0) {
+        return;
+    }
+    const arrived = new Set(serverEvents.map(function (event) {
+        return event.id;
+    }));
+    drawnBeforeSave.forEach(function (entry, eventId) {
+        const event = entry.event;
+        const inRange = event.start < rangeEnd && (event.end || event.start) > rangeStart;
+        if (arrived.has(eventId) || (entry.savedAt !== null && fetchStarted > entry.savedAt && inRange)) {
+            event.remove();
+            drawnBeforeSave.delete(eventId);
+        }
+    });
+}
+
 // 저장/삭제 중에는 버튼을 눌러도 반응하지 않게 해서 중복 요청을 막는다
 function setDialogBusy(busy) {
     eventSaveButton.disabled = busy;
@@ -1214,7 +1314,29 @@ async function saveEvent() {
             if (eventMemoInput.value.trim()) {
                 body.description = eventMemoInput.value.trim();
             }
-            await sendRequest("/api/events", "POST", body);
+            // 새 일정은 저장을 기다리지 않는다: 창을 바로 닫고 달력에 먼저 그린다 (위 "새 일정을 저장 전에 먼저 그리기").
+            // 저장에 실패하면 쓴 내용 그대로 창을 다시 열어서, 예전처럼 고쳐서 다시 저장할 수 있게 한다
+            const typed = {
+                title: eventTitleInput.value,
+                description: eventMemoInput.value,
+                calendarId: eventCalendarSelect.value,
+                allDay: eventAllDayCheckbox.checked,
+                startDate: eventStartDate.value,
+                startTime: eventStartTime.value,
+                endDate: eventEndDate.value,
+                endTime: eventEndTime.value,
+            };
+            eventDialog.close();
+            createEventDrawnFirst(body).then(reloadTimelineIfVisible, function (error) {
+                if (eventDialog.open) {
+                    // 그사이 다른 일정 창을 열었으면 그 창을 덮지 않고 알리기만 한다
+                    showToast("'" + typed.title + "' 일정을 추가하지 못했습니다: " + error.message);
+                    return;
+                }
+                showEventDialog(typed);
+                eventError.textContent = error.message;
+            });
+            return;
         }
 
         eventDialog.close();
@@ -1371,9 +1493,6 @@ async function pasteCopiedEvent() {
         showToast("붙여넣을 날짜 칸 위에 마우스를 올려주세요.");
         return;
     }
-    if (pasting) {
-        return;
-    }
 
     // 붙여넣을 날짜 칸에 맞춰 시작/끝을 계산한다
     let start;
@@ -1391,25 +1510,23 @@ async function pasteCopiedEvent() {
         end = toDateText(endDate) + "T" + toTimeText(endDate);
     }
 
-    pasting = true;
+    const body = {
+        calendarId: copiedEvent.calendarId || defaultCalendarId,
+        title: copiedEvent.title,
+        allDay: copiedEvent.allDay,
+        start: start,
+        end: end,
+    };
+    if (copiedEvent.description) {
+        body.description = copiedEvent.description;
+    }
+    // 저장을 기다리지 않고 달력에 먼저 그린다. 앞의 붙여넣기가 저장 중이어도 바로 이어서 붙여넣을 수 있다
+    // (예전에는 앞 저장이 끝날 때까지 Ctrl+V를 말없이 무시했다. 키를 꾹 눌러 반복되는 것은 아래 keydown이 막는다)
     try {
-        const body = {
-            calendarId: copiedEvent.calendarId || defaultCalendarId,
-            title: copiedEvent.title,
-            allDay: copiedEvent.allDay,
-            start: start,
-            end: end,
-        };
-        if (copiedEvent.description) {
-            body.description = copiedEvent.description;
-        }
-        await sendRequest("/api/events", "POST", body);
-        calendar.refetchEvents();
-        showToast("붙여넣었습니다: " + copiedEvent.title);
+        await createEventDrawnFirst(body);
+        showToast("붙여넣었습니다: " + body.title);
     } catch (error) {
         showToast("붙여넣지 못했습니다: " + error.message);
-    } finally {
-        pasting = false;
     }
 }
 
@@ -1426,7 +1543,8 @@ document.addEventListener("keydown", function (e) {
 
     if (e.ctrlKey && e.key.toLowerCase() === "c") {
         copyHoveredEvent();
-    } else if (e.ctrlKey && e.key.toLowerCase() === "v") {
+    } else if (e.ctrlKey && e.key.toLowerCase() === "v" && !e.repeat) {
+        // e.repeat: 키를 꾹 누르고 있어서 저절로 반복된 입력. 같은 일정이 여러 개 생기지 않게 무시한다
         pasteCopiedEvent();
     }
 });
@@ -6451,7 +6569,7 @@ vaultPathInput.addEventListener("change", async function () {
 let settings = { defaultCalendarId: "" };
 // 서버에서 설정을 제대로 불러왔는가. 못 불러온 채 저장하면 위의 거의 빈 값이 진짜 설정(vault 경로 등)을 덮을 수 있어서 저장하지 않는다
 let settingsLoaded = false;
-// 일정을 쓸 수 있는 캘린더 목록 ({id, primary}). loadCalendarList가 채운다
+// 일정을 쓸 수 있는 캘린더 목록 ({id, primary, color}). loadCalendarList가 채운다 (color는 새 일정을 먼저 그릴 때 쓴다)
 const editableCalendars = [];
 
 const sliderListElement = document.getElementById("slider-list");
@@ -6700,6 +6818,12 @@ defaultCalendarSelect.addEventListener("change", function () {
 
 // 지금 화면에 있는 일정 중 이 캘린더의 일정을 새 색으로 바꿔 그린다
 function applyCalendarColor(calendarId, color) {
+    const editable = editableCalendars.find(function (cal) {
+        return cal.id === calendarId;
+    });
+    if (editable) {
+        editable.color = color;  // 이 캘린더에 새 일정을 먼저 그릴 때도 새 색을 쓴다
+    }
     calendar.batchRendering(function () {
         calendar.getEvents().forEach(function (event) {
             if (event.extendedProps.calendarId === calendarId) {
@@ -6784,7 +6908,7 @@ async function loadCalendarList() {
             if (cal.canEdit) {
                 eventCalendarSelect.add(new Option(cal.name, cal.id));
                 defaultCalendarSelect.add(new Option(cal.name, cal.id));
-                editableCalendars.push({ id: cal.id, primary: cal.primary });
+                editableCalendars.push({ id: cal.id, primary: cal.primary, color: cal.color });
             }
 
             // 이름은 span에 넣어서 남는 폭을 차지하게 한다 (오른쪽 끝에 지우기 버튼이 올 자리)

@@ -639,6 +639,9 @@ def write_event(failure_message, calendar_ids, event_id, operation, remember):
 # 일정 메모(Google Calendar의 "설명" 칸)의 최대 글자 수. Google의 한도(8192자)보다 조금 작게 잡았다
 EVENT_DESCRIPTION_MAX = 8000
 
+# Google이 받는 일정 번호 모양: 영문 소문자 a~v와 숫자(base32hex), 5~1024글자
+EVENT_ID_PATTERN = re.compile(r"^[a-v0-9]{5,1024}$")
+
 
 def read_description(data):
     """요청에서 일정 메모(description)를 꺼낸다. (메모, 오류 응답)을 돌려준다.
@@ -667,8 +670,11 @@ def api_create_event():
         return error_response
 
     calendar_id = data["calendarId"]
-    # 일정 번호를 여기서 정한다. 보내기 전에 번호를 알아야 "StudyFlow가 쓰는 일정"으로 적어 둘 수 있다 (write_event)
-    event_id = google_calendar.new_event_id()
+    # 일정 번호. 화면이 저장을 기다리지 않고 일정을 먼저 그릴 때는 화면이 번호를 정해 보낸다(같은 번호로 이어받으려고).
+    # 안 보내면 여기서 정한다. 보내기 전에 번호를 알아야 "StudyFlow가 쓰는 일정"으로 적어 둘 수 있다 (write_event)
+    event_id = data.get("id") or google_calendar.new_event_id()
+    if not isinstance(event_id, str) or not EVENT_ID_PATTERN.match(event_id):
+        return jsonify({"error": "'id'는 영문 소문자(a~v)와 숫자 5~1024글자여야 합니다."}), 400
     error_response = write_event("일정을 추가하지 못했습니다.", [calendar_id], event_id, lambda service: google_calendar.create_event(
         service, calendar_id, data["title"], data["allDay"], data["start"], data["end"], description, event_id
     ), lambda created: event_store.remember_written(calendar_id, created))

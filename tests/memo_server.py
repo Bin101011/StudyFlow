@@ -1,10 +1,10 @@
 # 일정 메모 / 하루 메모 테스트용 서버 (가짜 Google + 임시 DB). 실제 Google과 내 데이터는 건드리지 않는다
-import os, sys, datetime
+import os, sys, datetime, threading, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fake_google
 fake = fake_google.install()
 import event_cache, app, database
-from flask import jsonify
+from flask import jsonify, request
 
 app.event_store = event_cache.EventCache(os.path.join(fake_google.TMP, "cache.json"))
 database.init_db()
@@ -43,7 +43,77 @@ def __state():
     for cal, items in fake.events.items():
         for event_id, event in items.items():
             events[event["summary"] + "|" + cal] = {"id": event_id, "description": event.get("description"), "start": event["start"]}
-    return jsonify({"events": events, "patches": getattr(fake, "patches", []), "creates": fake.calls.get("create_event", 0)})
+    # list: 제목이 같은 일정도 하나씩 (복사·붙여넣기한 일정은 제목이 같아서 events에서는 겹친다)
+    listed = [{"id": event_id, "title": event["summary"], "calendarId": cal, "start": event["start"]}
+              for cal, items in fake.events.items() for event_id, event in items.items()]
+    return jsonify({"events": events, "list": listed, "patches": getattr(fake, "patches", []), "creates": fake.calls.get("create_event", 0)})
+
+
+# ----- 응답 늦추기/실패 스위치 (docs/review-2026-11.md "측정·실험 방법") -----
+# /__test/rule?method=POST&path=/api/events&ms=2000,0&status=502&count=2&after=1 : 맞는 요청을 늦추거나 실패시킨다
+#   ms: 늦출 밀리초. 여러 개면 맞는 요청마다 차례로 쓰고, 다 쓰면 마지막 값을 계속 쓴다
+#   status: 처리하지 않고 이 번호로 실패 응답을 준다 (늦춘 뒤에)
+#   count: 이 횟수만큼만 적용하고 스스로 꺼진다 (없으면 계속)
+#   after=1: 요청을 처리한 뒤에 응답만 늦춘다 (옛 내용이 늦게 도착하는 상황)
+# 값 없이 /__test/rule 을 부르면 모든 스위치를 끈다
+_rules = []
+_rules_lock = threading.Lock()
+
+
+@app.app.route("/__test/rule")
+def __rule():
+    with _rules_lock:
+        if not request.args.get("path"):
+            _rules.clear()
+            return jsonify({"rules": 0})
+        _rules.append({
+            "method": request.args.get("method", "GET").upper(),
+            "path": request.args["path"],
+            "ms": [int(x) for x in request.args.get("ms", "0").split(",")],
+            "status": int(request.args["status"]) if request.args.get("status") else None,
+            "count": int(request.args["count"]) if request.args.get("count") else None,
+            "after": request.args.get("after") == "1",
+        })
+        return jsonify({"rules": len(_rules)})
+
+
+def _take_rule():
+    """지금 요청에 맞는 스위치를 하나 꺼내 (늦출 초, 실패 번호, 처리 뒤 늦추기)로 돌려준다. 없으면 None."""
+    with _rules_lock:
+        for rule in _rules:
+            if rule["method"] == request.method and rule["path"] == request.path:
+                delay = rule["ms"].pop(0) if len(rule["ms"]) > 1 else rule["ms"][0]
+                if rule["count"] is not None:
+                    rule["count"] -= 1
+                    if rule["count"] <= 0:
+                        _rules.remove(rule)
+                return delay / 1000, rule["status"], rule["after"]
+    return None
+
+
+@app.app.before_request
+def __apply_rule():
+    if request.path.startswith("/__test/"):
+        return None
+    rule = _take_rule()
+    if rule is None:
+        return None
+    delay, status, after = rule
+    if after:
+        request.environ["test.delay_after"] = delay
+        return None
+    time.sleep(delay)
+    if status:
+        return jsonify({"error": "Google에 일정을 쓰지 못했습니다. (시험용 실패)"}), status
+    return None
+
+
+@app.app.after_request
+def __delay_after(response):
+    delay = request.environ.get("test.delay_after")
+    if delay:
+        time.sleep(delay)
+    return response
 
 
 app.app.run(port=5057, threaded=True)
