@@ -1698,8 +1698,11 @@ function buildTimelineLabels() {
     }
 }
 
-// 지금 시간표가 보여주는 내용. date는 이 내용이 어느 날짜의 것인지, request는 가장 최근 요청의 번호(늦게 온 옛 응답을 버리려는 것)다
-const timeline = { date: null, events: [], plans: [], eventsFailed: false, needScroll: false, request: 0 };
+// 지금 시간표가 보여주는 내용. date는 이 내용이 어느 날짜의 것인지, request는 가장 최근 요청의 번호(늦게 온 옛 응답을 버리려는 것)다.
+// plansRequest는 계획을 받는 요청(loadTimeline과 reloadPlans 둘 다)의 번호다. 일정이 느려서 loadTimeline이 늦게 끝나면,
+// 그 사이 reloadPlans가 받은 더 새 계획을 loadTimeline이 시작할 때 받은 옛 계획으로 덮지 않게 한다.
+// renderDeferred는 끄는 동안 미뤄 둔 다시 그리기가 있다는 표시다(끌기가 끝나면 그린다)
+const timeline = { date: null, events: [], plans: [], eventsFailed: false, needScroll: false, request: 0, plansRequest: 0, renderDeferred: false };
 let timelineDrag = null;        // 끄는 중에만 값이 있다
 let timelinePopover = null;     // 블록을 눌러 연 작은 창이 있으면 { el, key, onClose }
 const EVENT_MEMO_SAVE_DELAY_MS = 1500;
@@ -1926,6 +1929,7 @@ function placeBlock(element, item) {
 async function loadTimeline() {
     const date = viewedDate;
     const request = ++timeline.request;
+    const plansRequest = ++timeline.plansRequest;
     async function getJson(url) {
         const response = await fetch(url);
         if (!response.ok) {
@@ -1941,11 +1945,14 @@ async function loadTimeline() {
         return;  // 그 사이 다른 날로 넘어갔거나 더 새 요청이 있다
     }
     timeline.date = date;
-    if (plansResult.status === "fulfilled") {
-        timeline.plans = plansResult.value;
-    } else {
-        timeline.plans = [];
-        showToast("계획을 불러오지 못했습니다: " + plansResult.reason.message);
+    // 일정을 기다리는 동안 계획을 만들거나 지워서 reloadPlans가 더 새 계획을 받았으면, 이 계획(시작할 때 받은 것)은 옛것이라 쓰지 않는다
+    if (plansRequest === timeline.plansRequest) {
+        if (plansResult.status === "fulfilled") {
+            timeline.plans = plansResult.value;
+        } else {
+            timeline.plans = [];
+            showToast("계획을 불러오지 못했습니다: " + plansResult.reason.message);
+        }
     }
     if (eventsResult.status === "fulfilled") {
         // 캘린더 탭에서 체크를 꺼둔 캘린더의 일정은 여기서도 보이지 않게 한다
@@ -1964,14 +1971,15 @@ async function loadTimeline() {
 // 계획만 다시 받는다 (계획을 만들거나 고친 뒤. Google 일정은 그대로이므로 다시 받지 않는다)
 async function reloadPlans() {
     const date = viewedDate;
+    const request = ++timeline.plansRequest;
     try {
         const response = await fetch("/api/time-blocks?date=" + date);
         if (!response.ok) {
             throw new Error(await errorMessageFrom(response));
         }
         const plans = await response.json();
-        if (date !== viewedDate) {
-            return;
+        if (request !== timeline.plansRequest || date !== viewedDate) {
+            return;  // 그 사이 다른 날로 넘어갔거나 계획을 더 새로 받는 요청이 있다 (그 요청이 그린다)
         }
         timeline.date = date;
         timeline.plans = plans;
@@ -2003,7 +2011,23 @@ function isTimelineBusy() {
 
 // 지금 내용(timeline)을 화면에 그린다
 function renderTimeline() {
-    timelineGrid.replaceChildren();
+    // 끄는 중에는 그리지 않고 끌기가 끝난 뒤 그린다 (다시 그리면 끌던 블록이 사라지고 옛 자리에 새 블록이 생긴다)
+    if (timelineDrag) {
+        timeline.renderDeferred = true;
+        return;
+    }
+    timeline.renderDeferred = false;
+    // 새 계획의 제목을 쓰는 중이면 그 블록은 지우지 않고 나머지만 다시 그린다. 지우면 쓰던 글이 사라지고,
+    // 그 순간 입력 칸이 포커스를 잃어서(blur) 반쯤 쓴 제목이 계획으로 저장된다. 확대/축소했을 수 있으니 위치만 새 눈금에 맞춘다
+    const creating = timelineGrid.querySelector(".tl-creating");
+    [...timelineGrid.children].forEach(function (child) {
+        if (child !== creating) {
+            child.remove();
+        }
+    });
+    if (creating && creating.dataset.start) {
+        placeBlock(creating, { start: Number(creating.dataset.start), end: Number(creating.dataset.end) });
+    }
     timelineAllDay.replaceChildren();
 
     const allDay = [];
@@ -2245,13 +2269,22 @@ function trackTimelineDrag(startEvent, handlers) {
         document.removeEventListener("keydown", onKey);
         timelineDrag = null;
     }
+    // 끄는 동안 미뤄 둔 다시 그리기(renderTimeline)가 있으면, 끝내기 처리(end/cancel)가 다 끝난 뒤 그린다.
+    // end가 저장하고 다시 받아 그리는 경우(계획 옮기기)는 그때 이미 그렸으므로 다시 그리지 않는다
+    function drawDeferred(result) {
+        Promise.resolve(result).finally(function () {
+            if (timeline.renderDeferred) {
+                renderTimeline();
+            }
+        });
+    }
     function onUp(e) {
         stop();
-        handlers.end(e, drag.moved);
+        drawDeferred(handlers.end(e, drag.moved));
     }
     function onCancel() {
         stop();
-        handlers.cancel();
+        drawDeferred(handlers.cancel());
     }
     function onKey(e) {
         if (e.key === "Escape") {
@@ -2328,6 +2361,8 @@ timelineGrid.addEventListener("pointerdown", function (e) {
 // 새 계획 블록 안에 제목 입력 칸을 연다. Enter나 다른 곳을 누르면 저장하고, Esc나 빈 칸이면 취소한다
 function openPlanCreator(block, start, end) {
     placeBlock(block, { start: start, end: end });
+    block.dataset.start = start;  // 쓰는 동안 시간표를 다시 그리면(renderTimeline) 이 시간으로 자리를 다시 맞춘다
+    block.dataset.end = end;
     block.replaceChildren();
     const input = document.createElement("input");
     input.type = "text";

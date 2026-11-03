@@ -103,7 +103,8 @@ check("09:05를 눌렀으면 09:00부터 1시간(15분 단위로 내림)", Math.
 await type("토익 공부"); await key("Enter");
 check("Enter로 저장되고 블록이 나타난다", await waitFor(async () => (await plans()).some((x) => x.title === "토익 공부" && x.start === 540 && x.end === 600)), await plans());
 check("서버에도 09:00–10:00으로 저장", (await plans()).some((x) => x.title === "토익 공부" && x.start === 540 && x.end === 600 && x.taskId === null));
-check("화면에 점선 계획 블록이 보인다", (await planTitles()).includes("토익 공부"));
+// 서버에 저장된 뒤 화면이 계획을 다시 받아 그리기까지 조금 걸리므로 기다린 뒤 본다
+check("화면에 점선 계획 블록이 보인다", await waitFor(async () => (await planTitles()).includes("토익 공부"), 3000), await planTitles());
 
 p = await posAt(13 * 60 + 2);
 const p2 = await posAt(13 * 60 + 2); // 같은 스크롤
@@ -167,8 +168,9 @@ r = await blockRect("복습 완성");
 await click(r.x, r.y); await sleep(300);
 await js(`[...document.querySelectorAll(".tl-popover button")].find(b => b.textContent === "삭제").click()`); await sleep(200);
 check("삭제는 첫 클릭에 '정말?'로 바뀐다", (await js(`[...document.querySelectorAll(".tl-popover button")].some(b => b.textContent === "정말?")`)) && (await plans()).some((x) => x.title === "복습 완성"));
-await js(`[...document.querySelectorAll(".tl-popover button")].find(b => b.textContent === "정말?").click()`); await sleep(600);
-check("두 번째 클릭에 지워진다", !(await plans()).some((x) => x.title === "복습 완성") && !(await planTitles()).includes("복습 완성"));
+await js(`[...document.querySelectorAll(".tl-popover button")].find(b => b.textContent === "정말?").click()`);
+// 지운 뒤 화면이 계획을 다시 받아 그리기까지 조금 걸리므로 기다린 뒤 본다 (예전에는 0.6초만 기다려서 가끔 흔들렸다)
+check("두 번째 클릭에 지워진다", await waitFor(async () => !(await plans()).some((x) => x.title === "복습 완성") && !(await planTitles()).includes("복습 완성"), 3000), await planTitles());
 
 // ===== F. 일정 작은 창 =====
 console.log("--- F. 일정 작은 창과 메모 ---");
@@ -437,6 +439,101 @@ check("'내일로'로 보내면 시간표의 그 계획이 바로 사라진다",
 check("'목록으로' 버튼을 눌렀다", (await clickTaskButton("지난 일 마무리", "목록으로")) === "ok");
 check("'목록으로' 보내면 시간표의 그 계획이 바로 사라진다", await waitFor(async () => !(await planTitles()).includes("지난 일 마무리"), 4000) && !(await plans()).some((x) => x.title === "지난 일 마무리"), await planTitles());
 check("다른 할 일의 계획은 그대로다", (await planTitles()).includes("장보기"), await planTitles());
+
+// ===== L. 서버나 Google이 느릴 때 다시 그리기 (docs/review-2026-11.md의 M2) =====
+// memo_server.py의 늦추기 스위치(/__test/rule)로 일정이나 계획 응답을 늦춘다. 비어 있는 새벽 시간(01:00~08:00)을 쓴다
+console.log("--- L. 느릴 때 다시 그리기 ---");
+const rule = (query) => api("/__test/rule" + (query ? "?" + query : ""));
+const countTitle = async (title) => (await planTitles()).filter((t) => t === title).length;
+await send("Page.navigate", { url: BASE + "/" }); await sleep(3000);
+await js(`document.querySelector('[data-tab="today"]').click()`);
+await waitFor(async () => (await js(`document.querySelectorAll("#timeline-grid .tl-event").length`)) > 0, 15000);
+await sleep(500);
+await js(`setTimelineZoom(64)`); await sleep(200);
+
+// ① Google 일정이 느린 동안(2.5초) 계획을 만든다. 늦게 끝난 불러오기가 "시작할 때 받은 옛 계획"으로 덮으면 방금 만든 블록이 사라진다
+await rule("method=GET&path=/api/events&ms=2500");
+let slowStart = Date.now();
+await js(`void loadTimeline()`);
+p = await posAt(1 * 60 + 5);
+await click(p.x, p.y); await sleep(250);
+await type("느린 일정 중 계획"); await key("Enter");
+check("(준비) 일정이 느린 동안 만든 계획이 저장되고 바로 보인다(불러오기가 아직 도는 중)",
+  await waitFor(async () => (await planTitles()).includes("느린 일정 중 계획"), 2000) && Date.now() - slowStart < 2400, [Date.now() - slowStart, await planTitles()]);
+await sleep(Math.max(0, 2500 - (Date.now() - slowStart)) + 800);   // 늦은 불러오기가 끝나기를 기다린다
+check("일정이 느린 동안 만든 계획이 늦게 끝난 불러오기 뒤에도 보인다", (await planTitles()).includes("느린 일정 중 계획"), await planTitles());
+
+// ①-2 같은 상황에서 계획을 지운다 (E의 "두 번째 클릭에 지워진다"가 가끔 흔들리던 모양): 지운 블록이 다시 나타나면 안 된다
+await api("/api/time-blocks", "POST", { date: today, start: 180, end: 240, title: "느린 중 지울 계획" });
+await js(`reloadPlans()`);
+await waitFor(async () => (await planTitles()).includes("느린 중 지울 계획"));
+slowStart = Date.now();
+await js(`void loadTimeline()`);
+await posAt(3 * 60 + 30);
+r = await blockRect("느린 중 지울 계획");
+await click(r.x, r.y); await sleep(300);
+await js(`[...document.querySelectorAll(".tl-popover button")].find(b => b.textContent === "삭제").click()`); await sleep(150);
+await js(`[...document.querySelectorAll(".tl-popover button")].find(b => b.textContent === "정말?").click()`);
+check("(준비) 일정이 느린 동안 지운 계획이 바로 사라진다(불러오기가 아직 도는 중)",
+  await waitFor(async () => !(await planTitles()).includes("느린 중 지울 계획") && !(await plans()).some((x) => x.title === "느린 중 지울 계획"), 2000) && Date.now() - slowStart < 2400, [Date.now() - slowStart, await planTitles()]);
+await sleep(Math.max(0, 2500 - (Date.now() - slowStart)) + 800);
+check("일정이 느린 동안 지운 계획이 늦게 끝난 불러오기 뒤에 다시 나타나지 않는다", !(await planTitles()).includes("느린 중 지울 계획"), await planTitles());
+await rule();
+
+// ② 계획 A를 저장하고 다시 받는 동안(1.5초) 계획 B의 제목을 쓴다. 다시 그리면서 B 입력 칸을 지우면, 그 순간의 blur로 반쯤 쓴 제목이 저장된다
+await rule("method=GET&path=/api/time-blocks&ms=1500&count=1&after=1");
+p = await posAt(5 * 60 + 5);
+await click(p.x, p.y); await sleep(250);
+await type("계획 A"); await key("Enter");
+p = await posAt(7 * 60 + 5);
+await click(p.x, p.y); await sleep(250);
+await type("계획 B 반");
+await sleep(2000);   // 그 사이 A를 다시 받은 응답이 와서 시간표를 다시 그린다
+const midB = JSON.parse(await js(`(() => { const i = document.querySelector(".tl-creating .tl-title-input"); return JSON.stringify({ value: i ? i.value : null, focused: !!i && document.activeElement === i }); })()`));
+check("A를 저장하는 동안 B 제목을 써도 B 입력 칸과 쓰던 글이 그대로(포커스도)", midB.value === "계획 B 반" && midB.focused, midB);
+check("그동안 A는 화면에 보인다", (await planTitles()).includes("계획 A"), await planTitles());
+await type("쯤 완성"); await key("Enter");
+check("B는 다 쓴 제목으로 하나만 저장된다(반쯤 쓴 제목이 따로 저장되지 않는다)",
+  await waitFor(async () => (await plans()).some((x) => x.title === "계획 B 반쯤 완성")) && !(await plans()).some((x) => x.title === "계획 B 반"), (await plans()).map((x) => x.title));
+check("화면에 A와 B가 하나씩 보인다", await waitFor(async () => (await countTitle("계획 A")) === 1 && (await countTitle("계획 B 반쯤 완성")) === 1, 3000), await planTitles());
+await rule();
+
+// ③ 계획을 끄는 중에 늦은 불러오기가 끝난다: 끌던 블록이 사라지거나 옛 자리에 하나 더 생기면 안 된다
+await posAt(5 * 60 + 30);
+r = await blockRect("계획 A");
+await rule("method=GET&path=/api/events&ms=1500");
+await js(`void loadTimeline()`);
+await mouse("mouseMoved", r.x, r.y, 0); await mouse("mousePressed", r.x, r.y);
+for (let i = 1; i <= 4; i++) await mouse("mouseMoved", r.x, r.y + i * 8, 1);
+await sleep(2300);   // 끄는 중에 늦은 불러오기가 끝난다
+const midDrag = JSON.parse(await js(`JSON.stringify({ dragging: [...document.querySelectorAll("#timeline-grid .tl-plan.dragging")].map(b => b.querySelector(".tl-title").textContent), all: [...document.querySelectorAll("#timeline-grid .tl-plan")].filter(b => b.querySelector(".tl-title") && b.querySelector(".tl-title").textContent === "계획 A").length })`));
+check("끄는 중에 늦은 불러오기가 끝나도 끌던 블록이 그대로 하나만 있다", midDrag.dragging.length === 1 && midDrag.dragging[0] === "계획 A" && midDrag.all === 1, midDrag);
+for (let i = 5; i <= 8; i++) await mouse("mouseMoved", r.x, r.y + i * 8, 1);
+await mouse("mouseReleased", r.x, r.y + 64);
+await rule();
+check("놓으면 1시간 아래(06:00–07:00)로 저장되고 블록은 하나", await waitFor(async () => (await plans()).some((x) => x.title === "계획 A" && x.start === 360 && x.end === 420) && (await countTitle("계획 A")) === 1, 3000), [(await plans()).find((x) => x.title === "계획 A"), await planTitles()]);
+check("늦게 끝난 불러오기 뒤에도 만든 계획들이 모두 보인다", (await planTitles()).includes("느린 일정 중 계획") && (await planTitles()).includes("계획 B 반쯤 완성"), await planTitles());
+// ③-2 블록을 누르고 있는(아직 안 뗀) 동안 계획이 새로 생기면, 그리기를 미뤘다가 손을 뗀 뒤 그린다
+await posAt(6 * 60 + 30);
+r = await blockRect("계획 A");
+await mouse("mouseMoved", r.x, r.y, 0); await mouse("mousePressed", r.x, r.y);
+await api("/api/time-blocks", "POST", { date: today, start: 450, end: 465, title: "누르는 중 생긴 계획" });
+await js(`reloadPlans()`);   // 누르고 있는 동안이라 그리기가 미뤄진다
+await mouse("mouseReleased", r.x, r.y);   // 움직이지 않고 떼면 작은 창이 열린다
+check("누르는 동안 미뤄 둔 그리기를 손을 뗀 뒤 한다(새 계획이 보이고 작은 창도 열린다)",
+  (await waitFor(async () => (await planTitles()).includes("누르는 중 생긴 계획"), 2000)) && (await js(`!!document.querySelector(".tl-popover")`)), await planTitles());
+await key("Escape"); await sleep(300);
+
+// ④ 새 계획 제목을 쓰는 중에 확대한다 (docs/review-2026-11.md의 N17. M2와 같은 방법으로 고쳐진다): 입력 칸과 글이 남고 새 눈금 위치로 옮겨진다
+p = await posAt(2 * 60 + 5);
+await click(p.x, p.y); await sleep(250);
+await type("확대 중 계획");
+await js(`setTimelineZoom(100)`); await sleep(200);
+const zoomed = JSON.parse(await js(`(() => { const b = document.querySelector(".tl-creating"); const i = b && b.querySelector(".tl-title-input"); return JSON.stringify({ value: i ? i.value : null, focused: !!i && document.activeElement === i, top: b ? parseFloat(b.style.top) : null, h: b ? parseFloat(b.style.height) : null }); })()`));
+check("제목을 쓰는 중에 확대해도 입력 칸과 쓰던 글이 그대로이고, 블록이 새 눈금(02:00, 1시간)에 맞는다", zoomed.value === "확대 중 계획" && zoomed.focused && Math.abs(zoomed.top - 200) < 1 && Math.abs(zoomed.h - 100) < 1, zoomed);
+await key("Enter");
+check("확대한 뒤 Enter하면 02:00–03:00으로 저장된다", await waitFor(async () => (await plans()).some((x) => x.title === "확대 중 계획" && x.start === 120 && x.end === 180)), (await plans()).map((x) => [x.title, x.start]));
+await js(`setTimelineZoom(64)`);
 
 check("자바스크립트 오류 없음", jsErrors.length === 0, jsErrors.join(" | "));
 console.log(failed ? `\n실패 ${failed}개` : "\n모두 통과");
