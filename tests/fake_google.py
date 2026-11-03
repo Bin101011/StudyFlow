@@ -49,10 +49,11 @@ class FakeGoogle:
             raise OfflineError("network down")
 
     # ----- 테스트에서 "다른 곳(폰)에서 바꿈"을 흉내 -----
-    def add_event(self, calendar_id, title, start, end, description=None):
+    def add_event(self, calendar_id, title, start, end, description=None, event_id=None):
         with self.lock:
-            event_id = f"e{self.next_id}"
-            self.next_id += 1
+            if event_id is None:
+                event_id = f"e{self.next_id}"
+                self.next_id += 1
             if len(start) == 10:
                 event = {"id": event_id, "summary": title, "start": {"date": start}, "end": {"date": end}}
             else:
@@ -93,17 +94,21 @@ class FakeGoogle:
             self.token_counter += 1
             new_token = f"{calendar_id}:{head}:{self.token_counter}"  # 발급할 때마다 다른 글자
             if sync_token is None:
-                return 0, new_token
+                return [], new_token
             # 공휴일 캘린더는 실제 Google처럼 새 책갈피도 곧바로 거절한다
             if sync_token in self.expired or calendar_id == "holiday@test":
                 raise google_calendar.SyncTokenExpired()
             _, number, _ = sync_token.rsplit(":", 2)
-            return head - int(number), new_token
+            # 진짜 Google처럼 그 뒤에 바뀐 일정의 id를 하나씩 돌려준다 (같은 일정이 여러 번 바뀌어도 한 번)
+            return list(dict.fromkeys(self.changelog[calendar_id][int(number):])), new_token
 
-    def create_event(self, service, calendar_id, title, all_day, start, end, description=None):
+    def create_event(self, service, calendar_id, title, all_day, start, end, description=None, event_id=None):
         self._check()
         self.calls["create_event"] = self.calls.get("create_event", 0) + 1
-        return self.add_event(calendar_id, title, start, end, description)
+        event_id = self.add_event(calendar_id, title, start, end, description, event_id)
+        # 진짜 Google처럼 만든 일정 전체를 돌려준다 (앱이 이걸 일정 기억에 바로 넣는다)
+        with self.lock:
+            return dict(self.events[calendar_id][event_id])
 
     def update_event(self, service, calendar_id, event_id, all_day=None, start=None, end=None, title=None, description=None):
         self._check()
@@ -123,7 +128,7 @@ class FakeGoogle:
                 else:
                     event["description"] = description
             self.changelog[calendar_id].append(event_id)
-            return event
+            return dict(event)  # 진짜 Google처럼 고친 일정 전체를 돌려준다 (안쪽 값을 밖에서 못 바꾸게 사본으로)
 
     def delete_event(self, service, calendar_id, event_id):
         self._check()
@@ -141,7 +146,7 @@ class FakeGoogle:
             self.changelog[calendar_id].append(event_id)
             self.changelog[destination].append(event_id)
             self.calls["move_event"] = self.calls.get("move_event", 0) + 1
-            return event
+            return dict(event)
 
     # ----- 캘린더 만들기/지우기/목록에서 빼기 -----
     def create_calendar(self, service, name, time_zone=None):

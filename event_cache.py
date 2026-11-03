@@ -25,6 +25,8 @@ CHECK_FRESH_SECONDS = 600
 UNSYNCABLE_REFRESH_SECONDS = 1800  # 변경 확인이 안 되는 캘린더는 이 시간(30분)마다 일정을 새로 받는다
 SAVE_INTERVAL_SECONDS = 5  # 파일 저장은 너무 자주 하지 않는다
 KEEP_MONTHS = 24  # 오늘에서 이 개월 수보다 멀리 떨어진 달의 일정은 저장 파일에서 버린다
+# StudyFlow가 일정을 쓰고 이만큼(초) 지나면 "내가 쓴 일정" 목록에서 지운다. 그 전에 시작한 확인은 모두 끝났다(요청은 길어야 수십 초)
+OWN_WRITE_KEEP_SECONDS = 300
 
 
 # ---------- 날짜 계산 도우미 ----------
@@ -126,6 +128,14 @@ class EventCache:
         self._calendars = None  # 캘린더 목록. 인터넷이 끊겼을 때를 위해 같이 저장한다
         # 변경 확인(syncToken)을 지원하지 않는 캘린더들 (공휴일 캘린더 등). 켤 때마다 다시 알아낸다
         self._unsyncable = set()
+        # StudyFlow가 쓰고 있거나 써서 기억에 바로 반영한 일정들. 변경 확인에서 이 일정만 바뀌었으면
+        # "다른 곳에서 바뀜"으로 보지 않는다(이미 기억에 들어 있으니 다시 받을 필요가 없다).
+        # 모양: {캘린더 id: {일정 id: 쓰기가 끝난 시각, 아직 쓰는 중이면 None}}.
+        # 책갈피가 이 쓰기가 끝난 "뒤에" 시작한 확인이 받은 것이면, 이 쓰기는 그 책갈피 앞에 있다. 그런데도 이 일정이 보이면
+        # 그 뒤에 다른 곳(폰)에서 고친 것이다. 그보다 오래된 책갈피로 보이면 내가 쓴 것이다
+        self._own_writes = {}
+        # {캘린더 id: 지금 책갈피를 받아 온 확인이 시작한 시각}. 책갈피는 그 뒤에 Google이 준 것이다. 켤 때(파일에서 읽은 책갈피)는 0
+        self._token_started = {}
 
         self._last_sync = None  # 마지막으로 동기화에 성공한 시각
         self._online = True
@@ -204,6 +214,64 @@ class EventCache:
     def invalidate_all(self, calendar_ids):
         for calendar_id in calendar_ids:
             self.invalidate(calendar_id)
+
+    def expect_own_write(self, calendar_id, event_id):
+        """StudyFlow가 이 번호의 일정을 만들거나 고치거나 지우려고 한다. Google에 보내기 "전에" 부른다.
+        쓰고 나서 적으면, 그 사이에 돈 변경 확인(앞 일정의 책갈피 옮기기 등)이 이 일정을 다른 곳의 변화로 오해해서
+        캘린더를 통째로 다시 받는다 (연달아 붙여넣을 때 실제로 겹친다)."""
+        with self._lock:
+            # 같은 일정을 또 쓰면(고친 뒤 바로 옮기기 등) "쓰는 중"으로 되돌린다
+            self._own_writes.setdefault(calendar_id, {})[event_id] = None
+
+    def own_write_done(self, calendar_id, event_id):
+        """Google 쓰기가 끝났다(성공 대답을 받았다). 이 뒤에 시작한 확인이 받는 책갈피는 반드시 이 쓰기 뒤에 있다."""
+        with self._lock:
+            own = self._own_writes.get(calendar_id)
+            if own is not None and event_id in own:
+                own[event_id] = time.time()
+
+    def forget_own_write(self, calendar_id, event_id):
+        """쓰기에 실패했을 때 부른다. 혹시 Google에는 반영됐다면, 다음 변경 확인이 다른 곳의 변화로 보고 새로 받는다."""
+        with self._lock:
+            own = self._own_writes.get(calendar_id)
+            if own is not None:
+                own.pop(event_id, None)
+                if not own:
+                    del self._own_writes[calendar_id]
+
+    def remember_written(self, calendar_id, raw_event):
+        """StudyFlow가 방금 Google에 만들거나 고친 일정(Google이 돌려준 내용)을 기억해둔 달에 바로 반영한다.
+        예전에는 그 캘린더를 통째로 "오래된 일정"으로 만들어서, 화면이 다시 불러올 때 Google에서 다시 받느라 약 1초가 더 걸렸다
+        (docs/review-2026-11.md의 N26). 끌어서 다른 날로 옮긴 일정은 옛 날짜의 달에서 빠지고 새 날짜의 달에 들어간다."""
+        event = simplify_event(raw_event)
+        self._apply_own_write(calendar_id, event["id"], event)
+
+    def remember_deleted(self, calendar_id, event_id):
+        """StudyFlow가 방금 Google에서 지운 일정(또는 다른 캘린더로 옮겨 간 일정)을 기억해둔 달에서 바로 뺀다."""
+        self._apply_own_write(calendar_id, event_id, None)
+
+    def _apply_own_write(self, calendar_id, event_id, event):
+        """remember_written/remember_deleted의 본체. event가 None이면 빼기만 한다.
+
+        믿을 수 있는 달에만 반영한다. 그 밖의 것(오래된 달, 이 쓰기 전에 시작해서 아직 받는 중인 것)은
+        invalidate와 똑같이 "오래된 일정"이 되어 다음에 Google에서 새로 받는다. 그래서 이 변화가 빠진 옛 내용이 남지 않는다."""
+        with self._lock:
+            entries = self._months.get(calendar_id, {})
+            # 지금 믿을 수 있는 달만 고른다. 이 달들은 이 일정 하나만 바꾸면 Google과 같아진다
+            fresh = [key for key, entry in entries.items() if self._is_fresh(calendar_id, entry)]
+
+            now = time.time()
+            # 이 시각 전에 받은 일정은 믿지 않는다 (invalidate와 같다). 쓰기 전에 시작한 받기가 늦게 끝나도 그 결과는 오래된 것이 된다
+            self._valid_since[calendar_id] = now
+            for key in fresh:
+                # 옛 모습은 어느 달에 있든 뺀다 (다시 보낸 요청이 409로 성공한 경우, 끌어서 다른 달로 옮긴 경우)
+                events = [old for old in entries[key]["events"] if old["id"] != event_id]
+                year, month = (int(part) for part in key.split("-"))
+                if event is not None and overlaps(event, *date_window(*month_range(year, month))):
+                    events.append(event)
+                # 받은 시각을 지금으로 해서 위의 "이 시각 전" 규칙에 걸리지 않게 한다. 이 일정과 상관없는 달도 내용이 맞으므로 같이 한다
+                entries[key] = {"events": events, "fetched": now}
+            self._dirty = True
 
     # ----- 일정 읽기 -----
 
@@ -291,16 +359,28 @@ class EventCache:
         바뀌었다면 기억해둔 일정을 "오래된 일정"으로 바꿔서 다음에 새로 받게 한다."""
         with self._lock:
             if calendar_id in self._unsyncable:
+                self._own_writes.pop(calendar_id, None)
                 return self._refresh_by_time(calendar_id)
             token = self._tokens.get(calendar_id)
+            token_started = self._token_started.get(calendar_id, 0)  # 이 책갈피를 받아 온 확인이 시작한 시각
+        check_started = time.time()  # 이번에 받을 새 책갈피는 이 시각 뒤에 Google이 준 것이다
         service = get_service()
 
         changed = False  # 바뀐 게 있어서 화면이 다시 불러와야 하는가
         reset = False    # 기억해둔 일정을 더는 믿을 수 없게 됐는가
         if token is not None:
             try:
-                count, new_token = google_calendar.list_changes(service, calendar_id, token)
-                changed = reset = count > 0
+                changed_ids, new_token = google_calendar.list_changes(service, calendar_id, token)
+                # 다른 곳(폰, 웹)에서 바뀐 것이 하나라도 있으면 다시 받는다. StudyFlow가 쓴 일정은 이미 기억에 있다.
+                # 대답이 온 "지금"의 목록과 비교한다: 확인하는 사이 쓰기 시작한 일정도 보내기 전에 적혀 있다(expect_own_write)
+                with self._lock:
+                    own = self._own_writes.get(calendar_id, {})
+                    for event_id in changed_ids:
+                        if event_id not in own:
+                            reset = True  # 다른 곳의 변화
+                        elif own[event_id] is not None and token_started > own[event_id]:
+                            reset = True  # 내 쓰기 뒤에 받은 책갈피인데도 보임 = 그 뒤에 다른 곳에서 고침
+                changed = reset
             except google_calendar.SyncTokenExpired:
                 # 책갈피가 너무 오래됨. 무엇이 바뀌었는지 알 수 없으니 바뀐 것으로 보고 처음부터 다시 시작한다
                 print(f"[동기화 다시 시작] syncToken이 만료되었습니다: {calendar_id}")
@@ -327,10 +407,24 @@ class EventCache:
 
         now = time.time()  # 확인이 "끝난" 시각. 이보다 먼저 받은 일정은 바뀐 걸 놓쳤을 수 있다
         with self._lock:
-            self._tokens[calendar_id] = new_token
+            # 더 늦게 시작한 확인이 이미 책갈피를 저장했으면 덮어쓰지 않는다. 그 책갈피가 더 새것이다
+            # (동시에 돈 두 확인 중 먼저 시작한 쪽이 늦게 끝나는 일이 있다. 덮어쓰면 위의 "쓰기 뒤의 책갈피" 판단이 틀어진다)
+            if check_started >= self._token_started.get(calendar_id, 0):
+                self._tokens[calendar_id] = new_token
+                self._token_started[calendar_id] = check_started
             self._checked_at[calendar_id] = now
             if reset:
                 self._valid_since[calendar_id] = now
+            if token is None:
+                # 책갈피를 처음부터 다시 받았다. 어떤 일정이 바뀌었는지 모르므로 "내가 쓴 일정" 목록도 버린다.
+                # (남겨 두면 나중에 그 일정이 폰에서 고쳐졌을 때 내가 쓴 것으로 착각할 수 있다. 버리면 기껏해야 한 번 더 받는다)
+                self._own_writes.pop(calendar_id, None)
+            own = self._own_writes.get(calendar_id, {})
+            # 끝난 지 오래된 쓰기는 지운다. 그 전에 시작한 확인은 모두 끝났다 (쓰는 중인 것은 쓰기가 실패하면 forget_own_write가 지운다)
+            for event_id in [key for key, done in own.items() if done is not None and now - done > OWN_WRITE_KEEP_SECONDS]:
+                del own[event_id]
+            if not own:
+                self._own_writes.pop(calendar_id, None)
             self._dirty = True
         return changed
 
@@ -345,9 +439,9 @@ class EventCache:
         return None
 
     def absorb_own_write(self, calendar_id, get_service):
-        """StudyFlow가 직접 일정을 바꾼 뒤에 부른다. 이 변화를 "다른 곳에서 바뀐 것"으로 오해하지 않도록
-        책갈피를 앞으로 옮겨둔다. (오해하면 화면이 불필요하게 한 번 더 일정을 불러온다)"""
-        self.invalidate(calendar_id)
+        """StudyFlow가 직접 일정을 바꾸고 기억에 반영한(remember_written/remember_deleted) 뒤에 부른다.
+        이 변화를 "다른 곳에서 바뀐 것"으로 오해하지 않도록 책갈피를 앞으로 옮겨둔다. (오해하면 화면이 불필요하게 한 번 더 일정을 불러온다)
+        예전에는 여기서 기억을 한 번 더 "오래된 일정"으로 만들었다. 이제는 쓴 결과가 기억에 이미 들어 있어서 그러지 않는다 (N26)"""
         try:
             self.check_calendar(calendar_id, get_service)
         except Exception as error:

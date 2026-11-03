@@ -309,13 +309,14 @@ def get_events(service, calendar_id, start, end):
 
 
 def list_changes(service, calendar_id, sync_token=None):
-    """"지난번에 확인한 뒤로 바뀐 일정이 있나?"를 Google에 묻는다. (바뀐 일정 개수, 새 syncToken)을 돌려준다.
+    """"지난번에 확인한 뒤로 바뀐 일정이 있나?"를 Google에 묻는다. (바뀐 일정들의 id 리스트, 새 syncToken)을 돌려준다.
 
     syncToken은 "여기까지 확인했음"이라는 책갈피다. 이 책갈피를 내밀면 Google이 그 뒤에 추가, 수정, 삭제된
     일정만 알려준다. 일정 내용은 필요 없고 "바뀌었는지"만 알면 되므로 id만 받아서 가볍게 확인한다.
+    id를 돌려주는 이유: StudyFlow가 방금 쓴 일정만 바뀐 것인지(그러면 기억을 버리지 않아도 된다) 가려내려는 것이다.
     sync_token이 None이면 "처음 동기화"다. 일정을 전부 훑어서(내용은 받지 않는다) 첫 책갈피만 받아온다.
     책갈피가 너무 오래되면 Google이 410 오류를 내고, 이때는 SyncTokenExpired를 던진다."""
-    count = 0
+    changed_ids = []
     page_token = None
     while True:
         try:
@@ -330,10 +331,10 @@ def list_changes(service, calendar_id, sync_token=None):
             if error.resp.status == 410:
                 raise SyncTokenExpired() from error
             raise
-        count += len(result.get("items", []))
+        changed_ids += [item["id"] for item in result.get("items", [])]
         page_token = result.get("nextPageToken")
         if not page_token:
-            return count, result["nextSyncToken"]
+            return changed_ids, result["nextSyncToken"]
 
 
 def to_local_datetime(text):
@@ -356,12 +357,18 @@ def build_time_fields(all_day, start, end):
     }
 
 
-def create_event(service, calendar_id, title, all_day, start, end, description=None):
+def new_event_id():
+    """새 일정에 붙일 번호. Google은 영문 소문자와 숫자만 받아서 uuid의 16진수 글자를 쓴다."""
+    return uuid.uuid4().hex
+
+
+def create_event(service, calendar_id, title, all_day, start, end, description=None, event_id=None):
     """캘린더에 일정 하나를 새로 만들고, Google이 돌려준 일정 정보를 그대로 돌려준다.
-    description은 일정의 메모(Google Calendar의 "설명" 칸)다. 없으면 보내지 않는다."""
+    description은 일정의 메모(Google Calendar의 "설명" 칸)다. 없으면 보내지 않는다.
+    event_id: 쓸 번호(new_event_id). 안 주면 여기서 만든다. 부르는 쪽이 보내기 전에 번호를 알아야 할 때 준다"""
     # 일정 번호를 우리가 미리 정해서 보낸다. 연결이 끊겨서 같은 요청을 다시 보내게 되었을 때, 첫 요청이 사실은 Google에 도착해 있었다면
-    # 같은 번호가 이미 있다고(409) 알려 주므로, 일정이 두 개 만들어지지 않는다. (번호는 영문 소문자와 숫자만 쓸 수 있어서 uuid의 16진수 글자를 쓴다)
-    event_id = uuid.uuid4().hex
+    # 같은 번호가 이미 있다고(409) 알려 주므로, 일정이 두 개 만들어지지 않는다
+    event_id = event_id or new_event_id()
     body = {"id": event_id, "summary": title, **build_time_fields(all_day, start, end)}
     if description:
         body["description"] = description

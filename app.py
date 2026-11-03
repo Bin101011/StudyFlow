@@ -573,12 +573,12 @@ def missing_key(data, keys):
     return None
 
 
-def run_google_write(failure_message, operation, calendar_id=None):
-    """Google에 쓰는 일(추가/수정/삭제/캘린더 색 변경)을 작업자 스레드에서 실행한다.
+def run_google_write(failure_message, operation):
+    """Google에 쓰는 일(일정 쓰기, 캘린더 만들기/지우기/색 변경)을 작업자 스레드에서 실행한다.
     성공하면 None, 실패하면 화면에 보여줄 오류 응답을 돌려준다.
     failure_message: 실패했을 때 화면에 보여줄 문장 (예: "일정을 추가하지 못했습니다.")
     operation: service를 받아서 Google 요청을 보내는 함수
-    calendar_id: 일정이 바뀌는 캘린더(하나, 또는 일정을 옮길 때처럼 둘 이상이면 리스트). 성공하면 그 캘린더에 기억해둔 일정을 오래된 것으로 바꾼다 (색 변경은 필요 없다)"""
+    일정을 쓸 때는 이 함수 대신 아래 write_event를 쓴다 (일정 기억까지 맞춰 준다)"""
 
     def job():
         # 작업자 스레드 안에서 실행되므로, 그 스레드 전용 Google 연결을 쓴다
@@ -599,13 +599,40 @@ def run_google_write(failure_message, operation, calendar_id=None):
         # HttpError가 아닌 오류는 대부분 인터넷 문제다 (연결 끊김, 시간 초과 등)
         print(f"[Google 쓰기 실패] {failure_message} {error}")
         return jsonify({"error": f"Google에 {failure_message} ({google_failure_message(error, '인터넷 연결을 확인하세요.')})"}), 502
+    return None
 
-    if calendar_id is not None:
-        for changed_id in (calendar_id if isinstance(calendar_id, (list, tuple)) else [calendar_id]):
-            # 이 캘린더에 기억해둔 일정은 이제 틀린 내용이다. 화면이 곧바로 일정을 다시 불러오므로, 응답을 보내기 전에 먼저 표시해둔다
-            event_store.invalidate(changed_id)
-            # 이 변화를 "다른 곳에서 바뀐 것"으로 오해하지 않도록, 뒤에서 책갈피(syncToken)를 앞으로 옮겨둔다
-            _background_pool.submit(event_store.absorb_own_write, changed_id, get_thread_service)
+
+def write_event(failure_message, calendar_ids, event_id, operation, remember):
+    """일정 하나를 Google에 쓰고(추가/수정/옮기기/삭제), 그 결과를 일정 기억에 바로 반영한다.
+    성공하면 None, 실패하면 화면에 보여줄 오류 응답을 돌려준다.
+    calendar_ids: 이 쓰기로 바뀌는 캘린더들(옮기기는 둘), event_id: 쓰는 일정의 번호
+    operation: service를 받아서 Google 요청을 보내고, Google이 돌려준 결과를 돌려주는 함수
+    remember: 그 결과를 받아서 일정 기억에 반영하는 함수 (event_store.remember_written / remember_deleted)
+
+    예전에는 쓴 캘린더의 기억을 통째로 "오래된 일정"으로 만들어서, 다음에 그 캘린더를 Google에서 다시 받느라 약 1초가 더 걸렸다
+    (docs/review-2026-11.md의 N26). 끌어서 옮긴 뒤 붙여넣기처럼 쓰기가 이어지면 매번 그랬다."""
+    # 보내기 전에 "이 번호는 StudyFlow가 쓰는 일정"이라고 적어 둔다. 그래야 그사이 돈 변경 확인이 이 일정을 다른 곳의 변화로 오해하지 않는다
+    for calendar_id in calendar_ids:
+        event_store.expect_own_write(calendar_id, event_id)
+    result = []  # Google이 돌려준 결과가 여기 담긴다
+    error_response = run_google_write(failure_message, lambda service: result.append(operation(service)))
+    if error_response:
+        for calendar_id in calendar_ids:
+            event_store.forget_own_write(calendar_id, event_id)
+        return error_response
+    for calendar_id in calendar_ids:
+        event_store.own_write_done(calendar_id, event_id)
+
+    # 화면이 곧바로 다시 불러오므로, 응답을 보내기 전에 기억을 맞춰 둔다.
+    # 맞추지 못하면(예상 밖의 모양) 예전처럼 그 캘린더들을 오래된 것으로 만들어서 Google에서 새로 받게 한다
+    try:
+        remember(result[0])
+    except Exception as error:
+        report_unexpected("쓴 일정을 기억에 반영하기", error)
+        event_store.invalidate_all(calendar_ids)
+    for calendar_id in calendar_ids:
+        # 이 변화를 "다른 곳에서 바뀐 것"으로 오해하지 않도록, 뒤에서 책갈피(syncToken)를 앞으로 옮겨둔다
+        _background_pool.submit(event_store.absorb_own_write, calendar_id, get_thread_service)
     return None
 
 
@@ -639,9 +666,12 @@ def api_create_event():
     if error_response:
         return error_response
 
-    error_response = run_google_write("일정을 추가하지 못했습니다.", lambda service: google_calendar.create_event(
-        service, data["calendarId"], data["title"], data["allDay"], data["start"], data["end"], description
-    ), data["calendarId"])
+    calendar_id = data["calendarId"]
+    # 일정 번호를 여기서 정한다. 보내기 전에 번호를 알아야 "StudyFlow가 쓰는 일정"으로 적어 둘 수 있다 (write_event)
+    event_id = google_calendar.new_event_id()
+    error_response = write_event("일정을 추가하지 못했습니다.", [calendar_id], event_id, lambda service: google_calendar.create_event(
+        service, calendar_id, data["title"], data["allDay"], data["start"], data["end"], description, event_id
+    ), lambda created: event_store.remember_written(calendar_id, created))
     if error_response:
         return error_response
 
@@ -684,18 +714,25 @@ def api_update_event(event_id):
         if target is None or not can_edit(target):
             return jsonify({"error": "그 캘린더로는 일정을 옮길 수 없습니다."}), 400
 
-    error_response = run_google_write("일정을 수정하지 못했습니다.", lambda service: google_calendar.update_event(
-        service, data["calendarId"], event_id, data.get("allDay"), data.get("start"), data.get("end"),
+    calendar_id = data["calendarId"]
+    error_response = write_event("일정을 수정하지 못했습니다.", [calendar_id], event_id, lambda service: google_calendar.update_event(
+        service, calendar_id, event_id, data.get("allDay"), data.get("start"), data.get("end"),
         title=data.get("title"), description=description,
-    ), data["calendarId"])
+    ), lambda updated: event_store.remember_written(calendar_id, updated))
     if error_response:
         return error_response
 
     if destination is not None:
-        error_response = run_google_write(
+        def remember_moved(moved):
+            # 원래 캘린더에서는 빠지고, 옮긴 캘린더에 생긴다 (일정 번호는 그대로)
+            event_store.remember_deleted(calendar_id, event_id)
+            event_store.remember_written(destination, moved)
+
+        error_response = write_event(
             "일정 내용은 저장했지만 캘린더를 옮기지 못했습니다. (반복 일정의 일부처럼 다른 캘린더로 옮길 수 없는 일정도 있습니다.)",
-            lambda service: google_calendar.move_event(service, data["calendarId"], event_id, destination),
-            [data["calendarId"], destination],
+            [calendar_id, destination], event_id,
+            lambda service: google_calendar.move_event(service, calendar_id, event_id, destination),
+            remember_moved,
         )
         if error_response:
             return error_response
@@ -710,9 +747,9 @@ def api_delete_event(event_id):
     if not calendar_id:
         return jsonify({"error": "'calendarId' 값이 없습니다."}), 400
 
-    error_response = run_google_write("일정을 삭제하지 못했습니다.", lambda service: google_calendar.delete_event(
+    error_response = write_event("일정을 삭제하지 못했습니다.", [calendar_id], event_id, lambda service: google_calendar.delete_event(
         service, calendar_id, event_id
-    ), calendar_id)
+    ), lambda _: event_store.remember_deleted(calendar_id, event_id))
     if error_response:
         return error_response
 
