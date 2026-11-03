@@ -385,7 +385,8 @@ check("껐다 켜도 확대 정도가 유지된다", (await hourNow()) === 100, 
 const cur = (await api("/api/settings")).data.values;
 const putZoom = async (v) => { await api("/api/settings", "PUT", { ...cur, timelineHourPx: v }); return (await api("/api/settings")).data.values.timelineHourPx; };
 check("서버: 범위 밖 값은 끝값으로(9999→160, 3→36)", (await putZoom(9999)) === 160 && (await putZoom(3)) === 36);
-check("서버: 글자/true/null은 기본값(64)", (await putZoom("abc")) === 64 && (await putZoom(true)) === 64 && (await putZoom(null)) === 64);
+// 틀린 값이 오면 기본값이 아니라 원래 값(바로 위에서 정한 36)을 지킨다 (docs/review-2026-11.md의 M1: 설정을 기본값으로 덮어쓰지 않기)
+check("서버: 글자/true/null이면 원래 값 유지(36)", (await putZoom("abc")) === 36 && (await putZoom(true)) === 36 && (await putZoom(null)) === 36);
 check("서버: 소수는 반올림", (await putZoom(80.6)) === 81);
 
 
