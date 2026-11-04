@@ -4230,10 +4230,15 @@ let projectToFocus = null;
 const openSubAdd = new Set();
 // 하위 단계를 추가한 직후, 다시 그린 입력 칸에 커서를 되돌려둘 단계 번호
 let subToFocus = null;
+// 메모 때문에 미룬 다시 그리기. null: 없음, "render": 받아 둔 목록으로 그리기, "reload": 서버에서 새로 받아 그리기 (아래 renderProjects 앞 설명 참고)
+let projectDeferred = null;
+// 프로젝트 메모 저장이 끝날 때마다 1씩 는다. 저장 전에 읽은 목록 응답을 알아보는 데 쓴다
+let projectMemoSaves = 0;
 
 // 서버에서 프로젝트 목록(진행률과 단계 포함)을 받아와서 화면을 다시 그린다.
 // 오늘 탭의 할 일 줄이나 프로젝트 카드에서 할 일을 바꾼 뒤에도 이 함수로 새로고침한다
 async function loadProjects(options) {
+    const savesAtStart = projectMemoSaves;
     // 프로젝트와 폴더를 동시에 받는다
     const [projectsResponse, foldersResponse] = await Promise.all([fetch("/api/projects"), fetch("/api/folders")]);
     if (!projectsResponse.ok) {
@@ -4242,8 +4247,21 @@ async function loadProjects(options) {
     if (!foldersResponse.ok) {
         throw new Error("서버 오류: " + foldersResponse.status);
     }
-    projectsCache = await projectsResponse.json();
-    foldersCache = await foldersResponse.json();
+    const projects = await projectsResponse.json();
+    const folders = await foldersResponse.json();
+    // 메모를 쓰거나 저장하는 중이면 이 응답은 쓰지 않고, 끝난 뒤 새로 받아서 그린다. 저장 전 내용일 수 있기 때문이다
+    if (projectMemoBusy()) {
+        renderProjects(options);  // 그리기는 미뤄지고, 빈틈 메우기 옵션만 기억된다
+        projectDeferred = "reload";
+        return;
+    }
+    // 메모 저장이 끝나기 전에 읽은 응답이 이제야 왔다. 옛 메모일 수 있으니 바로 다시 받는다
+    if (savesAtStart !== projectMemoSaves) {
+        return loadProjects(options);
+    }
+    projectDeferred = null;
+    projectsCache = projects;
+    foldersCache = folders;
     renderProjects(options);  // options: 카드가 빠지거나 옮겨졌을 때의 "다시 쌓기 + 미끄러지는 움직임" 옵션 (renderProjects 설명 참고)
     fillProjectSelect();
 }
@@ -4315,6 +4333,7 @@ function describeDeadline(deadline) {
 //   addClass, addTitle: 메모가 없을 때 보여줄 [+ 메모] 버튼의 CSS 이름과 설명. 안 주면 버튼 없이 빈 상자가 된다
 //     (이때는 바깥에서 box.startEditing()을 불러서 입력을 시작한다. 할 일 줄의 "메모" 버튼이 그렇게 쓴다)
 //   save(text): 서버에 저장하는 함수 (async). 실패하면 던지면 된다. 이 함수가 던지는 오류 글은 알림으로 보여준다
+//   onSettled: 입력 칸이 닫히거나 저장이 끝날 때마다 부를 함수 (없어도 된다). 정말 끝났는지는 box.isBusy()로 본다
 const INLINE_MEMO_SAVE_DELAY_MS = 1500;
 const PROJECT_MEMO_MAX = 5000;  // 서버(app.py의 PROJECT_MEMO_MAX)와 같은 값
 const TASK_MEMO_MAX = 2000;  // 서버(app.py의 TASK_MEMO_MAX)와 같은 값
@@ -4375,6 +4394,9 @@ function makeInlineMemo(options) {
                     save();
                 }
             }
+            if (options.onSettled) {
+                options.onSettled();
+            }
         }
     }
 
@@ -4415,6 +4437,9 @@ function makeInlineMemo(options) {
             memo.text = input.value.trim();
             render();
             save();
+            if (options.onSettled) {
+                options.onSettled();
+            }
         });
         input.addEventListener("keydown", function (e) {
             if (e.isComposing) {
@@ -4428,6 +4453,10 @@ function makeInlineMemo(options) {
     }
 
     box.startEditing = startEditing;
+    // 입력 칸이 열려 있거나 저장 중이면 true (저장 중에 또 고친 것이 있으면 앞 저장이 끝난 뒤 이어서 저장하므로 계속 true다)
+    box.isBusy = function () {
+        return memo.saving || !!box.querySelector("textarea");
+    };
     render();
     return box;
 }
@@ -4444,9 +4473,19 @@ function makeProjectMemo(project) {
         addClass: "project-memo-add",
         addTitle: "이 프로젝트에 메모 붙이기",
         save: async function (text) {
-            await sendRequest("/api/projects/" + project.id, "PATCH", { memo: text });
-            project.memo = text;  // 수정 창이 열 때 읽는 값도 맞춰 둔다
+            // 수정 창이 열 때 읽는 값도 맞춰 둔다. 저장 중에 창을 열어도 옛 메모가 나오지 않도록 보내기 전에 바꾸고, 실패하면 되돌린다
+            const previous = project.memo;
+            project.memo = text;
+            try {
+                await sendRequest("/api/projects/" + project.id, "PATCH", { memo: text });
+            } catch (error) {
+                project.memo = previous;
+                throw error;
+            } finally {
+                projectMemoSaves++;
+            }
         },
+        onSettled: drawDeferredProjectsSoon,
     });
 }
 
@@ -5131,12 +5170,57 @@ function slideProjectCards(before) {
 
 let releaseProjectListHeightTimer = null;  // renderProjects가 붙잡아 둔 목록 높이를 풀어 줄 타이머
 
+// ----- 프로젝트 메모를 쓰거나 저장하는 동안 다시 그리기 미루기 -----
+// 쓰는 중에 카드를 다시 그리면 입력 칸이 사라지고, 그 순간 포커스를 잃어서(blur) 반쯤 쓴 글이 저장되고 이어 친 글자는 버려진다.
+// 저장 중에 다시 그리면 새 카드가 옛 메모를 보이고, 그 상태에서 고치면 옛 글에서 시작해 새 메모를 덮는다.
+// 그래서 메모가 바쁜 동안은 미뤄 두고(projectDeferred), 끝나면 꼭 한 번 그린다.
+function projectMemoBusy() {
+    return [...projectListElement.querySelectorAll(".project-memo-box")].some(function (box) {
+        return box.isBusy();
+    });
+}
+
+// 미룬 다시 그리기를 지금 한다. 아직 때가 아니면 그대로 두고, 때가 되면 아래 이벤트들이 다시 부른다
+function drawDeferredProjects() {
+    if (!projectDeferred || projectMemoBusy()) {
+        return;
+    }
+    // 목록 안을 누르고 있는 중이면 기다린다. 눌린 버튼을 다시 그려서 없애면 손을 떼도 클릭이 되지 않는다 (:active = 지금 눌려 있는 요소)
+    if (projectListElement.querySelector(":active")) {
+        return;
+    }
+    // 메모를 닫고 목록 안의 다른 입력 칸(단계 추가 등)으로 옮겨 쓰는 중이면 기다린다. 다시 그리면 그 칸이 지워진다
+    const focused = document.activeElement;
+    if (projectListElement.contains(focused) && focused.matches("input, textarea")) {
+        return;
+    }
+    const reload = projectDeferred === "reload";
+    projectDeferred = null;
+    if (reload) {
+        loadProjects().catch(function (error) {
+            showToast("프로젝트를 불러오지 못했습니다: " + error.message);
+        });
+    } else {
+        renderProjects();
+    }
+}
+
+// 한 박자 뒤에 부른다. 포커스가 다음 칸으로 옮겨 간 뒤, 그리고 손을 뗀 다음의 클릭 처리가 끝난 뒤에 봐야 하기 때문이다
+function drawDeferredProjectsSoon() {
+    if (projectDeferred) {
+        setTimeout(drawDeferredProjects, 0);
+    }
+}
+// true: 끌기 코드가 이벤트 전달을 막아도 먼저 듣는다
+document.addEventListener("pointerup", drawDeferredProjectsSoon, true);
+document.addEventListener("pointercancel", drawDeferredProjectsSoon, true);
+projectListElement.addEventListener("focusout", drawDeferredProjectsSoon);
+
 // 폴더와 프로젝트 카드들을 모두 다시 그린다.
 // options.repackFolderIds: 카드가 빠지거나 들어온 폴더들의 번호(폴더 없음은 null). 이 폴더들의 카드는 "있던 열"을 잊고 처음부터 다시 쌓아서 빈틈을 메운다.
 //   (평소에는 카드가 다른 열로 튀지 않게 열을 기억해 두는데, 카드가 빠졌을 때는 오히려 빈칸이 남기 때문이다)
-// options.animate: true이면 카드들이 옛 위치에서 새 위치로 미끄러진다
+// options.animate: true이면 카드들이 옛 위치에서 새 위치로 미끄러진다 (메모 때문에 미뤄진 그리기에서는 생략한다)
 function renderProjects(options) {
-    const before = options && options.animate ? snapshotProjectCards() : null;
     if (options && options.repackFolderIds) {
         projectsCache.forEach(function (project) {
             if (options.repackFolderIds.includes(project.folderId)) {
@@ -5144,6 +5228,15 @@ function renderProjects(options) {
             }
         });
     }
+    if (projectMemoBusy()) {
+        projectDeferred = projectDeferred || "render";
+        return;
+    }
+    // 서버에서 새로 받아야 하는 "reload"는 지우지 않는다. 지금 그리는 내용은 받아 둔 목록이기 때문이다
+    if (projectDeferred === "render") {
+        projectDeferred = null;
+    }
+    const before = options && options.animate ? snapshotProjectCards() : null;
     // 목록을 비우고 다시 채우는 사이에 페이지 높이가 줄어서 브라우저가 스크롤을 맨 위로 되돌려 버린다.
     // 그래서 다시 그리기 전의 스크롤 위치를 기억해 두었다가, 다 그린 뒤에 돌려놓는다 (단계 체크, 단계 순서 바꾸기 등 모든 새로고침이 같다).
     // 또 새로 그린 카드는 마우스를 다시 움직이기 전까지 "마우스가 올라간 상태"가 아니라서(카드에 마우스를 올려야 보이는 [+ 메모] 버튼이 잠깐 사라져)
