@@ -1,4 +1,5 @@
 // 새 일정을 Google 저장을 기다리지 않고 달력에 먼저 그리는지 시험 (docs/review-2026-11.md의 N26 ②, 헤드리스 Edge를 CDP로 조종, 서버는 memo_server.py)
+// 확장 프로그램을 끄고 띄운다 (이유는 tests/README.md의 "알려진 함정")
 // - 붙여넣기와 일정 추가 창: 누르자마자 흐리게 보이고, 저장이 끝나면 같은 번호의 일정 하나로 이어받는지 (두 개로 보이거나 깜빡 사라지지 않는지)
 // - 저장 중에 다시 불러와도 사라지지 않는지, 저장 중인 일정은 눌러도 수정 창이 안 열리는지
 // - 연달아 붙여넣기가 모두 들어가는지(예전에는 앞 저장이 끝날 때까지 말없이 무시), 키를 꾹 눌러 반복된 Ctrl+V는 무시하는지
@@ -8,7 +9,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs"; import os from "node:os"; import path from "node:path";
 const BASE = "http://127.0.0.1:5057";
 const PORT = 9418;
-const edge = spawn("C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", ["--headless=new", `--remote-debugging-port=${PORT}`, `--user-data-dir=${fs.mkdtempSync(path.join(os.tmpdir(), "edge_t_"))}`, "--window-size=1400,900", "--no-first-run", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding", "--disable-background-timer-throttling", "--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling", "about:blank"], { stdio: "ignore" });
+const edge = spawn("C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", ["--headless=new", `--remote-debugging-port=${PORT}`, `--user-data-dir=${fs.mkdtempSync(path.join(os.tmpdir(), "edge_t_"))}`, "--window-size=1400,900", "--no-first-run", "--disable-extensions", "--disable-component-extensions-with-background-pages", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding", "--disable-background-timer-throttling", "--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling", "about:blank"], { stdio: "ignore" });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let targets; for (let i = 0; i < 40; i++) { try { targets = await (await fetch(`http://127.0.0.1:${PORT}/json`)).json(); if (targets.length) break; } catch {} await sleep(250); }
 const ws = new WebSocket(targets.find((t) => t.type === "page").webSocketDebuggerUrl); await new Promise((r) => (ws.onopen = r));

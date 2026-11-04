@@ -1,4 +1,5 @@
 // 설정 저장 화면 시험 (docs/review-2026-11.md의 M1, L2). 헤드리스 Edge를 CDP로 조종, 시험 서버 settings_server.py(5057번)
+// 확장 프로그램을 끄고 띄운다 (이유는 tests/README.md의 "알려진 함정")
 // 1) 켤 때 settings.json을 못 읽으면 알림이 나오고, 그 상태에서 설정을 바꿔도 진짜 설정을 기본값으로 덮지 않는다
 // 2) 정상으로 켜면 설정 하나를 바꿔도 나머지(vault 경로 등)가 그대로다
 // 3) 화면의 설정 저장이 실패해도, 만든 캘린더는 서버가 기록해서 다시 켠 뒤에도 "삭제"할 수 있다
@@ -7,7 +8,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs"; import os from "node:os"; import path from "node:path";
 const BASE = "http://127.0.0.1:5057";
 const PORT = 9416;
-const edge = spawn("C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", ["--headless=new", `--remote-debugging-port=${PORT}`, `--user-data-dir=${fs.mkdtempSync(path.join(os.tmpdir(), "edge_t_"))}`, "--window-size=1400,900", "--no-first-run", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding", "--disable-background-timer-throttling", "--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling", "about:blank"], { stdio: "ignore" });
+const edge = spawn("C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", ["--headless=new", `--remote-debugging-port=${PORT}`, `--user-data-dir=${fs.mkdtempSync(path.join(os.tmpdir(), "edge_t_"))}`, "--window-size=1400,900", "--no-first-run", "--disable-extensions", "--disable-component-extensions-with-background-pages", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding", "--disable-background-timer-throttling", "--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling", "about:blank"], { stdio: "ignore" });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let targets; for (let i = 0; i < 40; i++) { try { targets = await (await fetch(`http://127.0.0.1:${PORT}/json`)).json(); if (targets.length) break; } catch {} await sleep(250); }
 const ws = new WebSocket(targets.find((t) => t.type === "page").webSocketDebuggerUrl); await new Promise((r) => (ws.onopen = r));

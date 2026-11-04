@@ -1,11 +1,12 @@
 // Google 로그인이 필요할 때 오른쪽 위 동기화 표시가 알려 주는지 시험 (docs/review-2026-11.md의 H1c, 헤드리스 Edge를 CDP로 조종, 서버는 login_server.py)
+// 확장 프로그램을 끄고 띄운다 (이유는 tests/README.md의 "알려진 함정")
 // - 예전에는 로그인 창을 기다리는 동안 지난번 "12:35 동기화"(초록)가 그대로 있었고, 로그인 창을 닫으면 "오프라인"(빨강)만 보였다
 // - 로그인 기다리는 중 → 취소 → 새로고침으로 다시 열기 → 또 취소 → 로그인 성공 순서로 표시와 알림, 캘린더 목록을 본다
 import { spawn } from "node:child_process";
 import fs from "node:fs"; import os from "node:os"; import path from "node:path";
 const BASE = "http://127.0.0.1:5057";
 const PORT = 9414;
-const edge = spawn("C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", ["--headless=new", `--remote-debugging-port=${PORT}`, `--user-data-dir=${fs.mkdtempSync(path.join(os.tmpdir(), "edge_t_"))}`, "--window-size=1400,900", "--no-first-run", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding", "--disable-background-timer-throttling", "--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling", "about:blank"], { stdio: "ignore" });
+const edge = spawn("C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", ["--headless=new", `--remote-debugging-port=${PORT}`, `--user-data-dir=${fs.mkdtempSync(path.join(os.tmpdir(), "edge_t_"))}`, "--window-size=1400,900", "--no-first-run", "--disable-extensions", "--disable-component-extensions-with-background-pages", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding", "--disable-background-timer-throttling", "--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling", "about:blank"], { stdio: "ignore" });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let targets; for (let i = 0; i < 40; i++) { try { targets = await (await fetch(`http://127.0.0.1:${PORT}/json`)).json(); if (targets.length) break; } catch {} await sleep(250); }
 const ws = new WebSocket(targets.find((t) => t.type === "page").webSocketDebuggerUrl); await new Promise((r) => (ws.onopen = r));

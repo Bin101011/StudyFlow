@@ -1,4 +1,5 @@
 // 노트 읽기 화면의 안전장치(marked + DOMPurify) 시험 (헤드리스 Edge를 CDP로 조종, 가짜 Google 서버 5057번)
+// 확장 프로그램을 끄고 띄운다 (이유는 tests/README.md의 "알려진 함정")
 // - static/lib/purify.min.js가 실제로 불려 오는지, 평소 노트가 서식대로 보이는지, 공격 문장이 실행되지 않는지를 실제 앱 화면에서 본다
 // - DOMPurify를 새 버전으로 바꿀 때마다 돌려서 달라진 곳이 없는지 확인한다
 // - 임시 vault 폴더를 Temp에 만들어 쓰고 끝나면 지운다. 시험 서버는 설정을 임시 폴더로 돌려 놓아서 내 진짜 설정과 노트는 안 건드린다
@@ -7,7 +8,7 @@ import fs from "node:fs"; import os from "node:os"; import path from "node:path"
 const BASE = "http://127.0.0.1:5057";
 const PORT = 9412;
 const PROJECT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");  // tests/browser의 두 단계 위 = 프로젝트 폴더
-const edge = spawn("C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", ["--headless=new", `--remote-debugging-port=${PORT}`, `--user-data-dir=${fs.mkdtempSync(path.join(os.tmpdir(), "edge_t_"))}`, "--window-size=1400,900", "--no-first-run", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding", "--disable-background-timer-throttling", "--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling", "about:blank"], { stdio: "ignore" });
+const edge = spawn("C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", ["--headless=new", `--remote-debugging-port=${PORT}`, `--user-data-dir=${fs.mkdtempSync(path.join(os.tmpdir(), "edge_t_"))}`, "--window-size=1400,900", "--no-first-run", "--disable-extensions", "--disable-component-extensions-with-background-pages", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding", "--disable-background-timer-throttling", "--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling", "about:blank"], { stdio: "ignore" });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let targets; for (let i = 0; i < 40; i++) { try { targets = await (await fetch(`http://127.0.0.1:${PORT}/json`)).json(); if (targets.length) break; } catch {} await sleep(250); }
 const ws = new WebSocket(targets.find((t) => t.type === "page").webSocketDebuggerUrl); await new Promise((r) => (ws.onopen = r));
