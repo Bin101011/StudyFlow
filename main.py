@@ -72,8 +72,13 @@ def close_without_waiting():
     browser_class.clear_user_data = dispose_only
 
 
+# [임시 기록 N36] 켜고 닫은 시각을 남긴다. 원인을 찾으면 지운다 (app.py의 같은 표시 참고)
+from app import n36_log
+n36_log(f"창 띄우기 시작, 프로세스 {os.getpid()}")
+
 # 창을 실제로 띄운다. 창을 닫을 때까지 여기서 멈춰 있다
 webview.start(close_without_waiting, storage_path=WEBVIEW_PROFILE)
+n36_log(f"창 닫힘, 프로세스 {os.getpid()}")
 
 # 창을 닫은 뒤 프로그램을 바로 끝낸다 (docs/review-2026-11.md의 N25).
 # 그냥 두면 파이썬이 끝나는 절차에서 .NET 연결 도구(pythonnet)의 종료가 3~6초 걸려서, 닫고 바로 다시 켜면 그만큼 늦게 떴다.

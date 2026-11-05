@@ -5,6 +5,43 @@
     <meta charset="UTF-8">
     <!-- 브라우저 탭이나 창 제목줄에 표시되는 이름 -->
     <title>StudyFlow</title>
+    <!-- [임시 기록 N36] 닫고 바로 켜면 달력이 안 나오는 문제의 원인을 찾으려고 넣었다. 원인을 찾으면 지운다 (docs/review-2026-11.md의 N36).
+         화면 파일을 못 받거나 자바스크립트 오류가 나면 서버에 알려서 studyflow.log에 남긴다. 파일이 오기 전에도 돌도록 다른 파일보다 먼저 둔다 -->
+    <script>
+        (function () {
+            let sent = 0;  // 오류가 쏟아져도 로그가 넘치지 않게 20개까지만 보낸다
+            function send(kind, detail) {
+                if (++sent > 20) {
+                    return;
+                }
+                fetch("/api/__client-log", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ kind: kind, detail: detail }),
+                }).catch(function () {});
+            }
+            // true(캡처 단계): 스크립트·CSS 파일을 못 받은 오류는 위로 전달되지 않아서, 먼저 듣는 이 방식으로만 잡을 수 있다
+            window.addEventListener("error", function (e) {
+                const target = e.target;
+                if (target && target !== window && (target.src || target.href)) {
+                    send("파일 못 받음", target.src || target.href);
+                } else {
+                    send("자바스크립트 오류", e.message + " @" + e.filename + ":" + e.lineno);
+                }
+            }, true);
+            // 10초 뒤 달력이 그려졌는지 적는다. 오류 없이 파일이 멈춰 있는 경우는 이 기록의 "받은 파일" 목록에서 빠진 것으로 알 수 있다
+            setTimeout(function () {
+                const drawn = document.querySelectorAll(".fc").length > 0;
+                send(drawn ? "화면 정상" : "화면 안 그려짐", {
+                    readyState: document.readyState,
+                    fullCalendar: typeof FullCalendar,
+                    files: drawn ? undefined : performance.getEntriesByType("resource").map(function (entry) {
+                        return [entry.name.split("/").pop(), Math.round(entry.startTime), Math.round(entry.responseEnd), entry.responseStatus];
+                    }),
+                });
+            }, 10000);
+        })();
+    </script>
     <!-- 글꼴 파일은 인터넷에서 받지 않고 static/fonts 폴더(내 컴퓨터)에서 불러온다. 인터넷이 끊겨도 같은 모양으로 보인다.
          영문/숫자는 Google Sans Flex, 한글은 Noto Sans KR (둘 다 무료 글꼴). 글꼴을 쓰는 style.css보다 먼저 불러온다 -->
     <link rel="stylesheet" href="{{ url_for('static', filename='fonts/google-sans-flex/google-sans-flex.css') }}">

@@ -68,6 +68,32 @@ def disable_browser_cache(response):
     response.headers["Cache-Control"] = "no-cache"
     return response
 
+
+# [임시 기록 N36] 닫고 바로 켜면 달력이 안 나오는 문제의 원인을 찾으려고 넣었다. 원인을 찾으면 이 구간과 index.html, main.py의 같은 표시를 지운다.
+# 화면 파일 요청이 서버에 왔는지, 어떻게 끝났는지 적는다 (요청이 아예 안 왔는지 구별하려는 것이다)
+def n36_log(text):
+    print(f"[임시 기록 N36] {time.strftime('%m-%d %H:%M:%S')}.{int(time.time() * 1000) % 1000:03d} {text}")
+
+
+@app.before_request
+def n36_request_began():
+    if request.path == "/" or request.path.startswith("/static/"):
+        n36_log(f"요청 옴 {request.path}")
+
+
+@app.after_request
+def n36_request_ended(response):
+    if request.path == "/" or request.path.startswith("/static/"):
+        n36_log(f"응답 {response.status_code} {request.path}")
+    return response
+
+
+@app.route("/api/__client-log", methods=["POST"])
+def api_client_log():
+    n36_log(f"화면: {str(request.get_json(silent=True))[:3000]}")
+    return "", 204
+
+
 # 로그인 정보(creds)를 준비하는 동안 다른 요청이 끼어들지 못하게 하는 열쇠.
 # 동시에 여러 요청이 token.json을 읽고 쓰면 파일이 꼬일 수 있어서 필요하다
 _creds_lock = threading.Lock()
