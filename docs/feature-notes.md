@@ -74,4 +74,5 @@ StudyFlow 창을 닫고 1초쯤 안에 다시 켜면 "StudyFlow가 이미 켜져
 - **pywebview를 새 버전으로 올릴 때**: main.py의 `close_without_waiting`은 pywebview 안쪽 함수(`EdgeChrome.clear_user_data`)를 바꿔 끼운다(6.2.1 기준). 이름이 바뀌면 바꿔 끼우지 않고 원래대로(3초 기다림) 돌아가므로 망가지지는 않지만, 다시 느려진다.
 - **main.py 끝의 `exit_now` 뒤에는 아무것도 실행되지 않는다.** `atexit`에 등록한 함수도 불리지 않는다. 끌 때 꼭 해야 할 일이 생기면 `exit_now` **앞에** 둔다.
 - **끌 때 저장 요청은 5초까지만 기다린다**(`single_instance.REQUEST_WAIT_SECONDS`). 넘으면 `[종료] 끝나지 않은 요청을 두고 끝냅니다`가 로그에 남는다.
+- **창을 닫는 순서는 `close_guard.py`가 정한다(N30, 2026-11-06).** 닫기를 한 번 막고 → 화면에 남은 글을 저장시키고(`prepareToClose`) → 쓰기 수(`pendingWrites`)가 0으로 0.1초 머물면 닫는다. 쓰기가 안 끝나도 2.4초 뒤에는 닫기 명령을 내리고, 그래도 안 닫히면 0.5초 뒤 프로그램을 끝낸다. `evaluate_js`에는 제한 시간이 없어서 돌아오지 않을 수 있으므로, 시간을 재는 일은 저장 단계와 다른 스레드에서 한다. 새 자동 저장을 만들 때 칸을 벗어날 때 저장하는 방식이면 저절로 처리되고, 타이머로만 저장하면 `prepareToClose`에 단계를 더해야 한다.
 - **다시 재야 할 때**: 이번 `[시간]` 로그는 지웠다. 다시 넣으려면 켜기 시작·라이브러리 불러오기 끝·창 보임(`window.events.shown`)·화면 불러옴(`loaded`)·창 닫힘(`closed`)·창 정리 끝(`webview.start` 다음 줄)·프로그램 끝(`exit_now` 직전)에 시각을 print하면 된다. 파이썬 프로세스가 만들어진 시각은 ctypes의 `GetProcessTimes`로 잴 수 있는데, 64비트에서는 `GetCurrentProcess.restype`과 `GetProcessTimes.argtypes`를 정해 줘야 맞는 값이 나온다(안 정하면 0이 나온다).
