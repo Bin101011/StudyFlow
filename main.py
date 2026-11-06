@@ -30,12 +30,18 @@ import webview
 # app.py에서 만들어둔 Flask 앱과, 뒤에서 할 일을 시작하는 함수를 가져온다
 from app import app, start_background_tasks
 
+# 창을 닫기 직전에 쓴 글이 사라지지 않게 하는 도구
+import close_guard
+
 # 뒤에서(별도 스레드로) Google 연결 준비와 1분마다 하는 자동 동기화를 시작한다. 창이 뜨는 것을 막지 않는다
 start_background_tasks()
 
 # 창을 하나 만든다. 두 번째 자리에 Flask 앱을 넘기면
 # pywebview가 알아서 서버를 켜고, 그 화면을 창에 보여준다
-webview.create_window("StudyFlow", app, width=1200, height=800)
+window = webview.create_window("StudyFlow", app, width=1200, height=800)
+
+# 창을 닫을 때 남은 글을 저장한 뒤 닫게 한다. 저장이 멈춰도 3초 안에는 닫힌다 (close_guard.py, docs/review-2026-11.md의 N30)
+close_guard.install(window)
 
 # 창 안의 브라우저(WebView2)가 쓰는 작업 폴더. 정하지 않으면 켤 때마다 %TEMP%에 새 폴더(tmpXXXX\EBWebView, 십수 MB)가 생기고,
 # 끌 때 지우려다 실패해서(브라우저 프로세스가 아직 파일을 쥐고 있다) 쌓인다 (실제로 13일 만에 10개, 156MB였다).

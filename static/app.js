@@ -8,6 +8,57 @@ window.addEventListener("unhandledrejection", function (e) {
     showToast("화면 오류: " + (e.reason && e.reason.message ? e.reason.message : e.reason));
 });
 
+// ---------- 창을 닫기 전에 남은 글 저장하기 (docs/review-2026-11.md의 N30) ----------
+// 메모와 노트는 쓰고 1~1.5초 뒤에 저장하므로, 그 전에 창을 닫으면 글이 사라질 수 있다.
+// 그래서 창을 닫을 때 close_guard.py가 닫기를 잠깐 막고 prepareToClose를 부른 뒤, pendingWrites가 0이 되면 진짜로 닫는다.
+
+// 지금 보내는 중인 쓰기 요청(GET이 아닌 fetch)의 수
+let pendingWrites = 0;
+const originalFetch = window.fetch;
+// fetch를 한 겹 감싼다. 이 파일의 fetch 호출을 하나하나 고치지 않아도 모든 쓰기 요청을 셀 수 있고, 새 저장 코드가 생겨도 저절로 세어진다.
+// 결과와 오류는 원래 fetch의 것을 그대로 돌려주므로 부르는 쪽은 달라지는 것이 없다
+window.fetch = function (url, options) {
+    const isWrite = Boolean(options && options.method && options.method.toUpperCase() !== "GET");
+    const request = originalFetch.apply(window, arguments);
+    if (isWrite) {
+        pendingWrites++;
+        // finally: 성공해도 실패해도 실행된다. 뒤의 catch는 "실패를 여기서 또 알리지 않게" 하는 것이다 (실패는 원래 부른 쪽이 처리한다)
+        request.finally(function () {
+            pendingWrites--;
+        }).catch(function () {});
+    }
+    return request;
+};
+
+// 저장 대기 중인 글을 모두 지금 저장하기 시작한다. 하나가 오류를 내도 나머지는 저장해야 해서 한 단계씩 따로 잡는다.
+// keepalive(창이 닫혀도 끝까지 가는 요청)는 쓰지 않는다. 내용이 64KB를 넘으면 브라우저가 거절하는데, 여기서는 창을 열어 둔 채 기다리므로 필요 없다
+function prepareToClose() {
+    const steps = [
+        function () {
+            // 쓰는 중인 칸에서 벗어나게 한다. 프로젝트·할 일·일정 메모, 단계 이름 고치기는 칸을 벗어날 때 저장한다
+            if (document.activeElement && document.activeElement.blur) {
+                document.activeElement.blur();
+            }
+        },
+        function () {
+            closeTimelinePopover();
+        },
+        function () {
+            saveDayMemo();
+        },
+        function () {
+            saveNote();
+        },
+    ];
+    steps.forEach(function (step) {
+        try {
+            step();
+        } catch (error) {
+            console.error("창을 닫기 전 저장 중 오류:", error);
+        }
+    });
+}
+
 // 탭 버튼 6개와 탭 내용 6개를 모두 찾아서 변수에 담는다
 const tabButtons = document.querySelectorAll(".tab-button");
 const tabContents = document.querySelectorAll(".tab-content");
