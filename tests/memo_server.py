@@ -37,6 +37,17 @@ def __offline(value):
     return jsonify({"offline": fake.offline})
 
 
+@app.app.route("/__test/stale-offline")
+def __stale_offline():
+    # "10분 넘게 오프라인이었고 인터넷이 막 돌아온 순간"을 만든다: 서버는 오프라인으로 알고, 기억은 받은 지 오래됐다 (N35)
+    store = app.event_store
+    with store._lock:
+        for calendar_id in list(store._months):
+            store._checked_at[calendar_id] = time.time() - 700
+        store._online = False
+    return jsonify({"online": store.online})
+
+
 @app.app.route("/__test/state")
 def __state():
     events = {}

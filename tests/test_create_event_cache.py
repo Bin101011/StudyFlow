@@ -403,6 +403,59 @@ code, events = get_events("2026-09-27", "2026-11-08")
 check("다시 켠 뒤에도 추가·수정한 일정이 보임", {"동기화가 먼저 본 일정", "월말 걸침", "끌기 뒤 붙여넣기", "옮긴 일정"} <= set(titles(events))
       and not {"새 일정", "종일 새 일정"} & set(titles(events)), str(titles(events)))
 
+# --- 16. 오래 오프라인이었다가 인터넷이 돌아온 직후의 쓰기 (docs/review-2026-11.md의 N35)
+# 서버는 1분 확인이 돌 때까지 아직 오프라인으로 안다. 그 틈에 일정을 추가하면 Google에는 저장되는데,
+# 다시 불러올 때 서버가 옛 기억을 돌려줘서 방금 만든 일정이 안 보였다. 쓰기가 성공하면 온라인이라는 뜻이다
+def go_stale_offline():
+    """"10분 넘게 오프라인이었고 인터넷이 막 돌아온 순간"을 만든다: 서버는 오프라인으로 알고, 기억은 받은 지 오래됐다."""
+    store = app.event_store
+    with store._lock:
+        for calendar_id in list(store._months):
+            store._checked_at[calendar_id] = time.time() - 700
+        store._online = False
+
+
+def online():
+    return client.get("/api/sync-status").get_json()["online"]
+
+
+drain()
+get_events("2026-09-27", "2026-11-08")
+go_stale_offline()
+check("(준비) 서버는 오프라인으로 알고 있다", online() is False)
+response = client.post("/api/events", json={"calendarId": "me@test", "title": "돌아온 직후 일정", "allDay": True,
+                                            "start": "2026-10-26", "end": "2026-10-27"})
+check("인터넷이 돌아온 직후의 쓰기는 성공한다", response.status_code == 201, str(response.status_code))
+check("쓰기가 성공하면 온라인으로 표시한다", online() is True)
+fake.reset_calls()
+code, events = get_events("2026-10-26", "2026-10-27")
+check("다시 불러오면 Google에서 새로 받아 방금 만든 일정이 보인다", code == 200 and titles(events).count("돌아온 직후 일정") == 1 and fake.calls["get_events"] > 0,
+      f"{code} {titles(events)} {fake.calls}")
+drain()
+
+go_stale_offline()
+fake.offline = True
+response = client.post("/api/events", json={"calendarId": "me@test", "title": "진짜 오프라인 일정", "allDay": True,
+                                            "start": "2026-10-26", "end": "2026-10-27"})
+check("진짜 오프라인이면 쓰기는 실패하고 오프라인 표시가 그대로다", response.status_code == 502 and online() is False, str(response.status_code))
+code, events = get_events("2026-10-26", "2026-10-27")
+check("진짜 오프라인이면 옛 기억을 그대로 보여준다", code == 200 and "진짜 오프라인 일정" not in titles(events), f"{code} {titles(events)}")
+fake.offline = False
+
+go_stale_offline()
+rejected = fake._http_error(403, "권한 없음")
+
+
+def reject(service):
+    raise rejected
+
+
+# run_google_write는 실패하면 응답(jsonify)을 만들어서, 요청 밖에서 부를 때는 app_context가 필요하다
+with app.app.app_context():
+    check("Google이 쓰기를 거절하면(인터넷 확인이 아님) 표시를 바꾸지 않는다", app.run_google_write("쓰지 못했습니다.", reject) is not None and online() is False)
+check("일정이 아닌 쓰기(캘린더 관리)도 성공하면 온라인으로 표시한다", app.run_google_write("쓰지 못했습니다.", lambda service: None) is None and online() is True)
+drain()
+
 print()
 print("실패:", failures if failures else "없음")
 sys.exit(1 if failures else 0)

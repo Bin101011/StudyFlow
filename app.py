@@ -625,6 +625,9 @@ def run_google_write(failure_message, operation):
         # HttpError가 아닌 오류는 대부분 인터넷 문제다 (연결 끊김, 시간 초과 등)
         print(f"[Google 쓰기 실패] {failure_message} {error}")
         return jsonify({"error": f"Google에 {failure_message} ({google_failure_message(error, '인터넷 연결을 확인하세요.')})"}), 502
+    # Google 쓰기가 성공했으니 인터넷이 된다. 다음 1분 확인을 기다리지 않고 바로 온라인으로 표시한다.
+    # 안 그러면 인터넷이 막 돌아온 순간 서버가 Google에 묻지 않고 옛 기억을 돌려줘서, 방금 만든 일정이 화면에서 사라진다 (docs/review-2026-11.md의 N35)
+    event_store.mark_online()
     return None
 
 

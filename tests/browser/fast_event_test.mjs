@@ -138,6 +138,22 @@ const hoverDay = (d) => js(`hoveredDate = ${JSON.stringify(d)}; document.activeE
   check("다시 저장하면 이번에는 저장된다",
     await waitFor(async () => (await serverIds("실패할 새 일정", d9)).length === 1 && (await onDay("실패할 새 일정", d9)).length === 1 && (await js(`drawnBeforeSave.size`)) === 0, 6000));
 
+  console.log("--- F. 오래 오프라인이었다가 인터넷이 돌아온 직후에 추가 (N35) ---");
+  const d10 = await day(10);
+  await server("/__test/stale-offline");
+  await js(`openAddDialog({ date: addDays(new Date(new Date().toDateString()), 10), view: { type: MONTH_VIEW } }); true`); await sleep(200);
+  await js(`document.getElementById("event-title").value = "돌아온 직후 일정"; document.getElementById("event-save").click(); true`);
+  check("저장을 기다리지 않고 바로 보인다", await waitFor(async () => (await onDay("돌아온 직후 일정", d10)).length === 1, 300));
+  const backSaved = await waitFor(async () => (await serverIds("돌아온 직후 일정", d10)).length === 1, 6000);
+  // 저장이 끝난 뒤 화면이 목록을 다시 받아도 사라지거나 두 개가 되면 안 된다. 잠깐 사라지는 순간도 잡으려고 짧게 지켜본다
+  const backCounts = [];
+  for (let i = 0; i < 40; i++) { backCounts.push((await onDay("돌아온 직후 일정", d10)).length); await sleep(50); }
+  check("저장이 끝난 뒤에도 사라지지 않고 하나만 보인다", backSaved && backCounts.every((n) => n === 1), backCounts.join(","));
+  check("먼저 그린 일정을 저장된 일정이 이어받는다", (await onDay("돌아온 직후 일정", d10))[0]?.[1] === false && (await js(`drawnBeforeSave.size`)) === 0);
+  check("쓰기가 성공했으니 서버가 온라인으로 안다", (await server("/api/sync-status")).online === true);
+  await js(`calendar.refetchEvents(); true`); await sleep(700);
+  check("달력을 새로 받아도 하나다", (await onDay("돌아온 직후 일정", d10)).length === 1, await onDay("돌아온 직후 일정", d10));
+
   check("자바스크립트 오류가 없다", jsErrors.length === 0, jsErrors.join(" | "));
 }
 await server("/__test/rule");
