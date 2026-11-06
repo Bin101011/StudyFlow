@@ -411,6 +411,60 @@ check("놓은 뒤 새 이름과 새 메모가 보인다", await waitCard(id12, (
 check("끌기 이름표가 남아 있지 않다", (await js(`document.querySelectorAll(".project-ghost").length`)) === 0);
 await rule();
 
+// 9-13. 메모 저장 중에 체크박스나 슬라이더를 건드려도 미룬 그리기가 멈추지 않는다 (N32). 이것들은 눌러도 포커스만 남을 뿐 글자를 쓰는 칸이 아니다
+console.log("--- 메모 저장 중에 체크박스·슬라이더를 건드린 뒤 (N32) ---");
+const progressOf = (id) => js(`${cardOf(id)}.innerText.match(/단계 \\d+ \\/ \\d+ 완료/)?.[0]`);
+const stepRow = (id, text) => `[...${cardOf(id)}.querySelectorAll(".task-row")].find((l) => l.querySelector(".task-content").textContent === ${JSON.stringify(text)})`;
+const idA = await newProject("메모 쓰는 카드");
+const idB = await newProject("단계 체크 카드");
+const stepIds = {};
+for (const c of ["첫째", "둘째", "셋째"]) stepIds[c] = (await api("/api/tasks", "POST", { content: c, projectId: idB })).data.id;
+await js(`loadProjects()`);
+await waitFor(async () => (await progressOf(idB)) === "단계 0 / 3 완료");
+await rule(`method=PATCH&path=/api/projects/${idA}&ms=1000&count=1`);
+await openMemo(idA);
+await type("체크 때 저장 중인 메모");
+// 진짜 클릭처럼: 메모 칸이 먼저 포커스를 잃고(저장 시작), 체크박스에 포커스가 가고, 체크가 바뀐다
+await js(`(() => { const c = ${stepRow(idB, "둘째")}.querySelector('input[type="checkbox"]'); c.focus(); c.click(); })()`);
+await sleep(200);
+check("(준비) 메모 저장 중이라 그리기를 미뤘다", (await js(`projectDeferred`)) === "reload", await js(`String(projectDeferred)`));
+check("저장이 끝나면 다른 곳을 누르지 않아도 진행률이 바뀐다", await waitFor(async () => (await progressOf(idB)) === "단계 1 / 3 완료", 3000), await progressOf(idB));
+check("미룬 그리기가 남아 있지 않다", (await js(`projectDeferred`)) === null, await js(`String(projectDeferred)`));
+check("메모도 저장됐다", await waitMemo(idA, "체크 때 저장 중인 메모"), await memoOf(idA));
+
+await api("/api/projects/" + idB, "PATCH", { progressMode: "manual", manualPercent: 20 });
+await js(`loadProjects()`);
+await waitFor(async () => (await js(`!!${cardOf(idB)}.querySelector('input[type="range"]')`)));
+await rule(`method=PATCH&path=/api/projects/${idA}&ms=1000&count=1`);
+await openMemo(idA);
+await type(" 슬라이더");
+await js(`${cardOf(idB)}.querySelector('input[type="range"]').focus()`);
+await rename(idB, "슬라이더 카드 새이름");
+await js(`loadProjects()`);
+await sleep(200);
+check("(준비) 슬라이더에 포커스가 있고 그리기를 미뤘다", await js(`document.activeElement.type === "range" && projectDeferred === "reload"`), await js(`document.activeElement.type + "/" + projectDeferred`));
+check("슬라이더에 포커스가 남아 있어도 저장이 끝나면 다시 그린다", await waitCard(idB, (s) => s.name === "슬라이더 카드 새이름"), await stateOf(idB));
+await api("/api/projects/" + idB, "PATCH", { progressMode: "auto" });
+
+// 글자나 날짜를 넣는 칸은 지금까지처럼 기다린다. 다시 그리면 그 칸이 지워져서다
+// 마감일이 있는 단계는 날짜 칸이 줄에 항상 있다 (없으면 마우스를 올려야 나타난다)
+await api("/api/tasks/" + stepIds["셋째"], "PATCH", { deadline: "2030-01-15" });
+await js(`loadProjects()`);
+await waitFor(async () => (await js(`!!${stepRow(idB, "셋째")}?.querySelector(".deadline-input")`)) && (await progressOf(idB)) === "단계 1 / 3 완료");
+await rule(`method=PATCH&path=/api/projects/${idA}&ms=500&count=1`);
+await openMemo(idA);
+await type(" 날짜");
+await js(`(() => { const d = ${stepRow(idB, "셋째")}.querySelector(".deadline-input"); d.classList.add("visible"); d.focus(); })()`);
+await rename(idB, "날짜 카드 새이름");
+await js(`loadProjects()`);
+check("(준비) 날짜 칸에 포커스가 있다", await js(`document.activeElement.type === "date"`), await js(`document.activeElement.type`));
+await sleep(1000);
+st = await stateOf(idB);
+check("날짜 칸에 있는 동안에는 메모 저장이 끝나도 다시 그리지 않는다", st.name !== "날짜 카드 새이름" && (await js(`projectDeferred`)) === "reload", [st.name, await js(`String(projectDeferred)`)]);
+await js(`document.activeElement.blur()`);
+check("날짜 칸을 벗어나면 미룬 그리기를 한다", await waitCard(idB, (s) => s.name === "날짜 카드 새이름"), await stateOf(idB));
+await rule();
+
 check("자바스크립트 오류 없음", jsErrors.length === 0, jsErrors.join(" | "));
 console.log(failed ? `\n실패 ${failed}개` : "\n모두 통과");
 ws.close(); edge.kill(); process.exit(failed ? 1 : 0);

@@ -5240,9 +5240,10 @@ function drawDeferredProjects() {
     if (projectListElement.querySelector(":active")) {
         return;
     }
-    // 메모를 닫고 목록 안의 다른 입력 칸(단계 추가 등)으로 옮겨 쓰는 중이면 기다린다. 다시 그리면 그 칸이 지워진다
+    // 메모를 닫고 목록 안의 다른 입력 칸(단계 추가 등)으로 옮겨 쓰는 중이면 기다린다. 다시 그리면 그 칸이 지워진다.
+    // 체크박스와 슬라이더는 빼고 본다. 글자를 쓰는 칸이 아닌데 누르면 포커스가 남아서, 다른 곳을 누를 때까지 화면이 안 바뀌었다 (docs/review-2026-11.md의 N32)
     const focused = document.activeElement;
-    if (projectListElement.contains(focused) && focused.matches("input, textarea")) {
+    if (projectListElement.contains(focused) && focused.matches('textarea, input:not([type="checkbox"], [type="range"])')) {
         return;
     }
     const reload = projectDeferred === "reload";
