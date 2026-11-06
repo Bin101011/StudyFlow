@@ -95,32 +95,46 @@ check("진짜로 겹치면 나눈다", JSON.stringify(adj.realOverlap) === "[[0,
 
 // ===== C. 계획 만들기 =====
 console.log("--- C. 계획 만들기 ---");
-let p = await posAt(9 * 60 + 5);
+let p = await posAt(9 * 60 + 1);
 await click(p.x, p.y);
 await sleep(300);
-check("빈 곳을 한 번 누르면 제목 입력 칸이 열린다(1시간짜리)", (await js(`!!document.querySelector(".tl-creating .tl-title-input") && document.activeElement.className === "tl-title-input"`)));
+check("빈 곳을 한 번 누르면 제목 입력 칸이 열린다(30분짜리)", (await js(`!!document.querySelector(".tl-creating .tl-title-input") && document.activeElement.className === "tl-title-input"`)));
 const geo = JSON.parse(await js(`(() => { const b = document.querySelector(".tl-creating"); return JSON.stringify({ top: parseFloat(b.style.top), h: parseFloat(b.style.height) }); })()`));
-check("09:05를 눌렀으면 09:00부터 1시간(15분 단위로 내림)", Math.abs(geo.top - 9 * HOUR) < 1 && Math.abs(geo.h - HOUR) < 1, geo);
+check("09:01을 눌렀으면 가장 가까운 5분인 09:00부터 30분", Math.abs(geo.top - 9 * HOUR) < 1 && Math.abs(geo.h - HOUR / 2) < 1, geo);
+check("기본 배율(30분 = 32px)에서도 입력 칸이 블록 안에 다 들어간다", await js(`(() => { const b = document.querySelector(".tl-creating").getBoundingClientRect(); const i = document.querySelector(".tl-creating .tl-title-input").getBoundingClientRect(); return i.top >= b.top && i.bottom <= b.bottom; })()`));
 await type("토익 공부"); await key("Enter");
-check("Enter로 저장되고 블록이 나타난다", await waitFor(async () => (await plans()).some((x) => x.title === "토익 공부" && x.start === 540 && x.end === 600)), await plans());
-check("서버에도 09:00–10:00으로 저장", (await plans()).some((x) => x.title === "토익 공부" && x.start === 540 && x.end === 600 && x.taskId === null));
+check("Enter로 저장되고 블록이 나타난다", await waitFor(async () => (await plans()).some((x) => x.title === "토익 공부" && x.start === 540 && x.end === 570)), await plans());
+check("서버에도 09:00–09:30으로 저장", (await plans()).some((x) => x.title === "토익 공부" && x.start === 540 && x.end === 570 && x.taskId === null));
 // 서버에 저장된 뒤 화면이 계획을 다시 받아 그리기까지 조금 걸리므로 기다린 뒤 본다
 check("화면에 점선 계획 블록이 보인다", await waitFor(async () => (await planTitles()).includes("토익 공부"), 3000), await planTitles());
 
-p = await posAt(13 * 60 + 2);
-const p2 = await posAt(13 * 60 + 2); // 같은 스크롤
-const yEnd = p.y + (14 * 60 + 20 - (13 * 60 + 2)) / 60 * HOUR;
+p = await posAt(13 * 60 + 1);
+const p2 = await posAt(13 * 60 + 1); // 같은 스크롤
+const yEnd = p.y + (14 * 60 + 20 - (13 * 60 + 1)) / 60 * HOUR;
 await drag(p.x, p.y, p.x, yEnd);
 await sleep(300);
 const g2 = JSON.parse(await js(`(() => { const b = document.querySelector(".tl-creating"); return b ? JSON.stringify({ top: parseFloat(b.style.top), h: parseFloat(b.style.height) }) : "null"; })()`));
-check("13:02에서 14:20까지 끌면 13:00–14:30 블록", g2 && Math.abs(g2.top - 13 * HOUR) < 1 && Math.abs(g2.h - 1.5 * HOUR) < 1, g2);
+check("13:01에서 14:20까지 끌면 13:00–14:30 블록", g2 && Math.abs(g2.top - 13 * HOUR) < 1 && Math.abs(g2.h - 1.5 * HOUR) < 1, g2);
 await type("복습 정리"); await key("Enter");
 check("끌어서 만든 계획이 13:00–14:30으로 저장", await waitFor(async () => (await plans()).some((x) => x.title === "복습 정리" && x.start === 780 && x.end === 870)), await plans());
 
-p = await posAt(16 * 60 + 5);
+p = await posAt(16 * 60 + 44);
 await click(p.x, p.y); await sleep(250);
+const geo1644 = JSON.parse(await js(`(() => { const b = document.querySelector(".tl-creating"); return JSON.stringify({ top: parseFloat(b.style.top), h: parseFloat(b.style.height) }); })()`));
+check("15분 단위 배율에서도 16:44를 누르면 16:45부터 30분(내림하지 않는다)", Math.abs(geo1644.top - (16 * 60 + 45) / 60 * HOUR) < 1 && Math.abs(geo1644.h - HOUR / 2) < 1, geo1644);
 await type("취소될 계획"); await key("Escape"); await sleep(400);
 check("Esc로 만들기를 취소하면 저장되지 않는다", !(await plans()).some((x) => x.title === "취소될 계획") && !(await js(`!!document.querySelector(".tl-creating")`)));
+// 끌어서 만들 때도 누른 자리는 가까운 5분이고, 끄는 쪽 끝은 지금 단위(15분)에 맞는다. 위로 끌면 누른 자리가 끝이 된다
+p = await posAt(16 * 60 + 44);
+await drag(p.x, p.y, p.x, p.y + 36 / 60 * HOUR); await sleep(300);   // 17:20쯤까지
+const dragDown = JSON.parse(await js(`(() => { const b = document.querySelector(".tl-creating"); return JSON.stringify({ top: parseFloat(b.style.top), h: parseFloat(b.style.height) }); })()`));
+check("16:44에서 아래로 17:20까지 끌면 16:45–17:30", Math.abs(dragDown.top - (16 * 60 + 45) / 60 * HOUR) < 1 && Math.abs(dragDown.h - 0.75 * HOUR) < 1, dragDown);
+await key("Escape"); await sleep(300);
+p = await posAt(16 * 60 + 44);
+await drag(p.x, p.y, p.x, p.y - 24 / 60 * HOUR); await sleep(300);   // 16:20쯤까지
+const dragUp = JSON.parse(await js(`(() => { const b = document.querySelector(".tl-creating"); return JSON.stringify({ top: parseFloat(b.style.top), h: parseFloat(b.style.height) }); })()`));
+check("16:44에서 위로 16:20까지 끌면 16:15–16:45", Math.abs(dragUp.top - (16 * 60 + 15) / 60 * HOUR) < 1 && Math.abs(dragUp.h - 0.5 * HOUR) < 1, dragUp);
+await key("Escape"); await sleep(300);
 p = await posAt(17 * 60 + 5);
 await click(p.x, p.y); await sleep(250);
 await js(`document.activeElement.blur()`); await sleep(400);
@@ -133,12 +147,12 @@ await posAt(10 * 60);
 let r = await blockRect("토익 공부");
 await drag(r.x, r.y, r.x, r.y + HOUR * 1.5);   // 90분
 await sleep(700);
-check("끌어서 옮기면 09:00 → 10:30 (15분 단위)", (await plans()).some((x) => x.title === "토익 공부" && x.start === 630 && x.end === 690), await plans());
+check("끌어서 옮기면 09:00 → 10:30 (15분 단위)", (await plans()).some((x) => x.title === "토익 공부" && x.start === 630 && x.end === 660), await plans());
 await posAt(11 * 60);
 r = await blockRect("토익 공부");
 await drag(r.x, r.bottom - 3, r.x, r.bottom - 3 + HOUR);   // 아래쪽 끝을 1시간 아래로
 await sleep(700);
-check("아래쪽 끝을 끌면 길이가 늘어난다: 10:30–12:30", (await plans()).some((x) => x.title === "토익 공부" && x.start === 630 && x.end === 750), await plans());
+check("아래쪽 끝을 끌면 길이가 늘어난다: 10:30–12:00", (await plans()).some((x) => x.title === "토익 공부" && x.start === 630 && x.end === 720), await plans());
 r = await blockRect("토익 공부");
 await drag(r.x, r.bottom - 3, r.x, r.top - 200);   // 시작보다 위로 끌어도 최소 길이(15분)
 await sleep(700);
@@ -340,10 +354,10 @@ check("최대 확대: 5분 단위로 표시", (await snapNow()) === "5분 단위
 check("최대 확대: 30분 눈금 글자가 생기고(49개) 확대 버튼이 꺼진다", (await labelCount()) === 49 && (await js(`document.getElementById("tl-zoom-in").disabled`)) === true);
 check("최대 확대: 15분 줄(tl-quarter)이 그려진다", await js(`document.getElementById("timeline").classList.contains("tl-quarter")`));
 // 5분 단위로 계획 만들기
-p = await posAt(9 * 60 + 7);
+p = await posAt(9 * 60 + 6);
 await click(p.x, p.y); await sleep(300);
 await type("정밀 계획"); await key("Enter");
-check("5분 단위: 09:07을 누르면 09:05부터 1시간", await waitFor(async () => (await plans()).some((x) => x.title === "정밀 계획" && x.start === 545 && x.end === 605)), await plans());
+check("5분 단위: 09:06을 누르면 09:05부터 30분", await waitFor(async () => (await plans()).some((x) => x.title === "정밀 계획" && x.start === 545 && x.end === 575)), await plans());
 p = await posAt(13 * 60 + 2);
 await drag(p.x, p.y, p.x, p.y + (81 + 1) / 60 * 160);   // 13:02 → 14:23 근처
 await sleep(300);
@@ -356,7 +370,7 @@ r = await blockRect("정밀 계획");
 await drag(r.x, r.bottom - 3, r.x, r.bottom - 3 + 20);   // 160px/시간에서 20px = 7.5분
 await sleep(700);
 const rz = (await plans()).find((x) => x.title === "정밀 계획");
-check("5분 단위로 길이가 바뀐다(60분에서 70분: 15분 단위로는 불가능한 길이)", rz.end % 5 === 0 && (rz.end - rz.start) === 70, rz);
+check("5분 단위로 길이가 바뀐다(30분에서 40분: 15분 단위로는 불가능한 길이)", rz.end % 5 === 0 && (rz.end - rz.start) === 40, rz);
 r = await blockRect("정밀 계획");
 await drag(r.x, r.bottom - 3, r.x, r.top - 300);
 await sleep(700);
@@ -369,6 +383,12 @@ check("최대 축소(36px)에서 멈춘다", (await hourNow()) === 36, await hou
 check("최대 축소: 15분 단위로 표시되고 30분 눈금 글자/줄이 없다", (await snapNow()) === "15분 단위" && (await labelCount()) === 25 && !(await js(`document.getElementById("timeline").classList.contains("tl-half")`)));
 check("최대 축소: 축소 버튼이 꺼진다", await js(`document.getElementById("tl-zoom-out").disabled`));
 check("최대 축소: 짧은 블록도 눌러 볼 수 있는 높이(16px) 이상", await js(`[...document.querySelectorAll("#timeline-grid .tl-block")].every(b => parseFloat(b.style.height) >= 15.9)`));
+p = await posAt(23 * 60 + 50);
+await click(p.x, p.y); await sleep(300);
+const tiny = JSON.parse(await js(`(() => { const b = document.querySelector(".tl-creating"); const i = b.querySelector(".tl-title-input"); const br = b.getBoundingClientRect(); const ir = i.getBoundingClientRect(); return JSON.stringify({ top: parseFloat(b.style.top), h: parseFloat(b.style.height), blockH: br.height, inputH: ir.height, inside: ir.top >= br.top && ir.bottom <= br.bottom, reachable: br.bottom <= timelineScroll.getBoundingClientRect().top - timelineScroll.scrollTop + timelineScroll.scrollHeight }); })()`));
+check("최대 축소: 하루 맨 끝을 누르면 23:30–24:00으로 맞춰진다", Math.abs(tiny.top - 23.5 * 36) < 1 && Math.abs(tiny.h - 18) < 1, tiny);
+check("최대 축소: 제목을 쓰는 동안 입력 칸이 블록 안에 다 들어가고 스크롤로 닿는다", tiny.inside && tiny.reachable, tiny);
+await key("Escape"); await sleep(300);
 // 버튼
 await js(`document.getElementById("tl-zoom-in").click()`); await sleep(300);
 check("[+] 버튼은 한 번에 25%씩 확대한다", Math.abs((await hourNow()) - 45) < 0.5, await hourNow());
@@ -416,7 +436,15 @@ check("축소하면 더 많은 블록의 글자가 줄어든다(30분 블록 = 1
 await js(`setTimelineZoom(160)`); await sleep(400);
 const fs160 = JSON.parse(await js(`JSON.stringify(Object.fromEntries([...document.querySelectorAll("#timeline-grid .tl-plan")].filter(b => /^\\d+분 블록$/.test(b.querySelector(".tl-title").textContent)).map(b => [b.querySelector(".tl-title").textContent, parseFloat(b.style.getPropertyValue("--tl-fs"))])))`));
 check("최대 확대하면 5분 블록(13px)도 15분 블록(40px)도 글자 크기가 달라진다: 5분만 줄고 15분은 그대로", fs160["5분 블록"] < 1 && fs160["15분 블록"] === 1, fs160);
+// 시간 글자는 분이 아니라 블록 높이로 정한다. 빈칸을 눌러 만드는 30분 계획도 사용자의 배율(99px)이면 시간이 보여야 한다
+const timeOf = (title) => js(`(() => { const b = [...document.querySelectorAll("#timeline-grid .tl-plan")].find(x => x.querySelector(".tl-title") && x.querySelector(".tl-title").textContent === ${JSON.stringify(title)}); const t = b.querySelector(".tl-time"); return JSON.stringify(t ? { text: t.textContent, over: t.getBoundingClientRect().bottom - b.getBoundingClientRect().bottom } : null); })()`).then(JSON.parse);
+await js(`setTimelineZoom(99)`); await sleep(300);
+const time99 = await timeOf("30분 블록");
+check("99px 배율: 30분 계획에 시간이 보이고 블록 안에 들어간다", time99 && time99.text === "22:30–23:00" && time99.over <= 0, time99);
 await js(`setTimelineZoom(64)`); await sleep(300);
+check("64px 배율: 30분 계획(32px)은 두 줄이 안 들어가서 시간을 그리지 않는다", (await timeOf("30분 블록")) === null, await timeOf("30분 블록"));
+const time45 = await timeOf("45분 블록");
+check("64px 배율: 45분 계획(48px)은 시간이 보이고 블록 안에 들어간다", time45 && time45.over <= 0, time45);
 
 // 할 일을 지우면 시간표의 그 계획도 사라진다 (화면에서 직접 삭제 버튼을 눌러 확인)
 const jt = (await api("/api/tasks", "POST", { content: "삭제할 할 일", date: today, projectId: null })).data;
@@ -483,7 +511,7 @@ await rule();
 
 // ② 계획 A를 저장하고 다시 받는 동안(1.5초) 계획 B의 제목을 쓴다. 다시 그리면서 B 입력 칸을 지우면, 그 순간의 blur로 반쯤 쓴 제목이 저장된다
 await rule("method=GET&path=/api/time-blocks&ms=1500&count=1&after=1");
-p = await posAt(5 * 60 + 5);
+p = await posAt(5 * 60 + 1);
 await click(p.x, p.y); await sleep(250);
 await type("계획 A"); await key("Enter");
 p = await posAt(7 * 60 + 5);
@@ -512,7 +540,7 @@ check("끄는 중에 늦은 불러오기가 끝나도 끌던 블록이 그대로
 for (let i = 5; i <= 8; i++) await mouse("mouseMoved", r.x, r.y + i * 8, 1);
 await mouse("mouseReleased", r.x, r.y + 64);
 await rule();
-check("놓으면 1시간 아래(06:00–07:00)로 저장되고 블록은 하나", await waitFor(async () => (await plans()).some((x) => x.title === "계획 A" && x.start === 360 && x.end === 420) && (await countTitle("계획 A")) === 1, 3000), [(await plans()).find((x) => x.title === "계획 A"), await planTitles()]);
+check("놓으면 1시간 아래(06:00–06:30)로 저장되고 블록은 하나", await waitFor(async () => (await plans()).some((x) => x.title === "계획 A" && x.start === 360 && x.end === 390) && (await countTitle("계획 A")) === 1, 3000), [(await plans()).find((x) => x.title === "계획 A"), await planTitles()]);
 check("늦게 끝난 불러오기 뒤에도 만든 계획들이 모두 보인다", (await planTitles()).includes("느린 일정 중 계획") && (await planTitles()).includes("계획 B 반쯤 완성"), await planTitles());
 // ③-2 블록을 누르고 있는(아직 안 뗀) 동안 계획이 새로 생기면, 그리기를 미뤘다가 손을 뗀 뒤 그린다
 await posAt(6 * 60 + 30);
@@ -526,14 +554,14 @@ check("누르는 동안 미뤄 둔 그리기를 손을 뗀 뒤 한다(새 계획
 await key("Escape"); await sleep(300);
 
 // ④ 새 계획 제목을 쓰는 중에 확대한다 (docs/review-2026-11.md의 N17. M2와 같은 방법으로 고쳐진다): 입력 칸과 글이 남고 새 눈금 위치로 옮겨진다
-p = await posAt(2 * 60 + 5);
+p = await posAt(2 * 60 + 1);
 await click(p.x, p.y); await sleep(250);
 await type("확대 중 계획");
 await js(`setTimelineZoom(100)`); await sleep(200);
 const zoomed = JSON.parse(await js(`(() => { const b = document.querySelector(".tl-creating"); const i = b && b.querySelector(".tl-title-input"); return JSON.stringify({ value: i ? i.value : null, focused: !!i && document.activeElement === i, top: b ? parseFloat(b.style.top) : null, h: b ? parseFloat(b.style.height) : null }); })()`));
-check("제목을 쓰는 중에 확대해도 입력 칸과 쓰던 글이 그대로이고, 블록이 새 눈금(02:00, 1시간)에 맞는다", zoomed.value === "확대 중 계획" && zoomed.focused && Math.abs(zoomed.top - 200) < 1 && Math.abs(zoomed.h - 100) < 1, zoomed);
+check("제목을 쓰는 중에 확대해도 입력 칸과 쓰던 글이 그대로이고, 블록이 새 눈금(02:00, 30분)에 맞는다", zoomed.value === "확대 중 계획" && zoomed.focused && Math.abs(zoomed.top - 200) < 1 && Math.abs(zoomed.h - 50) < 1, zoomed);
 await key("Enter");
-check("확대한 뒤 Enter하면 02:00–03:00으로 저장된다", await waitFor(async () => (await plans()).some((x) => x.title === "확대 중 계획" && x.start === 120 && x.end === 180)), (await plans()).map((x) => [x.title, x.start]));
+check("확대한 뒤 Enter하면 02:00–02:30으로 저장된다", await waitFor(async () => (await plans()).some((x) => x.title === "확대 중 계획" && x.start === 120 && x.end === 150)), (await plans()).map((x) => [x.title, x.start]));
 await js(`setTimelineZoom(64)`);
 
 check("자바스크립트 오류 없음", jsErrors.length === 0, jsErrors.join(" | "));

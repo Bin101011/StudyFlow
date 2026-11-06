@@ -1711,9 +1711,12 @@ const TL_QUARTER_LINES_PX = 120; // 이만큼 확대하면 15분 줄도 보여�
 const TL_SCROLL_PAD = 10;        // .tl-scroll의 위쪽 안쪽 여백(px). style.css와 같은 값
 let tlHourPx = TL_HOUR_DEFAULT;  // 지금 한 시간의 세로 길이(px). 두 손가락 동작은 조금씩 변하므로 소수일 수 있다
 
-const TL_DEFAULT_LENGTH = 60;    // 빈 곳을 한 번 누르거나 할 일을 끌어다 놓았을 때 만들어지는 길이(분)
+const TL_DEFAULT_LENGTH = 60;    // 할 일을 끌어다 놓았을 때 만들어지는 길이(분)
+const TL_CLICK_LENGTH = 30;      // 빈 곳을 한 번 눌렀을 때 만들어지는 길이(분)
+const TL_CREATE_START_STEP = 5;  // 새 계획을 누르거나 끌기 시작한 자리를 맞추는 단위(분). 확대 정도와 관계없이 같다
 const TL_DAY_MIN = 24 * 60;      // 하루의 분
 const TL_MIN_VISIBLE_PX = 16;    // 아주 짧은 블록도 눌러 볼 수 있게 보장하는 최소 높이(px). 기본 확대(64px/시간)에서 15분이 딱 이 높이다
+const TL_TWO_LINES_PX = 44;      // 계획 블록에 제목과 시간 두 줄이 들어가는 높이(px)
 
 const timelineScroll = document.getElementById("timeline-scroll");
 const timelineEl = document.getElementById("timeline");
@@ -2276,7 +2279,7 @@ function makePlanBlock(plan, item) {
     title.className = "tl-title";
     title.textContent = plan.title;
     block.appendChild(title);
-    if (item.end - item.start >= 45) {
+    if (minToY(item.end - item.start) >= TL_TWO_LINES_PX) {  // 분이 아니라 실제 높이로 정한다. 확대하면 30분 계획에도 시간이 보인다
         const time = document.createElement("div");
         time.className = "tl-time";
         time.textContent = minToText(item.start) + "–" + minToText(item.end);
@@ -2370,13 +2373,14 @@ async function createPlan(start, end, title, taskId) {
     await sendRequest("/api/time-blocks", "POST", body);
 }
 
-// 빈 곳을 끌어서(또는 눌러서) 새 계획을 만든다: 끈 만큼, 누르기만 하면 1시간짜리 블록에 제목 입력 칸이 열린다
+// 빈 곳을 끌어서(또는 눌러서) 새 계획을 만든다: 끈 만큼, 누르기만 하면 30분짜리 블록에 제목 입력 칸이 열린다.
+// 누른 자리는 확대 정도와 관계없이 가장 가까운 5분에 맞춘다(16:44를 누르면 16:45). 끌고 있는 쪽 끝은 지금 단위(5분 또는 15분)에 맞춘다
 timelineGrid.addEventListener("pointerdown", function (e) {
     if (e.target.closest(".tl-block")) {
         return;  // 블록 위에서 시작한 끌기는 그 블록의 몫이다
     }
     closeTimelinePopover();
-    const anchor = yToMin(e.clientY);
+    const anchor = clampNumber(Math.round(yToMin(e.clientY) / TL_CREATE_START_STEP) * TL_CREATE_START_STEP, 0, TL_DAY_MIN);
     let range = null;
     const ghost = document.createElement("div");
     ghost.className = "tl-block tl-plan tl-creating";
@@ -2384,11 +2388,23 @@ timelineGrid.addEventListener("pointerdown", function (e) {
     trackTimelineDrag(e, {
         move: function (ev) {
             const current = yToMin(ev.clientY);
-            let low = Math.max(0, floorSnap(Math.min(anchor, current)));
-            let high = Math.min(TL_DAY_MIN, ceilSnap(Math.max(anchor, current)));
-            if (high - low < snapStep()) {  // 최소 길이는 맞추는 단위(5분 또는 15분)와 같다
-                high = Math.min(TL_DAY_MIN, low + snapStep());
-                low = high - snapStep();
+            const step = snapStep();  // 최소 길이는 맞추는 단위(5분 또는 15분)와 같다
+            let low, high;
+            if (current >= anchor) {  // 아래로 끌면 누른 자리가 시작이다
+                low = anchor;
+                high = Math.max(ceilSnap(current), low + step);
+            } else {                  // 위로 끌면 누른 자리가 끝이다
+                high = anchor;
+                low = Math.min(floorSnap(current), high - step);
+            }
+            // 하루 밖으로 나가지 않게 자른다. 잘려도 최소 길이는 지킨다
+            if (low < 0) {
+                low = 0;
+                high = Math.max(high, step);
+            }
+            if (high > TL_DAY_MIN) {
+                high = TL_DAY_MIN;
+                low = Math.min(low, TL_DAY_MIN - step);
             }
             range = { start: low, end: high };
             placeBlock(ghost, range);
@@ -2398,8 +2414,8 @@ timelineGrid.addEventListener("pointerdown", function (e) {
         },
         end: function (ev, moved) {
             if (!moved) {
-                const start = clampNumber(floorSnap(anchor), 0, TL_DAY_MIN - TL_DEFAULT_LENGTH);
-                range = { start: start, end: start + TL_DEFAULT_LENGTH };
+                const start = clampNumber(anchor, 0, TL_DAY_MIN - TL_CLICK_LENGTH);
+                range = { start: start, end: start + TL_CLICK_LENGTH };
             }
             openPlanCreator(ghost, range.start, range.end);
         },
@@ -2415,6 +2431,7 @@ function openPlanCreator(block, start, end) {
     block.dataset.start = start;  // 쓰는 동안 시간표를 다시 그리면(renderTimeline) 이 시간으로 자리를 다시 맞춘다
     block.dataset.end = end;
     block.replaceChildren();
+    block.classList.add("tl-typing");  // 제목을 쓰는 동안만 입력 칸이 잘리지 않는 높이를 보장한다
     const input = document.createElement("input");
     input.type = "text";
     input.className = "tl-title-input";
