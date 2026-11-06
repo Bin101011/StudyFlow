@@ -897,8 +897,8 @@ input.color-dot::-webkit-color-swatch {
     flex: 1;
     min-height: 0;
     display: grid;
-    /* 첫 칸(시간표)의 너비는 설정 탭의 "시간표 너비"(--timeline-width)다. 창이 좁으면 330px까지 줄어든다 */
-    grid-template-columns: minmax(330px, var(--timeline-width, 400px)) minmax(0, 1fr) minmax(250px, 300px);
+    /* 첫 칸(시간표)과 셋째 칸(오른쪽)의 너비는 설정 탭의 슬라이더로 정한다. 창이 좁으면 300px, 250px까지 줄어든다 */
+    grid-template-columns: minmax(300px, var(--timeline-width, 400px)) minmax(0, 1fr) minmax(250px, var(--today-right-width, 300px));
     gap: 32px;
     max-width: 1500px;
     font-size: var(--cal-font-size);
@@ -3094,7 +3094,8 @@ body.priority-dragging * {
 
 /* ----- 오늘 탭의 작은 달력 ----- */
 .mini-calendar {
-    max-width: 300px;
+    /* 오른쪽 칸 너비를 따른다. 창이 좁아 이 칸이 아래로 내려가 한 줄을 다 차지해도 달력이 그만큼 늘어나지는 않는다 */
+    max-width: var(--today-right-width, 300px);
     margin-bottom: 26px;
     user-select: none;
 }

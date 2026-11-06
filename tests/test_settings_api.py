@@ -198,5 +198,30 @@ lock_settings(False)
 check("설정 파일이 잠겨 있어도 캘린더는 만들어짐(201)", r.status_code == 201, f"{r.status_code} {r.get_json()}")
 check("그때 설정 파일은 그대로(덮어쓰지 않음)", file_text() == before, summary())
 
+# ----- 오늘 탭 너비: 범위와 합계 한계 -----
+def widths(body):
+    """설정을 보내고 저장된 (시간표 너비, 오른쪽 칸 너비)를 돌려준다."""
+    saved = client.put("/api/settings", json=body).get_json()
+    return saved["timelineWidth"], saved["todayRightWidth"]
+
+
+data = client.get("/api/settings").get_json()
+today_sliders = {d["key"]: d for d in data["todaySliders"]}
+check("시간표 너비 범위는 300~500, 기본 400", (today_sliders["timelineWidth"]["min"], today_sliders["timelineWidth"]["max"], today_sliders["timelineWidth"]["default"]) == (300, 500, 400))
+check("오른쪽 칸 범위는 300~450, 기본 300", (today_sliders["todayRightWidth"]["min"], today_sliders["todayRightWidth"]["max"], today_sliders["todayRightWidth"]["default"]) == (300, 450, 300))
+check("화면에 합계 한계 850을 알려 준다", data["todayWidthsMax"] == 850)
+check("범위 밖 값은 끝값으로", widths({"timelineWidth": 100, "todayRightWidth": 100}) == (300, 300))
+check("합이 850이면 그대로", widths({"timelineWidth": 400, "todayRightWidth": 450}) == (400, 450))
+check("오른쪽이 450일 때 시간표만 500을 보내면 시간표가 400으로", widths({"timelineWidth": 500}) == (400, 450))
+widths({"timelineWidth": 500, "todayRightWidth": 300})
+check("시간표가 500일 때 오른쪽만 450을 보내면 오른쪽이 350으로", widths({"todayRightWidth": 450}) == (500, 350))
+check("둘 다 넘게 보내면 시간표를 줄인다", widths({"timelineWidth": 500, "todayRightWidth": 450}) == (400, 450))
+widths({"timelineWidth": 380, "todayRightWidth": 300})
+check("다른 설정만 바꿔도 너비는 그대로", widths({"fontSize": 15}) == (380, 300))
+with open(SETTINGS, "w", encoding="utf-8") as f:
+    json.dump({"timelineWidth": 550, "todayRightWidth": 450}, f)
+values = client.get("/api/settings").get_json()["values"]
+check("파일의 옛 값(550)이나 넘는 합도 읽을 때 맞춘다", (values["timelineWidth"], values["todayRightWidth"]) == (400, 450), values)
+
 print("\n실패 없음" if not failures else f"\n실패 {len(failures)}개: {failures}")
 sys.exit(1 if failures else 0)

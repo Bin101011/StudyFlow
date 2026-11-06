@@ -6786,7 +6786,18 @@ const SETTING_CSS_VARS = {
     sidebarWidth: "--sidebar-width",
     letterSpacing: "--letter-spacing",
     timelineWidth: "--timeline-width",  // 오늘 탭 시간표 칸의 너비
+    todayRightWidth: "--today-right-width",  // 오늘 탭 오른쪽 칸(작은 달력, 할 일 목록)의 너비
 };
+
+// 오늘 탭의 두 칸은 합계에 한계가 있다. 서로의 짝과 한계(서버가 알려 준다)를 적어 둔다
+const TODAY_WIDTH_PARTNER = { timelineWidth: "todayRightWidth", todayRightWidth: "timelineWidth" };
+let todayWidthsMax = Infinity;
+
+// 슬라이더가 가리킨 값을 합계 한계 안으로 줄인다. 짝이 없는 슬라이더는 그대로 돌려준다
+function limitSliderValue(key, value) {
+    const partner = TODAY_WIDTH_PARTNER[key];
+    return partner ? Math.min(value, todayWidthsMax - settings[partner]) : value;
+}
 
 // 설정 이름 → 단위("px", "em" 등). 서버가 알려준 슬라이더 정의에서 loadSettings가 채운다
 const settingUnits = {};
@@ -6858,6 +6869,8 @@ function buildSlider(def, container) {
 
     // input 이벤트: 슬라이더를 끄는 동안 계속 발생 → 화면에 즉시 반영
     slider.addEventListener("input", function () {
+        // 한계를 넘으면 손잡이를 한계 자리로 되돌린다. max 속성을 바꾸면 눈금이 다시 계산되어 손잡이가 튀므로 max는 그대로 둔다
+        slider.value = limitSliderValue(def.key, Number(slider.value));
         settings[def.key] = Number(slider.value);
         valueText.textContent = slider.value + def.unit;
         applySettings();
@@ -6876,6 +6889,7 @@ async function loadSettings() {
         const data = await response.json();
         settings = data.values;
         settingsLoaded = true;  // 서버의 진짜 설정을 받았으니 이제부터 저장해도 된다
+        todayWidthsMax = data.todayWidthsMax;
         wrapAllDayCheckbox.checked = settings.wrapAllDay !== false;
 
         // 저장되어 있던 "숨기기로 한 캘린더"를 숨김 목록(Set)에 옮겨 담는다

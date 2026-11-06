@@ -31,9 +31,15 @@ POMODORO_SLIDER_DEFINITIONS = [
 
 # 오늘 탭의 슬라이더 설정들. 설정 탭의 "오늘 탭" 칸에 따로 보인다.
 # 시간표 너비: 오늘 탭 왼쪽 시간표 칸의 가로 길이. 기본값 400은 처음 만들 때의 값이고, 넓히면 겹친 블록의 제목이 덜 잘리지만 가운데 할 일 칸이 좁아진다
+# 오른쪽 칸 너비: 작은 달력과 할 일 목록이 있는 칸의 가로 길이. 넓히면 달력도 함께 넓어진다
+TIMELINE_WIDTH_KEY = "timelineWidth"
+TODAY_RIGHT_WIDTH_KEY = "todayRightWidth"
 TODAY_SLIDER_DEFINITIONS = [
-    {"key": "timelineWidth", "label": "시간표 너비", "min": 380, "max": 550, "step": 10, "default": 400, "unit": "px"},
+    {"key": TIMELINE_WIDTH_KEY, "label": "시간표 너비", "min": 300, "max": 500, "step": 10, "default": 400, "unit": "px"},
+    {"key": TODAY_RIGHT_WIDTH_KEY, "label": "오른쪽 칸 너비", "min": 300, "max": 450, "step": 10, "default": 300, "unit": "px"},
 ]
+# 두 칸을 합친 너비의 한계. 가운데 할 일 칸이 너무 좁아지지 않게 한다. 화면(app.js)도 /api/settings로 이 값을 받아 슬라이더를 막는다
+TODAY_WIDTHS_MAX = 850
 
 # 숫자 슬라이더 설정 전체 (clean_settings와 default_settings가 같이 쓴다)
 ALL_SLIDER_DEFINITIONS = SLIDER_DEFINITIONS + POMODORO_SLIDER_DEFINITIONS + TODAY_SLIDER_DEFINITIONS
@@ -133,6 +139,13 @@ def clean_settings(raw, base=None):
         # bool은 파이썬에서 숫자의 한 종류라서 따로 걸러낸다
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             settings[d["key"]] = max(d["min"], min(d["max"], value))  # min~max 범위 밖이면 끝값으로
+
+    # 오늘 탭 두 칸의 합이 한계를 넘으면 줄인다. 오른쪽 칸만 보냈으면 그 값을, 그 밖에는(둘 다 보냈거나 파일을 읽는 중) 시간표 너비를 줄인다.
+    # 한 칸의 최댓값과 다른 칸의 최솟값을 더해도 한계 안이라, 줄인 값이 슬라이더 범위 아래로 내려가지는 않는다
+    excess = settings[TIMELINE_WIDTH_KEY] + settings[TODAY_RIGHT_WIDTH_KEY] - TODAY_WIDTHS_MAX
+    if excess > 0:
+        only_right_sent = TODAY_RIGHT_WIDTH_KEY in raw and TIMELINE_WIDTH_KEY not in raw
+        settings[TODAY_RIGHT_WIDTH_KEY if only_right_sent else TIMELINE_WIDTH_KEY] -= excess
 
     calendar_id = raw.get(DEFAULT_CALENDAR_KEY)
     if isinstance(calendar_id, str):

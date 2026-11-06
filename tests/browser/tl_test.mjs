@@ -564,6 +564,66 @@ await key("Enter");
 check("확대한 뒤 Enter하면 02:00–02:30으로 저장된다", await waitFor(async () => (await plans()).some((x) => x.title === "확대 중 계획" && x.start === 120 && x.end === 150)), (await plans()).map((x) => [x.title, x.start]));
 await js(`setTimelineZoom(64)`);
 
+// ===== M. 오늘 탭 너비 슬라이더 (실제 마우스로 끈다) =====
+console.log("--- M. 너비 슬라이더 ---");
+await send("Emulation.setDeviceMetricsOverride", { width: 1500, height: 900, deviceScaleFactor: 1, mobile: false });
+const openTab = async (name) => { await js(`document.querySelector('.tab-button[data-tab="${name}"]').click()`); await sleep(400); };
+const layoutWidths = async () => { await openTab("today"); return JSON.parse(await js(`(() => { const w = (s) => document.querySelector(s).getBoundingClientRect().width; return JSON.stringify({ timeline: w("#timeline-column"), right: w("#inbox-column"), mini: w("#mini-calendar"), overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth }); })()`)); };
+const sliderState = (k) => js(`(() => { const s = document.querySelector('input[data-key="${k}"]'); return JSON.stringify({ value: Number(s.value), text: s.nextElementSibling.textContent, setting: settings["${k}"] }); })()`).then(JSON.parse);
+const sliderEnds = (k) => js(`(() => { const s = document.querySelector('input[data-key="${k}"]'); s.scrollIntoView({ block: "center" }); const r = s.getBoundingClientRect(); return JSON.stringify({ left: r.left + 1, right: r.right - 1, y: r.top + r.height / 2, x: r.left + 8 + (Number(s.value) - Number(s.min)) / (Number(s.max) - Number(s.min)) * (r.width - 16) }); })()`).then(JSON.parse);
+const savedWidths = async () => { const v = (await api("/api/settings")).data.values; return [v.timelineWidth, v.todayRightWidth]; };
+// 손잡이를 잡아 한쪽 끝까지 끌고 놓는다
+const dragSliderTo = async (k, side) => { await openTab("settings"); const e = await sliderEnds(k); await drag(e.x, e.y, e[side], e.y); await sleep(250); };
+
+let w = await layoutWidths();
+check("기본: 시간표 400px, 오른쪽 칸과 달력 300px", Math.abs(w.timeline - 400) < 1 && Math.abs(w.right - 300) < 1 && Math.abs(w.mini - 300) < 1, w);
+await dragSliderTo("todayRightWidth", "right");
+check("오른쪽 칸 슬라이더를 끝까지 끌면 450", (await sliderState("todayRightWidth")).value === 450 && (await sliderState("todayRightWidth")).text === "450px", await sliderState("todayRightWidth"));
+w = await layoutWidths();
+check("오른쪽 칸과 작은 달력이 450px로 넓어진다", Math.abs(w.right - 450) < 1 && Math.abs(w.mini - 450) < 1, w);
+
+// 오른쪽이 450이면 시간표는 400에서 막힌다. 누른 채로 왔다 갔다 해도 손잡이가 한계에서 멈췄다가 다시 따라와야 한다
+await openTab("settings");
+let e = await sliderEnds("timelineWidth");
+await mouse("mouseMoved", e.x, e.y, 0); await mouse("mousePressed", e.x, e.y);
+for (let i = 1; i <= 6; i++) await mouse("mouseMoved", e.x + (e.right - e.x) * i / 6, e.y, 1);
+const blocked = await sliderState("timelineWidth");
+check("오른쪽이 450이면 시간표는 끄는 도중에도 400에서 막힌다", blocked.value === 400 && blocked.setting === 400 && blocked.text === "400px", blocked);
+await mouse("mouseMoved", e.left, e.y, 1);
+check("막힌 뒤 왼쪽으로 끌면 손잡이가 따라온다(300)", (await sliderState("timelineWidth")).value === 300, await sliderState("timelineWidth"));
+await mouse("mouseMoved", e.right, e.y, 1);
+check("다시 오른쪽 끝으로 끌면 또 400에서 막힌다", (await sliderState("timelineWidth")).value === 400, await sliderState("timelineWidth"));
+await mouse("mouseReleased", e.right, e.y); await sleep(300);
+check("놓으면 400/450으로 저장된다", JSON.stringify(await savedWidths()) === "[400,450]", await savedWidths());
+
+// 반대 방향: 시간표가 500이면 오른쪽은 350에서 막힌다
+await dragSliderTo("todayRightWidth", "left");
+await dragSliderTo("timelineWidth", "right");
+check("오른쪽이 300이면 시간표는 500까지 간다", (await sliderState("timelineWidth")).value === 500, await sliderState("timelineWidth"));
+await dragSliderTo("todayRightWidth", "right");
+check("시간표가 500이면 오른쪽 칸은 350에서 막히고 저장된다", (await sliderState("todayRightWidth")).value === 350 && JSON.stringify(await savedWidths()) === "[500,350]", [await sliderState("todayRightWidth"), await savedWidths()]);
+w = await layoutWidths();
+check("시간표 500px, 오른쪽 칸 350px이 실제로 적용된다", Math.abs(w.timeline - 500) < 1 && Math.abs(w.right - 350) < 1 && w.overflow <= 0, w);
+
+// 가장 작은 값(예전 CSS 최솟값 330px 아래)도 실제로 적용되는지
+await dragSliderTo("timelineWidth", "left");
+w = await layoutWidths();
+check("시간표 300px이 실제로 적용된다(330px에 걸리지 않는다)", Math.abs(w.timeline - 300) < 1, w);
+
+// 창이 좁으면 오른쪽 칸이 아래로 내려간다. 달력이 줄 전체로 늘어나거나 가로 스크롤이 생기면 안 된다
+await send("Emulation.setDeviceMetricsOverride", { width: 1000, height: 800, deviceScaleFactor: 1, mobile: false });
+await sleep(300);
+w = await layoutWidths();
+check("좁은 창: 오른쪽 칸은 줄 전체를 쓰고 달력은 슬라이더 값(350px)까지만, 가로 스크롤 없음", w.right > 500 && Math.abs(w.mini - 350) < 1 && w.overflow <= 0, w);
+await send("Emulation.setDeviceMetricsOverride", { width: 1500, height: 900, deviceScaleFactor: 1, mobile: false });
+
+await openTab("settings");
+await js(`document.getElementById("today-settings-reset").click()`);
+check("[기본값으로]를 누르면 400/300으로 돌아가 저장된다", await waitFor(async () => JSON.stringify(await savedWidths()) === "[400,300]", 2000), await savedWidths());
+w = await layoutWidths();
+check("기본값으로 돌아간 너비가 적용된다", Math.abs(w.timeline - 400) < 1 && Math.abs(w.right - 300) < 1, w);
+await send("Emulation.clearDeviceMetricsOverride");
+
 check("자바스크립트 오류 없음", jsErrors.length === 0, jsErrors.join(" | "));
 console.log(failed ? `\n실패 ${failed}개` : "\n모두 통과");
 ws.close(); edge.kill(); process.exit(failed ? 1 : 0);

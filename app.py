@@ -837,6 +837,7 @@ def api_get_settings():
         "sliders": settings_store.SLIDER_DEFINITIONS,
         "pomodoroSliders": settings_store.POMODORO_SLIDER_DEFINITIONS,
         "todaySliders": settings_store.TODAY_SLIDER_DEFINITIONS,
+        "todayWidthsMax": settings_store.TODAY_WIDTHS_MAX,
     }
     notice = settings_store.pop_broken_notice()
     if notice:
