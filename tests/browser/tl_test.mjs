@@ -285,7 +285,8 @@ await shot("t_after.png");
 console.log("--- H. 날짜, 오프라인, 스크롤 ---");
 await js(`document.getElementById("day-next").click()`); await sleep(1800);
 const tm = JSON.parse(await js(`JSON.stringify({ st: timelineScroll.scrollTop, plans: document.querySelectorAll("#timeline-grid .tl-plan").length, ev: [...document.querySelectorAll("#timeline-grid .tl-event")].map(b => b.querySelector(".tl-title").textContent), now: document.querySelectorAll(".tl-now").length })`));
-check("내일: 07:00이 맨 위에 오도록 스크롤", Math.abs(tm.st - 7 * HOUR) <= 2, tm);
+const tmCenter = await js(`yToMin(timelineScroll.getBoundingClientRect().top + timelineScroll.clientHeight / 2)`);
+check("내일: 설정의 기본값 17:00이 가운데에 오도록 스크롤", Math.abs(tmCenter - 17 * 60) <= 2, [tmCenter, tm]);
 check("내일: 내 계획은 없고 내일 일정이 보이고 지금 시각 줄은 없다", tm.plans === 0 && tm.ev.includes("내일 일정") && tm.now === 0, tm);
 await js(`document.getElementById("day-prev").click()`); await sleep(1800);
 check("오늘로 돌아오면 계획이 다시 보인다", (await js(`document.querySelectorAll("#timeline-grid .tl-plan").length`)) >= 3);
@@ -623,6 +624,62 @@ check("[기본값으로]를 누르면 400/300으로 돌아가 저장된다", awa
 w = await layoutWidths();
 check("기본값으로 돌아간 너비가 적용된다", Math.abs(w.timeline - 400) < 1 && Math.abs(w.right - 300) < 1, w);
 await send("Emulation.clearDeviceMetricsOverride");
+
+// ===== N. 기본값 설정: 시간표 첫 위치, 일정 추가 기본 시작·길이 =====
+console.log("--- N. 기본값 설정 ---");
+const centerMin = () => js(`yToMin(timelineScroll.getBoundingClientRect().top + timelineScroll.clientHeight / 2)`);
+const savedValues = async () => (await api("/api/settings")).data.values;
+// 설정 탭의 칸을 눌러 글자를 지우고 새로 쓴 뒤 Enter
+const typeInto = async (id, text) => { await openTab("settings"); await js(`(() => { const i = document.getElementById("${id}"); i.scrollIntoView({ block: "center" }); i.focus(); i.select(); })()`); await type(text); await key("Enter"); await sleep(300); };
+
+await openTab("today");
+check("시간표 첫 위치 기본값: 17:00이 가운데", await waitFor(async () => Math.abs((await centerMin()) - 17 * 60) <= 2, 2000), await centerMin());
+await typeInto("timeline-center-time", "1230");
+check("'1230'을 쓰고 Enter하면 12:30으로 정리되어 저장된다", (await js(`timelineCenterInput.value`)) === "12:30" && (await savedValues()).timelineCenterTime === "12:30", [await js(`timelineCenterInput.value`), (await savedValues()).timelineCenterTime]);
+await openTab("today");
+check("오늘 탭을 열면(종일 일정 줄이 늦게 생겨도) 12:30이 가운데", await waitFor(async () => Math.abs((await centerMin()) - (12 * 60 + 30)) <= 2, 2000) && (await js(`!timelineAllDay.hidden`)), [await centerMin(), await js(`timelineAllDay.hidden`)]);
+// 사용자가 스크롤한 뒤에는 칸 높이가 바뀌어도 저절로 움직이지 않는다
+await js(`timelineScroll.dispatchEvent(new WheelEvent("wheel", { deltaY: 100 })); timelineScroll.scrollTop = 200; timelineAllDay.hidden = true`); await sleep(300);
+check("스크롤한 뒤에는 종일 줄이 사라져 칸이 커져도 위치가 그대로", Math.abs((await js(`timelineScroll.scrollTop`)) - 200) <= 1, await js(`timelineScroll.scrollTop`));
+await js(`timelineAllDay.hidden = false`);
+await js(`document.getElementById("day-next").click()`); await sleep(1500);
+check("날짜를 넘겨도 12:30이 가운데", Math.abs((await centerMin()) - (12 * 60 + 30)) <= 2, await centerMin());
+await js(`document.getElementById("day-prev").click()`); await sleep(1000);
+await typeInto("timeline-center-time", "abc");
+check("읽을 수 없는 글자는 빨간 칸으로 알리고 저장하지 않는다", (await js(`timelineCenterInput.classList.contains("invalid")`)) && (await savedValues()).timelineCenterTime === "12:30");
+
+// 일정 추가 창: 월간 보기는 설정의 시작 시각, 주간 보기는 누른 시각. 길이는 둘 다 설정값
+const addDialogValues = async (view, hour) => {
+  await js(`openAddDialog({ date: ${hour === undefined ? "new Date(2030, 0, 15)" : `new Date(2030, 0, 15, ${hour})`}, view: { type: ${view === "month" ? "MONTH_VIEW" : '"timeGridWeek"'} }, allDay: false }); true`);
+  await sleep(150);
+  const v = JSON.parse(await js(`JSON.stringify({ allDay: eventAllDayCheckbox.checked, start: eventStartDate.value + " " + eventStartTime.value, end: eventEndDate.value + " " + eventEndTime.value })`));
+  await js(`eventDialog.close()`);
+  return v;
+};
+let ad = await addDialogValues("month");
+check("기본: 월간 보기에서 날짜를 누르면 09:00–10:00", !ad.allDay && ad.start === "2030-01-15 09:00" && ad.end === "2030-01-15 10:00", ad);
+await typeInto("event-default-start", "4:45pm");
+await js(`(() => { const s = eventDefaultMinutesSelect; s.value = "30"; s.dispatchEvent(new Event("change")); })()`); await sleep(300);
+let sv = await savedValues();
+check("'4:45pm'은 16:45로, 길이는 30분으로 저장된다", sv.eventDefaultStart === "16:45" && sv.eventDefaultMinutes === 30, sv);
+ad = await addDialogValues("month");
+check("월간 보기: 16:45–17:15", !ad.allDay && ad.start === "2030-01-15 16:45" && ad.end === "2030-01-15 17:15", ad);
+ad = await addDialogValues("week", 14);
+check("주간 보기: 누른 시각(14:00)부터 기본 길이 30분", !ad.allDay && ad.start === "2030-01-15 14:00" && ad.end === "2030-01-15 14:30", ad);
+await js(`eventDefaultAllDayCheckbox.click()`); await sleep(300);
+check("종일을 체크하면 'allDay'로 저장되고 시각 칸이 꺼진다", (await savedValues()).eventDefaultStart === "allDay" && (await js(`eventDefaultStartInput.disabled`)));
+ad = await addDialogValues("month");
+check("월간 보기: 종일 일정 창으로 열린다(그날 하루)", ad.allDay && ad.start.startsWith("2030-01-15") && ad.end.startsWith("2030-01-15"), ad);
+await js(`eventDefaultAllDayCheckbox.click()`); await sleep(300);
+check("종일을 끄면 원래 시각(16:45)으로 돌아간다", (await savedValues()).eventDefaultStart === "16:45" && !(await js(`eventDefaultStartInput.disabled`)) && (await js(`eventDefaultStartInput.value`)) === "16:45");
+
+// 다시 불러와도 설정 칸에 저장된 값이 보인다
+await send("Page.reload"); await sleep(3000);
+const shown = JSON.parse(await js(`JSON.stringify({ center: timelineCenterInput.value, start: eventDefaultStartInput.value, allDay: eventDefaultAllDayCheckbox.checked, minutes: eventDefaultMinutesSelect.value })`));
+check("새로 불러와도 설정 칸에 12:30, 16:45, 30분이 보인다", shown.center === "12:30" && shown.start === "16:45" && !shown.allDay && shown.minutes === "30", shown);
+await openTab("settings");
+await js(`document.getElementById("today-settings-reset").click()`);
+check("오늘 탭 [기본값으로]는 시간표 첫 위치도 17:00으로 돌린다", await waitFor(async () => (await savedValues()).timelineCenterTime === "17:00", 2000) && (await js(`timelineCenterInput.value`)) === "17:00", (await savedValues()).timelineCenterTime);
 
 check("자바스크립트 오류 없음", jsErrors.length === 0, jsErrors.join(" | "));
 console.log(failed ? `\n실패 ${failed}개` : "\n모두 통과");

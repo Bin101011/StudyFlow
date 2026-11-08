@@ -1134,23 +1134,31 @@ function showEventDialog(values) {
     eventTitleInput.focus();
 }
 
+// 일정 추가의 기본값. 설정 탭에서 바꿀 수 있고, 설정을 불러오기 전에는 이 값을 쓴다 (서버 settings_store와 같은 값)
+const EVENT_DEFAULT_START = "09:00";  // 월간 보기에서 날짜를 눌렀을 때의 시작 시각. 설정값 "allDay"는 종일
+const EVENT_DEFAULT_MINUTES = 60;     // 새 일정의 길이(분)
+
 // 빈 날짜/시간 칸을 클릭했을 때: 새 일정 추가 창을 연다. info.date는 클릭한 칸의 시각이다
 function openAddDialog(info) {
     const date = info.date;
+    const minutes = settings.eventDefaultMinutes || EVENT_DEFAULT_MINUTES;
     let allDay = false;
     let start;
     if (info.view.type === MONTH_VIEW) {
-        // 월간 보기: 클릭한 날의 09:00~10:00를 기본값으로 한다
-        start = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 9);
+        // 월간 보기: 설정의 기본 시작(시각 또는 종일)을 쓴다. 종일이어도 시각은 09:00으로 채워 둔다(종일을 끄면 보인다)
+        const choice = settings.eventDefaultStart || EVENT_DEFAULT_START;
+        allDay = choice === "allDay";
+        const [hour, minute] = (allDay ? EVENT_DEFAULT_START : choice).split(":").map(Number);
+        start = new Date(date.getFullYear(), date.getMonth(), date.getDate(), hour, minute);
     } else if (info.allDay) {
         // 주간/일간 보기 위쪽의 "종일" 줄을 클릭
         allDay = true;
         start = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 9);
     } else {
-        // 주간/일간 보기의 시간 칸: 클릭한 시각부터 1시간
+        // 주간/일간 보기의 시간 칸: 클릭한 시각부터
         start = date;
     }
-    const end = new Date(start.getTime() + 60 * 60 * 1000);  // 시작 + 1시간
+    const end = new Date(start.getTime() + minutes * 60 * 1000);  // 시작 + 기본 길이
 
     showEventDialog({
         title: "",
@@ -2136,18 +2144,40 @@ function renderTimeline() {
     }
 }
 
-// 처음 열었을 때(또는 날짜를 바꿨을 때) 보여줄 위치: 오늘이면 지금 시각이 위에서 3분의 1쯤에, 다른 날이면 07:00이 맨 위에 오게 한다
+// 처음 열었을 때(또는 날짜를 바꿨을 때) 보여줄 위치: 설정 탭의 "시간표 첫 위치"(기본 17:00)가 가운데에 오게 한다.
+// 오늘이든 다른 날이든 같다. TL_SCROLL_PAD는 시간표 위쪽 여백이라 더해야 정확히 가운데다
+const TIMELINE_CENTER_DEFAULT = "17:00";  // 서버 settings_store와 같은 값
+// 기본 위치로 맞춘 뒤 사용자가 아직 시간표를 움직이지 않았으면 true다. 그동안 시간표 칸의 높이가 바뀌면 다시 가운데로 맞춘다.
+// 예: 일정이 늦게 도착해 위에 종일 일정 줄이 생기면 칸이 줄어 가운데가 위로 밀린다
+let timelineCenterHold = false;
+
 function scrollTimelineToDefault() {
     timeline.needScroll = false;
-    let top;
-    if (timeline.date === toDateText(new Date())) {
-        const now = new Date();
-        top = minToY(now.getHours() * 60 + now.getMinutes()) - timelineScroll.clientHeight / 3;
-    } else {
-        top = minToY(7 * 60);
-    }
+    timelineCenterHold = true;
+    centerTimelineOnSetting();
+}
+
+// 설정의 시각을 시간표 칸 가운데에 놓는다. 24:00 가까운 시각은 시간표 끝까지만 내려간다(브라우저가 알아서 멈춘다)
+function centerTimelineOnSetting() {
+    const text = parseTimeText(settings.timelineCenterTime || "") || TIMELINE_CENTER_DEFAULT;
+    const [hour, minute] = text.split(":").map(Number);
+    const top = minToY(hour * 60 + minute) + TL_SCROLL_PAD - timelineScroll.clientHeight / 2;
     timelineScroll.scrollTop = Math.max(0, top);
 }
+
+// ResizeObserver: 요소의 크기가 바뀌면 알려 주는 브라우저 기능. 시간표 칸 높이가 바뀌었을 때 위치를 다시 맞춘다
+new ResizeObserver(function () {
+    if (timelineCenterHold && !timelineDrag && timelineScroll.clientHeight > 0) {
+        centerTimelineOnSetting();
+    }
+}).observe(timelineScroll);
+
+// 사용자가 시간표를 스크롤하거나 누르면 그 뒤로는 저절로 움직이지 않는다
+["wheel", "pointerdown", "keydown", "touchstart"].forEach(function (type) {
+    timelineScroll.addEventListener(type, function () {
+        timelineCenterHold = false;
+    }, { passive: true });
+});
 
 // 지금 시각을 가리키는 빨간 줄 (오늘을 볼 때만)
 function updateNowLine() {
@@ -6904,6 +6934,9 @@ async function loadSettings() {
         document.querySelector('input[name="project-folder-columns"][value="' + (settings.projectFolderColumns === 2 ? 2 : 1) + '"]').checked = true;
         updateFolderColumnControls();
         vaultPathInput.value = settings.vaultPath || "";
+        timelineCenterInput.value = settings.timelineCenterTime || TIMELINE_CENTER_DEFAULT;
+        timelineCenterInput.classList.remove("invalid");
+        showEventDefaultControls();
 
         // 혹시 이미 있던 슬라이더를 비우고, 화면 크기 슬라이더와 Pomodoro 슬라이더를 각자의 칸에 만든다
         sliderListElement.innerHTML = "";
@@ -6945,6 +6978,10 @@ document.getElementById("settings-reset").addEventListener("click", function () 
     resetSliders(sliderListElement);
 });
 document.getElementById("today-settings-reset").addEventListener("click", function () {
+    // 같은 칸의 "시간표 첫 위치"도 기본값으로 돌린다 (저장은 resetSliders가 한 번에 한다)
+    settings.timelineCenterTime = TIMELINE_CENTER_DEFAULT;
+    timelineCenterInput.value = TIMELINE_CENTER_DEFAULT;
+    timelineCenterInput.classList.remove("invalid");
     resetSliders(todaySliderListElement);
 });
 
@@ -7024,6 +7061,64 @@ pomodoroSoundCheckbox.addEventListener("change", function () {
 defaultCalendarSelect.addEventListener("change", function () {
     settings.defaultCalendarId = defaultCalendarSelect.value;
     updateDefaultCalendar();
+    saveSettings();
+});
+
+// ----- 설정 탭의 시각 칸들 (시간표 첫 위치, 일정 기본 시작) -----
+
+const timelineCenterInput = document.getElementById("timeline-center-time");
+const eventDefaultAllDayCheckbox = document.getElementById("event-default-allday");
+const eventDefaultStartInput = document.getElementById("event-default-start");
+const eventDefaultMinutesSelect = document.getElementById("event-default-minutes");
+
+// 시각 칸 하나를 연결한다. 칸을 떠나거나 Enter를 누르면 "16:45" 모양으로 정리하고, 읽을 수 있으면 onValid(정리된 값)를 부른다.
+// 읽을 수 없으면 칸을 빨갛게 하고 저장하지 않는다 (일정 창의 시간 칸과 같은 규칙: normalizeTimeInput)
+function setupSettingTimeInput(input, onValid) {
+    input.addEventListener("change", function () {
+        const parsed = normalizeTimeInput(input);
+        if (parsed) {
+            onValid(parsed);
+        }
+    });
+    input.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" && !e.isComposing) {
+            input.blur();  // 칸을 떠나면 브라우저가 change를 알려 준다
+        }
+    });
+}
+
+setupSettingTimeInput(timelineCenterInput, function (value) {
+    settings.timelineCenterTime = value;
+    saveSettings();
+});
+
+// 일정 기본 시작/길이 칸을 지금 설정대로 채운다. 종일이면 시각 칸은 꺼 두고 마지막 시각(없으면 09:00)을 보여 준다
+function showEventDefaultControls() {
+    const choice = settings.eventDefaultStart || EVENT_DEFAULT_START;
+    const allDay = choice === "allDay";
+    eventDefaultAllDayCheckbox.checked = allDay;
+    eventDefaultStartInput.disabled = allDay;
+    eventDefaultStartInput.classList.remove("invalid");
+    if (!allDay || !parseTimeText(eventDefaultStartInput.value)) {
+        eventDefaultStartInput.value = allDay ? EVENT_DEFAULT_START : choice;
+    }
+    eventDefaultMinutesSelect.value = String(settings.eventDefaultMinutes || EVENT_DEFAULT_MINUTES);
+}
+
+setupSettingTimeInput(eventDefaultStartInput, function (value) {
+    settings.eventDefaultStart = value;
+    saveSettings();
+});
+
+eventDefaultAllDayCheckbox.addEventListener("change", function () {
+    // 종일을 끄면 시각 칸에 있던 값(읽을 수 없으면 09:00)으로 돌아간다
+    settings.eventDefaultStart = eventDefaultAllDayCheckbox.checked ? "allDay" : (parseTimeText(eventDefaultStartInput.value) || EVENT_DEFAULT_START);
+    showEventDefaultControls();
+    saveSettings();
+});
+
+eventDefaultMinutesSelect.addEventListener("change", function () {
+    settings.eventDefaultMinutes = Number(eventDefaultMinutesSelect.value);
     saveSettings();
 });
 

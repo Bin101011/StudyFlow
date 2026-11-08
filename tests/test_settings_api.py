@@ -223,5 +223,16 @@ with open(SETTINGS, "w", encoding="utf-8") as f:
 values = client.get("/api/settings").get_json()["values"]
 check("파일의 옛 값(550)이나 넘는 합도 읽을 때 맞춘다", (values["timelineWidth"], values["todayRightWidth"]) == (400, 450), values)
 
+# ----- 시간표 첫 위치, 일정 기본 시작·길이 -----
+values = client.get("/api/settings").get_json()["values"]
+check("기본값: 시간표 17:00, 일정 09:00, 60분", (values["timelineCenterTime"], values["eventDefaultStart"], values["eventDefaultMinutes"]) == ("17:00", "09:00", 60), values)
+saved = client.put("/api/settings", json={"timelineCenterTime": "20:30", "eventDefaultStart": "16:45", "eventDefaultMinutes": 30}).get_json()
+check("맞는 값은 저장된다", (saved["timelineCenterTime"], saved["eventDefaultStart"], saved["eventDefaultMinutes"]) == ("20:30", "16:45", 30), saved)
+check("종일은 'allDay'로 저장된다", client.put("/api/settings", json={"eventDefaultStart": "allDay"}).get_json()["eventDefaultStart"] == "allDay")
+bad = client.put("/api/settings", json={"timelineCenterTime": "24:00", "eventDefaultStart": "9:00", "eventDefaultMinutes": 45}).get_json()
+check("틀린 값(24:00, 앞자리 0 없는 9:00, 길이 버튼에 없는 45분)은 원래 값을 지킨다", (bad["timelineCenterTime"], bad["eventDefaultStart"], bad["eventDefaultMinutes"]) == ("20:30", "allDay", 30), bad)
+bad = client.put("/api/settings", json={"timelineCenterTime": " 20:30x", "eventDefaultStart": None, "eventDefaultMinutes": True}).get_json()
+check("앞뒤에 글자가 붙은 시각, null, true도 원래 값을 지킨다", (bad["timelineCenterTime"], bad["eventDefaultStart"], bad["eventDefaultMinutes"]) == ("20:30", "allDay", 30), bad)
+
 print("\n실패 없음" if not failures else f"\n실패 {len(failures)}개: {failures}")
 sys.exit(1 if failures else 0)

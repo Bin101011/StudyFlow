@@ -1,6 +1,7 @@
 import datetime
 import json
 import os
+import re
 import threading
 
 # 이 파일이 있는 폴더. settings.json을 항상 같은 자리에 두기 위함
@@ -93,6 +94,23 @@ TIMELINE_HOUR_PX_MIN = 36
 TIMELINE_HOUR_PX_MAX = 160
 TIMELINE_HOUR_PX_DEFAULT = 64
 
+# 7) 오늘 탭 시간표를 열 때 가운데에 올 시각("17:00" 모양). 날짜를 넘길 때도 같은 자리로 간다
+TIMELINE_CENTER_KEY = "timelineCenterTime"
+TIMELINE_CENTER_DEFAULT = "17:00"
+
+# 8) 월간 보기에서 날짜를 눌러 일정을 추가할 때의 기본 시작: "09:00" 같은 시각, 또는 종일(EVENT_ALL_DAY)
+EVENT_DEFAULT_START_KEY = "eventDefaultStart"
+EVENT_ALL_DAY = "allDay"
+EVENT_DEFAULT_START_DEFAULT = "09:00"
+
+# 9) 일정을 추가할 때의 기본 길이(분). 일정 창의 길이 버튼과 같은 값만 고를 수 있다
+EVENT_DEFAULT_MINUTES_KEY = "eventDefaultMinutes"
+EVENT_DEFAULT_MINUTES_ALLOWED = (15, 30, 60, 90, 120, 180)
+EVENT_DEFAULT_MINUTES_DEFAULT = 60
+
+# "00:00"~"23:59" 모양의 시각 글자. re.fullmatch로 쓰면 앞뒤에 다른 글자가 붙은 값은 걸러진다
+TIME_TEXT_PATTERN = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
+
 # 저장 파일을 읽고 쓰는 동안 다른 요청이 끼어들지 못하게 하는 열쇠
 _lock = threading.Lock()
 
@@ -123,6 +141,9 @@ def default_settings():
     settings[CREATED_CALENDARS_KEY] = []
     settings[TIMELINE_HOUR_PX_KEY] = TIMELINE_HOUR_PX_DEFAULT
     settings[MONTH_ROWS_KEY] = MONTH_ROWS_DEFAULT
+    settings[TIMELINE_CENTER_KEY] = TIMELINE_CENTER_DEFAULT
+    settings[EVENT_DEFAULT_START_KEY] = EVENT_DEFAULT_START_DEFAULT
+    settings[EVENT_DEFAULT_MINUTES_KEY] = EVENT_DEFAULT_MINUTES_DEFAULT
     return settings
 
 
@@ -178,6 +199,18 @@ def clean_settings(raw, base=None):
     # 숫자(bool 제외)면 범위 안으로 맞춘다. nan, 무한대는 비교가 거짓이라 걸러진다
     if isinstance(hour_px, (int, float)) and not isinstance(hour_px, bool) and hour_px == hour_px and abs(hour_px) != float("inf"):
         settings[TIMELINE_HOUR_PX_KEY] = round(max(TIMELINE_HOUR_PX_MIN, min(TIMELINE_HOUR_PX_MAX, hour_px)))
+
+    center = raw.get(TIMELINE_CENTER_KEY)
+    if isinstance(center, str) and TIME_TEXT_PATTERN.fullmatch(center):
+        settings[TIMELINE_CENTER_KEY] = center
+
+    event_start = raw.get(EVENT_DEFAULT_START_KEY)
+    if isinstance(event_start, str) and (event_start == EVENT_ALL_DAY or TIME_TEXT_PATTERN.fullmatch(event_start)):
+        settings[EVENT_DEFAULT_START_KEY] = event_start
+
+    event_minutes = raw.get(EVENT_DEFAULT_MINUTES_KEY)
+    if isinstance(event_minutes, int) and not isinstance(event_minutes, bool) and event_minutes in EVENT_DEFAULT_MINUTES_ALLOWED:
+        settings[EVENT_DEFAULT_MINUTES_KEY] = event_minutes
 
     month_rows = raw.get(MONTH_ROWS_KEY)
     if isinstance(month_rows, int) and not isinstance(month_rows, bool) and month_rows in MONTH_ROWS_ALLOWED:

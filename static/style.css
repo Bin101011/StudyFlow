@@ -2928,6 +2928,24 @@ body.priority-dragging * {
     font-variant-numeric: tabular-nums;
 }
 
+/* 설정 탭의 시각 칸("17:00"). 경로 칸처럼 줄 끝까지 늘어나지 않게 너비를 정한다 */
+.settings-row input.settings-time[type="text"] {
+    flex: none;
+    width: 80px;
+    font-variant-numeric: tabular-nums;
+}
+
+.settings-row input.settings-time:disabled {
+    opacity: 0.5;
+}
+
+/* 시각 칸 옆의 짧은 설명 */
+.settings-unit {
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.settings-row input.settings-time.invalid,
 .time-field input.invalid {
     border-color: var(--danger);
     background-color: var(--danger-soft);
