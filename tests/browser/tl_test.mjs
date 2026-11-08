@@ -666,12 +666,32 @@ ad = await addDialogValues("month");
 check("월간 보기: 16:45–17:15", !ad.allDay && ad.start === "2030-01-15 16:45" && ad.end === "2030-01-15 17:15", ad);
 ad = await addDialogValues("week", 14);
 check("주간 보기: 누른 시각(14:00)부터 기본 길이 30분", !ad.allDay && ad.start === "2030-01-15 14:00" && ad.end === "2030-01-15 14:30", ad);
+await openTab("settings");
 await js(`eventDefaultAllDayCheckbox.click()`); await sleep(300);
-check("종일을 체크하면 'allDay'로 저장되고 시각 칸이 꺼진다", (await savedValues()).eventDefaultStart === "allDay" && (await js(`eventDefaultStartInput.disabled`)));
+sv = await savedValues();
+check("종일을 체크하면 종일로 저장되고, 시각(16:45)은 그대로 쓸 수 있다", sv.eventDefaultAllDay === true && sv.eventDefaultStart === "16:45" && !(await js(`eventDefaultStartInput.disabled`)) && (await js(`eventDefaultStartInput.value`)) === "16:45", sv);
+check("종일일 때 '종일을 끄면 이 시각' 안내가 보인다", await js(`!eventDefaultStartHint.hidden && eventDefaultStartHint.getBoundingClientRect().width > 0`));
 ad = await addDialogValues("month");
 check("월간 보기: 종일 일정 창으로 열린다(그날 하루)", ad.allDay && ad.start.startsWith("2030-01-15") && ad.end.startsWith("2030-01-15"), ad);
+// 종일인 채로 시각을 바꾸고, 일정 창에서 종일을 끄면 그 시각이 보인다
+await typeInto("event-default-start", "1330");
+sv = await savedValues();
+check("종일인 채로 시각만 13:30으로 바뀐다", sv.eventDefaultAllDay === true && sv.eventDefaultStart === "13:30", sv);
+await js(`openAddDialog({ date: new Date(2030, 0, 15), view: { type: MONTH_VIEW }, allDay: false }); true`); await sleep(150);
+await js(`eventAllDayCheckbox.click()`); await sleep(150);
+let offAllDay = JSON.parse(await js(`JSON.stringify({ allDay: eventAllDayCheckbox.checked, start: eventStartTime.value, end: eventEndTime.value })`));
+await js(`eventDialog.close()`);
+check("일정 창에서 종일을 끄면 13:30–14:00(설정 시각 + 길이 30분)", !offAllDay.allDay && offAllDay.start === "13:30" && offAllDay.end === "14:00", offAllDay);
+// 주간·일간 보기의 종일 줄도 같은 시각을 품고 열린다
+await js(`openAddDialog({ date: new Date(2030, 0, 15), view: { type: "timeGridWeek" }, allDay: true }); true`); await sleep(150);
+await js(`eventAllDayCheckbox.click()`); await sleep(150);
+offAllDay = JSON.parse(await js(`JSON.stringify({ allDay: eventAllDayCheckbox.checked, start: eventStartTime.value })`));
+await js(`eventDialog.close()`);
+check("주간 보기 종일 줄: 종일을 끄면 13:30", !offAllDay.allDay && offAllDay.start === "13:30", offAllDay);
+await typeInto("event-default-start", "4:45pm");
 await js(`eventDefaultAllDayCheckbox.click()`); await sleep(300);
-check("종일을 끄면 원래 시각(16:45)으로 돌아간다", (await savedValues()).eventDefaultStart === "16:45" && !(await js(`eventDefaultStartInput.disabled`)) && (await js(`eventDefaultStartInput.value`)) === "16:45");
+sv = await savedValues();
+check("종일을 끄면 시각(16:45)으로 돌아가고 안내가 숨는다", sv.eventDefaultAllDay === false && sv.eventDefaultStart === "16:45" && (await js(`eventDefaultStartHint.hidden`)) && (await js(`eventDefaultStartInput.value`)) === "16:45", sv);
 
 // 다시 불러와도 설정 칸에 저장된 값이 보인다
 await send("Page.reload"); await sleep(3000);

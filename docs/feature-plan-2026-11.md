@@ -114,7 +114,7 @@
 **구현 결과 (2026-11-08)**
 
 `settings_store.py`
-- 새 설정 3개: `timelineCenterTime`(기본 "17:00"), `eventDefaultStart`("09:00" 같은 시각 또는 "allDay", 기본 "09:00"), `eventDefaultMinutes`(15·30·60·90·120·180 중 하나, 기본 60. 일정 창의 길이 버튼과 같은 값).
+- 새 설정 3개: `timelineCenterTime`(기본 "17:00"), `eventDefaultStart`("09:00" 같은 시각 또는 "allDay", 기본 "09:00". 아래 "고친 점"에서 종일을 따로 떼어 냈다), `eventDefaultMinutes`(15·30·60·90·120·180 중 하나, 기본 60. 일정 창의 길이 버튼과 같은 값).
 - `clean_settings`: 시각은 `HH:MM` 모양(`TIME_TEXT_PATTERN`, 00:00~23:59)만 받는다. 틀린 값이면 원래 값을 지킨다.
 
 `static/app.js`
@@ -132,6 +132,25 @@
 시험
 - `test_settings_api`: 기본값, 맞는 값, 틀린 값(24:00, 9:00, 45분, 앞뒤 글자, null, true).
 - `tl_test` N 구간: 설정 칸에 실제로 입력해 저장, 시간표 가운데 위치(오늘, 날짜 넘김, 종일 줄이 늦게 생겨도), 스크롤한 뒤에는 저절로 안 움직임, 일정 추가 창 값(월간, 주간, 종일), 새로 불러온 뒤 칸의 값, [기본값으로]. H 구간의 "내일: 07:00이 맨 위"는 "17:00이 가운데"로 바꿨다.
+
+**고친 점: 종일과 시각을 따로 저장 (2026-11-08, 사용자 요청)**
+
+문제: 처음 구현은 종일을 시각 자리에 `"allDay"`로 적었다. 그래서 종일을 체크하면 시각 칸이 꺼졌고, 일정 창에서 종일을 끄면 늘 09:00이 나왔다. 사용자는 종일로 열더라도 종일을 끌 때 나올 시각을 정하고 싶어 했다.
+
+`settings_store.py`
+- 새 설정 `eventDefaultAllDay`(true/false, 기본 false). `eventDefaultStart`는 이제 늘 `HH:MM` 시각이다.
+- `clean_settings`: 예전 값 `"allDay"`(`EVENT_ALL_DAY_OLD`)가 오면 종일 켜기로 읽고 시각은 그대로 둔다. 이미 종일로 저장한 settings.json도 이렇게 옮겨진다(시각은 09:00). `eventDefaultAllDay`는 true/false만 받는다.
+
+`static/app.js`
+- `openAddDialog`: 설정 시각을 먼저 읽어 두고, 월간 보기는 `eventDefaultAllDay`면 종일 창으로 연다. 종일 창이어도 시작·끝 시각 칸에는 설정 시각과 시각+기본 길이가 들어간다. 주간·일간 보기의 종일 줄을 누를 때도 09:00 대신 설정 시각을 쓴다.
+- 설정 탭: 종일 체크는 `eventDefaultAllDay`만 바꾸고 시각은 건드리지 않는다. 시각 칸은 꺼지지 않는다. 종일인 동안 시각 칸 옆에 "종일을 끄면 이 시각" 안내(`#event-default-start-hint`)를 보인다.
+
+`templates/index.html`, `static/style.css`
+- 안내 글자 칸과 아래 안내 문구를 고쳤다. 이제 쓰지 않는 `.settings-time:disabled` 모양을 지웠다.
+
+시험
+- `test_settings_api` (61개 통과, 전체 748개 통과): 종일을 켜도 시각이 남음, 종일인 채로 시각만 바꿈, 끄면 그 시각, `"yes"`나 null은 원래 값 유지, 옛 파일의 `"allDay"`는 종일 + 09:00으로 읽음.
+- `tl_test` N 구간 (168개 통과): 종일을 체크해도 시각 칸을 쓸 수 있고 안내가 보임, 종일인 채로 1330을 입력하면 13:30 저장, 월간 종일 창에서 종일을 끄면 13:30–14:00, 주간 보기 종일 줄도 13:30, 종일을 끄면 안내가 숨음.
 
 ## 세션 2
 

@@ -98,10 +98,13 @@ TIMELINE_HOUR_PX_DEFAULT = 64
 TIMELINE_CENTER_KEY = "timelineCenterTime"
 TIMELINE_CENTER_DEFAULT = "17:00"
 
-# 8) 월간 보기에서 날짜를 눌러 일정을 추가할 때의 기본 시작: "09:00" 같은 시각, 또는 종일(EVENT_ALL_DAY)
+# 8) 월간 보기에서 날짜를 눌러 일정을 추가할 때의 기본 시작 시각("09:00" 모양)과 종일 여부.
+#    종일로 열려도 시각은 따로 기억해서, 일정 창에서 종일을 끄면 이 시각이 보인다
 EVENT_DEFAULT_START_KEY = "eventDefaultStart"
-EVENT_ALL_DAY = "allDay"
 EVENT_DEFAULT_START_DEFAULT = "09:00"
+EVENT_DEFAULT_ALL_DAY_KEY = "eventDefaultAllDay"
+# 예전에는 종일을 시각 자리에 "allDay"로 적었다. 이 값이 오면 종일 켜기로 읽고, 시각은 그대로 둔다
+EVENT_ALL_DAY_OLD = "allDay"
 
 # 9) 일정을 추가할 때의 기본 길이(분). 일정 창의 길이 버튼과 같은 값만 고를 수 있다
 EVENT_DEFAULT_MINUTES_KEY = "eventDefaultMinutes"
@@ -143,6 +146,7 @@ def default_settings():
     settings[MONTH_ROWS_KEY] = MONTH_ROWS_DEFAULT
     settings[TIMELINE_CENTER_KEY] = TIMELINE_CENTER_DEFAULT
     settings[EVENT_DEFAULT_START_KEY] = EVENT_DEFAULT_START_DEFAULT
+    settings[EVENT_DEFAULT_ALL_DAY_KEY] = False
     settings[EVENT_DEFAULT_MINUTES_KEY] = EVENT_DEFAULT_MINUTES_DEFAULT
     return settings
 
@@ -205,8 +209,14 @@ def clean_settings(raw, base=None):
         settings[TIMELINE_CENTER_KEY] = center
 
     event_start = raw.get(EVENT_DEFAULT_START_KEY)
-    if isinstance(event_start, str) and (event_start == EVENT_ALL_DAY or TIME_TEXT_PATTERN.fullmatch(event_start)):
+    if isinstance(event_start, str) and TIME_TEXT_PATTERN.fullmatch(event_start):
         settings[EVENT_DEFAULT_START_KEY] = event_start
+    elif event_start == EVENT_ALL_DAY_OLD:
+        settings[EVENT_DEFAULT_ALL_DAY_KEY] = True  # 옛 저장 파일: 종일로 읽고, 시각은 기본값(또는 base 값) 그대로
+
+    event_all_day = raw.get(EVENT_DEFAULT_ALL_DAY_KEY)
+    if isinstance(event_all_day, bool):  # 켜기/끄기 값은 true/false만 인정한다
+        settings[EVENT_DEFAULT_ALL_DAY_KEY] = event_all_day
 
     event_minutes = raw.get(EVENT_DEFAULT_MINUTES_KEY)
     if isinstance(event_minutes, int) and not isinstance(event_minutes, bool) and event_minutes in EVENT_DEFAULT_MINUTES_ALLOWED:

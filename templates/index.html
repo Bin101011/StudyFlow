@@ -308,11 +308,13 @@
                         <option value="">자동 (내 기본 캘린더)</option>
                     </select>
                 </label>
-                <!-- 월간 보기에서 날짜를 눌렀을 때 일정 추가 창에 미리 들어갈 시작 시각. 종일을 고르면 시각 칸은 꺼진다 -->
+                <!-- 월간 보기에서 날짜를 눌렀을 때 일정 추가 창에 미리 들어갈 시작. 종일과 시각은 따로 저장된다.
+                     종일을 체크해도 시각은 쓸 수 있고, 일정 창에서 종일을 끄면 그 시각이 보인다 -->
                 <div class="settings-row">
                     <span class="settings-label">월간 보기의 기본 시작</span>
                     <label class="settings-choice"><input type="checkbox" id="event-default-allday"> 종일</label>
                     <input type="text" id="event-default-start" class="settings-time" maxlength="20" autocomplete="off">
+                    <span class="settings-unit" id="event-default-start-hint" hidden>종일을 끄면 이 시각</span>
                 </div>
                 <label class="settings-row">
                     <span class="settings-label">새 일정 기본 길이</span>
@@ -325,7 +327,7 @@
                         <option value="180">3시간</option>
                     </select>
                 </label>
-                <p class="settings-hint">월간 보기에서 날짜를 누르면 위의 시각에 시작하는 일정 추가 창이 열립니다. 주간·일간 보기에서는 누른 시각에 시작합니다. 기본 길이는 어느 보기에서든 쓰입니다. 시각은 1645, 4:45pm, 오후 4시 45분처럼 써도 됩니다.</p>
+                <p class="settings-hint">월간 보기에서 날짜를 누르면 위의 시각에 시작하는 일정 추가 창이 열립니다. 종일을 체크하면 종일 일정 창으로 열리고, 창에서 종일을 끄면 위의 시각이 들어가 있습니다(주간·일간 보기의 종일 줄을 눌렀을 때도 같습니다). 주간·일간 보기의 시간 칸에서는 누른 시각에 시작합니다. 기본 길이는 어느 보기에서든 쓰입니다. 시각은 1645, 4:45pm, 오후 4시 45분처럼 써도 됩니다.</p>
             </section>
 
             <section class="settings-section">

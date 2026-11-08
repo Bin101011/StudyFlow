@@ -225,14 +225,24 @@ check("파일의 옛 값(550)이나 넘는 합도 읽을 때 맞춘다", (values
 
 # ----- 시간표 첫 위치, 일정 기본 시작·길이 -----
 values = client.get("/api/settings").get_json()["values"]
-check("기본값: 시간표 17:00, 일정 09:00, 60분", (values["timelineCenterTime"], values["eventDefaultStart"], values["eventDefaultMinutes"]) == ("17:00", "09:00", 60), values)
+check("기본값: 시간표 17:00, 일정 09:00, 종일 아님, 60분", (values["timelineCenterTime"], values["eventDefaultStart"], values["eventDefaultAllDay"], values["eventDefaultMinutes"]) == ("17:00", "09:00", False, 60), values)
 saved = client.put("/api/settings", json={"timelineCenterTime": "20:30", "eventDefaultStart": "16:45", "eventDefaultMinutes": 30}).get_json()
 check("맞는 값은 저장된다", (saved["timelineCenterTime"], saved["eventDefaultStart"], saved["eventDefaultMinutes"]) == ("20:30", "16:45", 30), saved)
-check("종일은 'allDay'로 저장된다", client.put("/api/settings", json={"eventDefaultStart": "allDay"}).get_json()["eventDefaultStart"] == "allDay")
-bad = client.put("/api/settings", json={"timelineCenterTime": "24:00", "eventDefaultStart": "9:00", "eventDefaultMinutes": 45}).get_json()
-check("틀린 값(24:00, 앞자리 0 없는 9:00, 길이 버튼에 없는 45분)은 원래 값을 지킨다", (bad["timelineCenterTime"], bad["eventDefaultStart"], bad["eventDefaultMinutes"]) == ("20:30", "allDay", 30), bad)
-bad = client.put("/api/settings", json={"timelineCenterTime": " 20:30x", "eventDefaultStart": None, "eventDefaultMinutes": True}).get_json()
-check("앞뒤에 글자가 붙은 시각, null, true도 원래 값을 지킨다", (bad["timelineCenterTime"], bad["eventDefaultStart"], bad["eventDefaultMinutes"]) == ("20:30", "allDay", 30), bad)
+saved = client.put("/api/settings", json={"eventDefaultAllDay": True}).get_json()
+check("종일을 켜도 시각(16:45)은 그대로 남는다", (saved["eventDefaultAllDay"], saved["eventDefaultStart"]) == (True, "16:45"), saved)
+saved = client.put("/api/settings", json={"eventDefaultStart": "13:15"}).get_json()
+check("종일인 채로 시각만 바꿀 수 있다", (saved["eventDefaultAllDay"], saved["eventDefaultStart"]) == (True, "13:15"), saved)
+bad = client.put("/api/settings", json={"timelineCenterTime": "24:00", "eventDefaultStart": "9:00", "eventDefaultAllDay": "yes", "eventDefaultMinutes": 45}).get_json()
+check("틀린 값(24:00, 앞자리 0 없는 9:00, 글자 'yes', 길이 버튼에 없는 45분)은 원래 값을 지킨다", (bad["timelineCenterTime"], bad["eventDefaultStart"], bad["eventDefaultAllDay"], bad["eventDefaultMinutes"]) == ("20:30", "13:15", True, 30), bad)
+bad = client.put("/api/settings", json={"timelineCenterTime": " 20:30x", "eventDefaultStart": None, "eventDefaultAllDay": None, "eventDefaultMinutes": True}).get_json()
+check("앞뒤에 글자가 붙은 시각, null, true도 원래 값을 지킨다", (bad["timelineCenterTime"], bad["eventDefaultStart"], bad["eventDefaultAllDay"], bad["eventDefaultMinutes"]) == ("20:30", "13:15", True, 30), bad)
+saved = client.put("/api/settings", json={"eventDefaultAllDay": False}).get_json()
+check("종일을 끄면 시각(13:15)으로 돌아간다", (saved["eventDefaultAllDay"], saved["eventDefaultStart"]) == (False, "13:15"), saved)
+# 예전 방식("allDay"를 시각 자리에 저장)의 파일도 종일 켜기로 읽고, 시각은 기본값 09:00
+with open(SETTINGS, "w", encoding="utf-8") as f:
+    json.dump({"eventDefaultStart": "allDay"}, f)
+values = client.get("/api/settings").get_json()["values"]
+check("옛 파일의 'allDay'는 종일 켜기 + 시각 09:00으로 읽는다", (values["eventDefaultAllDay"], values["eventDefaultStart"]) == (True, "09:00"), values)
 
 print("\n실패 없음" if not failures else f"\n실패 {len(failures)}개: {failures}")
 sys.exit(1 if failures else 0)

@@ -1135,25 +1135,25 @@ function showEventDialog(values) {
 }
 
 // 일정 추가의 기본값. 설정 탭에서 바꿀 수 있고, 설정을 불러오기 전에는 이 값을 쓴다 (서버 settings_store와 같은 값)
-const EVENT_DEFAULT_START = "09:00";  // 월간 보기에서 날짜를 눌렀을 때의 시작 시각. 설정값 "allDay"는 종일
+const EVENT_DEFAULT_START = "09:00";  // 월간 보기에서 날짜를 눌렀을 때의 시작 시각
 const EVENT_DEFAULT_MINUTES = 60;     // 새 일정의 길이(분)
 
 // 빈 날짜/시간 칸을 클릭했을 때: 새 일정 추가 창을 연다. info.date는 클릭한 칸의 시각이다
 function openAddDialog(info) {
     const date = info.date;
     const minutes = settings.eventDefaultMinutes || EVENT_DEFAULT_MINUTES;
+    // 설정의 기본 시작 시각. 종일 일정으로 열 때도 시각 칸에 미리 넣어 두어, 창에서 종일을 끄면 이 시각이 보인다
+    const [hour, minute] = (parseTimeText(settings.eventDefaultStart || "") || EVENT_DEFAULT_START).split(":").map(Number);
     let allDay = false;
     let start;
     if (info.view.type === MONTH_VIEW) {
-        // 월간 보기: 설정의 기본 시작(시각 또는 종일)을 쓴다. 종일이어도 시각은 09:00으로 채워 둔다(종일을 끄면 보인다)
-        const choice = settings.eventDefaultStart || EVENT_DEFAULT_START;
-        allDay = choice === "allDay";
-        const [hour, minute] = (allDay ? EVENT_DEFAULT_START : choice).split(":").map(Number);
+        // 월간 보기: 설정대로 종일 또는 기본 시각에 시작
+        allDay = settings.eventDefaultAllDay === true;
         start = new Date(date.getFullYear(), date.getMonth(), date.getDate(), hour, minute);
     } else if (info.allDay) {
         // 주간/일간 보기 위쪽의 "종일" 줄을 클릭
         allDay = true;
-        start = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 9);
+        start = new Date(date.getFullYear(), date.getMonth(), date.getDate(), hour, minute);
     } else {
         // 주간/일간 보기의 시간 칸: 클릭한 시각부터
         start = date;
@@ -7069,6 +7069,7 @@ defaultCalendarSelect.addEventListener("change", function () {
 const timelineCenterInput = document.getElementById("timeline-center-time");
 const eventDefaultAllDayCheckbox = document.getElementById("event-default-allday");
 const eventDefaultStartInput = document.getElementById("event-default-start");
+const eventDefaultStartHint = document.getElementById("event-default-start-hint");
 const eventDefaultMinutesSelect = document.getElementById("event-default-minutes");
 
 // 시각 칸 하나를 연결한다. 칸을 떠나거나 Enter를 누르면 "16:45" 모양으로 정리하고, 읽을 수 있으면 onValid(정리된 값)를 부른다.
@@ -7092,16 +7093,14 @@ setupSettingTimeInput(timelineCenterInput, function (value) {
     saveSettings();
 });
 
-// 일정 기본 시작/길이 칸을 지금 설정대로 채운다. 종일이면 시각 칸은 꺼 두고 마지막 시각(없으면 09:00)을 보여 준다
+// 일정 기본 시작/길이 칸을 지금 설정대로 채운다.
+// 종일과 시각은 따로 저장된다. 종일을 체크해도 시각 칸은 그대로 쓸 수 있고, 옆에 "종일을 끄면 이 시각" 안내가 보인다
 function showEventDefaultControls() {
-    const choice = settings.eventDefaultStart || EVENT_DEFAULT_START;
-    const allDay = choice === "allDay";
+    const allDay = settings.eventDefaultAllDay === true;
     eventDefaultAllDayCheckbox.checked = allDay;
-    eventDefaultStartInput.disabled = allDay;
+    eventDefaultStartHint.hidden = !allDay;
     eventDefaultStartInput.classList.remove("invalid");
-    if (!allDay || !parseTimeText(eventDefaultStartInput.value)) {
-        eventDefaultStartInput.value = allDay ? EVENT_DEFAULT_START : choice;
-    }
+    eventDefaultStartInput.value = parseTimeText(settings.eventDefaultStart || "") || EVENT_DEFAULT_START;
     eventDefaultMinutesSelect.value = String(settings.eventDefaultMinutes || EVENT_DEFAULT_MINUTES);
 }
 
@@ -7111,9 +7110,9 @@ setupSettingTimeInput(eventDefaultStartInput, function (value) {
 });
 
 eventDefaultAllDayCheckbox.addEventListener("change", function () {
-    // 종일을 끄면 시각 칸에 있던 값(읽을 수 없으면 09:00)으로 돌아간다
-    settings.eventDefaultStart = eventDefaultAllDayCheckbox.checked ? "allDay" : (parseTimeText(eventDefaultStartInput.value) || EVENT_DEFAULT_START);
-    showEventDefaultControls();
+    // 종일만 켜고 끈다. 시각은 건드리지 않는다
+    settings.eventDefaultAllDay = eventDefaultAllDayCheckbox.checked;
+    eventDefaultStartHint.hidden = !eventDefaultAllDayCheckbox.checked;
     saveSettings();
 });
 

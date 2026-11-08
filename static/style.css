@@ -2935,10 +2935,6 @@ body.priority-dragging * {
     font-variant-numeric: tabular-nums;
 }
 
-.settings-row input.settings-time:disabled {
-    opacity: 0.5;
-}
-
 /* 시각 칸 옆의 짧은 설명 */
 .settings-unit {
     color: var(--text-muted);
