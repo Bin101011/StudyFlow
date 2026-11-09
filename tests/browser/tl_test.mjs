@@ -579,7 +579,7 @@ const dragSliderTo = async (k, side) => { await openTab("settings"); const e = a
 let w = await layoutWidths();
 check("기본: 시간표 400px, 오른쪽 칸과 달력 300px", Math.abs(w.timeline - 400) < 1 && Math.abs(w.right - 300) < 1 && Math.abs(w.mini - 300) < 1, w);
 await dragSliderTo("todayRightWidth", "right");
-check("오른쪽 칸 슬라이더를 끝까지 끌면 450", (await sliderState("todayRightWidth")).value === 450 && (await sliderState("todayRightWidth")).text === "450px", await sliderState("todayRightWidth"));
+check("시간표가 400이면 오른쪽 칸 슬라이더는 끝까지 끌어도 450에서 막힌다(합 850)",(await sliderState("todayRightWidth")).value === 450 && (await sliderState("todayRightWidth")).text === "450px", await sliderState("todayRightWidth"));
 w = await layoutWidths();
 check("오른쪽 칸과 작은 달력이 450px로 넓어진다", Math.abs(w.right - 450) < 1 && Math.abs(w.mini - 450) < 1, w);
 
@@ -611,11 +611,17 @@ await dragSliderTo("timelineWidth", "left");
 w = await layoutWidths();
 check("시간표 300px이 실제로 적용된다(330px에 걸리지 않는다)", Math.abs(w.timeline - 300) < 1, w);
 
+// 시간표가 300이면 오른쪽 칸은 끝값 500까지 간다(합 800, 한계 850 안)
+await dragSliderTo("todayRightWidth", "right");
+check("시간표가 300이면 오른쪽 칸은 500까지 가고 저장된다", (await sliderState("todayRightWidth")).value === 500 && JSON.stringify(await savedWidths()) === "[300,500]", [await sliderState("todayRightWidth"), await savedWidths()]);
+w = await layoutWidths();
+check("오른쪽 칸과 작은 달력 500px이 실제로 적용된다", Math.abs(w.right - 500) < 1 && Math.abs(w.mini - 500) < 1 && w.overflow <= 0, w);
+
 // 창이 좁으면 오른쪽 칸이 아래로 내려간다. 달력이 줄 전체로 늘어나거나 가로 스크롤이 생기면 안 된다
 await send("Emulation.setDeviceMetricsOverride", { width: 1000, height: 800, deviceScaleFactor: 1, mobile: false });
 await sleep(300);
 w = await layoutWidths();
-check("좁은 창: 오른쪽 칸은 줄 전체를 쓰고 달력은 슬라이더 값(350px)까지만, 가로 스크롤 없음", w.right > 500 && Math.abs(w.mini - 350) < 1 && w.overflow <= 0, w);
+check("좁은 창: 오른쪽 칸은 줄 전체를 쓰고 달력은 슬라이더 값(500px)까지만, 가로 스크롤 없음", w.right > 600 && Math.abs(w.mini - 500) < 1 && w.overflow <= 0, w);
 await send("Emulation.setDeviceMetricsOverride", { width: 1500, height: 900, deviceScaleFactor: 1, mobile: false });
 
 await openTab("settings");

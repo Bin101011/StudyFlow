@@ -37,7 +37,7 @@ TIMELINE_WIDTH_KEY = "timelineWidth"
 TODAY_RIGHT_WIDTH_KEY = "todayRightWidth"
 TODAY_SLIDER_DEFINITIONS = [
     {"key": TIMELINE_WIDTH_KEY, "label": "시간표 너비", "min": 300, "max": 500, "step": 10, "default": 400, "unit": "px"},
-    {"key": TODAY_RIGHT_WIDTH_KEY, "label": "오른쪽 칸 너비", "min": 300, "max": 450, "step": 10, "default": 300, "unit": "px"},
+    {"key": TODAY_RIGHT_WIDTH_KEY, "label": "오른쪽 칸 너비", "min": 300, "max": 500, "step": 10, "default": 300, "unit": "px"},
 ]
 # 두 칸을 합친 너비의 한계. 가운데 할 일 칸이 너무 좁아지지 않게 한다. 화면(app.js)도 /api/settings로 이 값을 받아 슬라이더를 막는다
 TODAY_WIDTHS_MAX = 850

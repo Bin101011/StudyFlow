@@ -208,7 +208,7 @@ def widths(body):
 data = client.get("/api/settings").get_json()
 today_sliders = {d["key"]: d for d in data["todaySliders"]}
 check("시간표 너비 범위는 300~500, 기본 400", (today_sliders["timelineWidth"]["min"], today_sliders["timelineWidth"]["max"], today_sliders["timelineWidth"]["default"]) == (300, 500, 400))
-check("오른쪽 칸 범위는 300~450, 기본 300", (today_sliders["todayRightWidth"]["min"], today_sliders["todayRightWidth"]["max"], today_sliders["todayRightWidth"]["default"]) == (300, 450, 300))
+check("오른쪽 칸 범위는 300~500, 기본 300", (today_sliders["todayRightWidth"]["min"], today_sliders["todayRightWidth"]["max"], today_sliders["todayRightWidth"]["default"]) == (300, 500, 300))
 check("화면에 합계 한계 850을 알려 준다", data["todayWidthsMax"] == 850)
 check("범위 밖 값은 끝값으로", widths({"timelineWidth": 100, "todayRightWidth": 100}) == (300, 300))
 check("합이 850이면 그대로", widths({"timelineWidth": 400, "todayRightWidth": 450}) == (400, 450))
@@ -218,6 +218,9 @@ check("시간표가 500일 때 오른쪽만 450을 보내면 오른쪽이 350으
 check("둘 다 넘게 보내면 시간표를 줄인다", widths({"timelineWidth": 500, "todayRightWidth": 450}) == (400, 450))
 widths({"timelineWidth": 380, "todayRightWidth": 300})
 check("다른 설정만 바꿔도 너비는 그대로", widths({"fontSize": 15}) == (380, 300))
+check("시간표 350 + 오른쪽 500(끝값)은 합 850이라 그대로", widths({"timelineWidth": 350, "todayRightWidth": 500}) == (350, 500))
+check("오른쪽 칸의 범위 밖 값(600)은 500으로", widths({"timelineWidth": 300, "todayRightWidth": 600}) == (300, 500))
+widths({"timelineWidth": 380, "todayRightWidth": 300})
 with open(SETTINGS, "w", encoding="utf-8") as f:
     json.dump({"timelineWidth": 550, "todayRightWidth": 450}, f)
 values = client.get("/api/settings").get_json()["values"]
