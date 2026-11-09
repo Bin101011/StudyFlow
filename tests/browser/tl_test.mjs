@@ -171,7 +171,7 @@ await posAt(13 * 60 + 30);
 r = await blockRect("복습 정리");
 await click(r.x, r.y); await sleep(400);
 check("계획을 누르면 작은 창이 열리고 제목 입력 칸이 있다", (await js(`!!document.querySelector(".tl-popover input.tl-title-input") && document.querySelector(".tl-popover input.tl-title-input").value === "복습 정리"`)));
-check("시간과 길이가 보인다", (await js(`document.querySelector(".tl-popover .tl-pop-sub").textContent`)).includes("13:00–14:30 (1시간 30분)"));
+check("시작·끝 시간 칸과 길이가 보인다", (await js(`[...document.querySelectorAll(".tl-popover .tl-pop-times input")].map(i => i.value).join("–") + " " + document.querySelector(".tl-popover .tl-pop-length").textContent`)) === "13:00–14:30 (1시간 30분)", await js(`document.querySelector(".tl-popover").textContent`));
 await shot("t_plan_popover.png");
 if (!(await js(`!!document.querySelector(".tl-popover input.tl-title-input")`))) { await posAt(13 * 60 + 30); r = await blockRect("복습 정리"); await click(r.x, r.y); await sleep(400); }   // 스크롤 이벤트로 창이 닫혔으면 한 번 다시 연다 (테스트 타이밍 보정)
 await js(`document.querySelector(".tl-popover input.tl-title-input").select()`);
@@ -275,7 +275,7 @@ check("계획이 늘어난 개수가 맞다(할 일 4개를 놓았다)", (await 
 await posAt(16 * 60 + 30);
 r = await blockRect("발표 자료 만들기");
 await click(r.x, r.y); await sleep(400);
-check("연결된 계획의 창: 제목은 읽기 전용이고 '할 일 완료' 체크가 있다", (await js(`!document.querySelector(".tl-popover input.tl-title-input") && !!document.querySelector(".tl-popover .tl-pop-check input")`)));
+check("연결된 계획의 창: 제목 칸(할 일 이름)과 '할 일 완료' 체크가 있다 (단계 5부터 이름도 고칠 수 있다)", (await js(`!!document.querySelector(".tl-popover input.tl-title-input") && document.querySelector(".tl-popover input.tl-title-input").value === "발표 자료 만들기" && !!document.querySelector(".tl-popover .tl-pop-check input")`)));
 await js(`document.querySelector(".tl-popover .tl-pop-check input").click()`); await sleep(1000);
 check("체크하면 할 일이 끝나고 계획 블록도 끝난 모양(흐림)이 된다", (await js(`!!document.querySelector("#timeline-grid .tl-plan.done")`)) && (await api("/api/tasks?date=" + today)).data.tasks.find((t) => t.content === "발표 자료 만들기").done === 1);
 await key("Escape"); await sleep(200);
@@ -784,6 +784,104 @@ check("새로 불러와도 설정 칸에 12:30, 16:45, 30분이 보인다", show
 await openTab("settings");
 await js(`document.getElementById("today-settings-reset").click()`);
 check("오늘 탭 [기본값으로]는 시간표 첫 위치도 17:00으로 돌린다", await waitFor(async () => (await savedValues()).timelineCenterTime === "17:00", 2000) && (await js(`timelineCenterInput.value`)) === "17:00", (await savedValues()).timelineCenterTime);
+
+
+// ===== O. 계획 작은 창: 이름 수정, 시간 수정, 가운데 시간 글자 (단계 5) =====
+// 50일 뒤의 빈 날짜를 쓴다. 할 일과 연결된 계획(10:00–11:00), 빈칸 계획(점심 12:00–12:30, 저녁 18:00–19:00)
+console.log("--- O. 계획 작은 창: 이름·시간 수정 ---");
+await openTab("today");
+const dayO = await js(`addDaysToText(todayText, 50)`);
+const taskO = (await api("/api/tasks", "POST", { content: "영어 단어 외우기", date: dayO, projectId: null })).data;
+await api("/api/time-blocks", "POST", { date: dayO, start: 600, end: 660, taskId: taskO.id });
+await api("/api/time-blocks", "POST", { date: dayO, start: 720, end: 750, title: "점심" });
+await api("/api/time-blocks", "POST", { date: dayO, start: 1080, end: 1140, title: "저녁" });
+await js(`showDay(${JSON.stringify(dayO)})`);
+await waitFor(async () => (await planTitles()).includes("저녁") && (await js(`!!document.querySelector(".task-row .task-slot")`)), 8000);
+await sleep(300);
+const plansO = async () => (await api("/api/time-blocks?date=" + dayO)).data;
+const planO = async (title) => (await plansO()).find((x) => x.title === title);
+const popTimes = () => js(`JSON.stringify([...document.querySelectorAll(".tl-popover .tl-pop-times input")].map(i => i.value).concat([document.querySelector(".tl-popover .tl-pop-length").textContent]))`).then(JSON.parse);
+const popOpen = () => js(`!!document.querySelector(".tl-popover")`);
+// 창 안의 칸을 진짜 마우스로 누른다 (0 = 시작, 1 = 끝). 처음 누르면 글자 전체가 선택되지만, 이미 커서가 있던 칸은 선택되지 않으므로 전체를 선택해 둔다
+const clickPopTime = async (index) => { const p = JSON.parse(await js(`JSON.stringify((() => { const r = document.querySelectorAll(".tl-popover .tl-pop-times input")[${index}].getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })())`)); await click(p.x, p.y); await sleep(100); await js(`document.activeElement.select()`); };
+const openPlanO = async (title, min) => { await posAt(min); const b = await blockRect(title); await click(b.x, b.y); await sleep(400); if (!(await popOpen())) { await posAt(min); const b2 = await blockRect(title); await click(b2.x, b2.y); await sleep(400); } };
+
+// ① 연결된 계획의 이름 고치기 → 할 일 이름이 바뀐다
+await openPlanO("영어 단어 외우기", 630);
+check("연결된 계획 창: 제목 칸에 할 일 이름, 시간 칸 10:00–11:00 (1시간), 연결 안내", (await js(`document.querySelector(".tl-popover .tl-title-input").value`)) === "영어 단어 외우기" && JSON.stringify(await popTimes()) === JSON.stringify(["10:00", "11:00", "(1시간)"]) && (await js(`document.querySelector(".tl-popover .tl-pop-tip").textContent`)).includes("할 일 이름도 바뀝니다"), await popTimes());
+check("블록에서 열면 제목 칸에 커서가 있다", await js(`document.activeElement === document.querySelector(".tl-popover .tl-title-input")`));
+await js(`document.querySelector(".tl-popover .tl-title-input").select()`);
+await type("영어 단어 50개 외우기"); await key("Enter");
+check("Enter하면 창이 닫히고 할 일 이름이 서버에서 바뀐다", await waitFor(async () => (await api("/api/tasks?date=" + dayO)).data.tasks.some((t) => t.id === taskO.id && t.content === "영어 단어 50개 외우기")) && !(await popOpen()));
+check("시간표 블록과 가운데 할 일 줄에도 새 이름이 보인다", await waitFor(async () => (await planTitles()).includes("영어 단어 50개 외우기") && (await js(`[...document.querySelectorAll(".task-row .task-content")].some(c => c.textContent === "영어 단어 50개 외우기")`))), await planTitles());
+check("연결은 그대로다(계획의 taskId)", (await planO("영어 단어 50개 외우기")).taskId === taskO.id, await plansO());
+
+// ② 시간 칸: 시작을 바꾸면 끝이 같은 길이로 따라오고, 끝을 바꾸면 길이가 바뀐다
+await openPlanO("점심", 735);
+await clickPopTime(0); await type("1315");
+await clickPopTime(1);   // 끝 칸으로 옮기면 시작 칸이 확정된다
+check("시작을 1315로 쓰고 칸을 옮기면 13:15로 정리되고 끝이 13:45로 따라온다(30분 유지)", JSON.stringify(await popTimes()) === JSON.stringify(["13:15", "13:45", "(30분)"]), await popTimes());
+await type("14:00"); await key("Enter");
+check("끝을 14:00으로 쓰고 Enter하면 13:15–14:00으로 저장되고 창이 닫힌다", await waitFor(async () => { const x = await planO("점심"); return x && x.start === 795 && x.end === 840; }) && !(await popOpen()), await planO("점심"));
+
+// ③ 틀린 시간: Enter해도 닫히지 않고 빨간 칸, Esc는 아무것도 저장하지 않고 닫는다
+await openPlanO("점심", 810);
+await clickPopTime(1); await type("abc"); await key("Enter"); await sleep(200);
+check("끝에 abc를 쓰고 Enter: 창이 열린 채 끝 칸이 빨갛고 알림이 뜬다", (await popOpen()) && (await js(`document.querySelectorAll(".tl-popover .tl-pop-times input")[1].classList.contains("invalid")`)) && (await js(`document.getElementById("toast").classList.contains("show") && /읽을 수 없습니다/.test(document.getElementById("toast").textContent)`)));
+await clickPopTime(1); await type("13:00"); await key("Enter"); await sleep(200);
+check("끝이 시작보다 빠르면(13:15–13:00) Enter해도 닫히지 않는다", (await popOpen()) && (await js(`/5분 이상/.test(document.getElementById("toast").textContent)`)));
+await key("Escape"); await sleep(400);
+const lunch = await planO("점심");
+check("Esc로 닫으면 아무것도 저장하지 않는다(13:15–14:00 그대로)", !(await popOpen()) && lunch.start === 795 && lunch.end === 840, lunch);
+await openPlanO("점심", 810);
+await js(`document.querySelector(".tl-popover .tl-title-input").select()`); await type("점심 약속"); await key("Escape"); await sleep(400);
+check("제목을 쓰다가 Esc로 닫아도 저장하지 않는다", (await planO("점심")) !== undefined && !(await planO("점심 약속")), (await plansO()).map((x) => x.title));
+
+// ④ ↑/↓ 키와 하루의 끝(24:00)
+await openPlanO("저녁", 1110);
+await clickPopTime(0); await key("ArrowUp"); await key("ArrowUp", { modifiers: 8 });   // modifiers 8 = Shift
+check("시작 칸에서 ↑는 5분, Shift+↑는 1시간: 19:05, 끝은 20:05로 따라온다", JSON.stringify(await popTimes()) === JSON.stringify(["19:05", "20:05", "(1시간)"]), await popTimes());
+await clickPopTime(0); await type("23:30"); await clickPopTime(1);
+check("시작 23:30이면 끝은 하루 끝 24:00에서 잘린다", JSON.stringify(await popTimes()) === JSON.stringify(["23:30", "24:00", "(30분)"]), await popTimes());
+await key("Enter");
+check("24:00까지인 계획으로 저장된다(23:30–24:00)", await waitFor(async () => { const x = await planO("저녁"); return x && x.start === 1410 && x.end === 1440; }), await planO("저녁"));
+await openPlanO("저녁", 1420);
+await clickPopTime(0); await type("2200"); await clickPopTime(1); await type("2400"); await key("Enter");
+check("끝 칸에 2400을 써도 24:00으로 읽는다(22:00–24:00)", await waitFor(async () => { const x = await planO("저녁"); return x && x.start === 1320 && x.end === 1440; }), await planO("저녁"));
+
+// ⑤ 칸을 떠나지 않은 채 시간표를 스크롤해도(창이 닫힘) 쓰던 시간이 저장되고 끝도 따라온다
+await openPlanO("저녁", 1380);
+await clickPopTime(0); await type("2030");
+await js(`timelineScroll.scrollTop -= 40`); await sleep(200);
+check("시작에 2030을 쓰고 바로 스크롤: 창이 닫히며 20:30–22:30(2시간 유지)으로 저장된다", !(await popOpen()) && await waitFor(async () => { const x = await planO("저녁"); return x && x.start === 1230 && x.end === 1350; }), await planO("저녁"));
+
+// ⑥ 가운데 할 일 옆의 시간 글자를 누르면 같은 창이 열린다
+// 줄에 마우스를 올리면 줄 버튼([내일로] 등)이 나타나서 시간 글자가 왼쪽으로 밀린다. 사람처럼 먼저 마우스를 올린 뒤 위치를 다시 잰다
+const slotRectNow = async () => JSON.parse(await js(`JSON.stringify((() => { const s = document.querySelector(".task-row .task-slot"); const r = s.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, text: s.textContent }; })())`));
+const slotRect = async () => { await js(`document.querySelector(".task-row .task-slot").scrollIntoView({ block: "center" })`); await sleep(150); const a = await slotRectNow(); await mouse("mouseMoved", a.x, a.y, 0); await sleep(150); return slotRectNow(); };
+await mouse("mouseMoved", 5, 5, 0); await js(`document.querySelector(".task-row .task-slot").scrollIntoView({ block: "center" })`); await sleep(200);
+const slotBefore = await slotRectNow();
+let sr = await slotRect();
+check("시간 글자는 이름 바로 뒤에 있어서, 줄에 마우스를 올려 버튼이 나타나도 움직이지 않는다", Math.abs(sr.x - slotBefore.x) < 1 && (await js(`document.querySelector(".task-row .task-slot").getBoundingClientRect().left - document.querySelector(".task-row .task-slot").previousElementSibling.getBoundingClientRect().right`)) < 20, [slotBefore, sr]);
+check("(준비) 할 일 줄 옆에 10:00–11:00이 붙어 있다", sr.text === "10:00–11:00", sr);
+const hit = await js(`(() => { const e = document.elementFromPoint(${sr.x}, ${sr.y}); return e ? e.className + " / " + e.textContent.slice(0, 30) : "없음"; })()`);
+check("(준비) 시간 글자 자리를 누르면 시간 글자가 눌린다", /task-slot/.test(hit), hit);
+await click(sr.x, sr.y); await sleep(400);
+check("시간 글자를 누르면 그 계획의 작은 창이 열리고 시작 칸에 커서가 있다", (await popOpen()) && (await js(`document.querySelector(".tl-popover .tl-title-input").value`)) === "영어 단어 50개 외우기" && (await js(`document.activeElement === document.querySelector(".tl-popover .tl-pop-times input")`)));
+check("시간표의 그 블록에 선택 테두리가 생긴다", await js(`[...document.querySelectorAll("#timeline-grid .tl-plan.selected")].map(b => b.querySelector(".tl-title").textContent).join() === "영어 단어 50개 외우기"`));
+const popLeft = JSON.parse(await js(`JSON.stringify({ pop: document.querySelector(".tl-popover").getBoundingClientRect().left, slot: document.querySelector(".task-row .task-slot").getBoundingClientRect().right })`));
+check("창은 시간 글자 옆에 붙는다", popLeft.pop >= popLeft.slot, popLeft);
+await click(sr.x, sr.y); await sleep(300);
+check("같은 시간 글자를 다시 누르면 닫힌다", !(await popOpen()));
+await click(sr.x, sr.y); await sleep(400);
+await type("0930"); await key("Enter");
+check("시간 글자에서 연 창에 0930을 쓰고 Enter: 09:30–10:30으로 옮겨진다", await waitFor(async () => { const x = await planO("영어 단어 50개 외우기"); return x && x.start === 570 && x.end === 630; }), await planO("영어 단어 50개 외우기"));
+check("할 일 옆 시간 글자도 09:30–10:30으로 바뀐다", await waitFor(async () => (await js(`document.querySelector(".task-row .task-slot").textContent`)) === "09:30–10:30"));
+// 할 일 목록을 스크롤하면 창이 닫힌다 (창이 목록 옆에 떠 있으므로)
+sr = await slotRect(); await click(sr.x, sr.y); await sleep(400);
+await js(`document.querySelector("#tasks-column .column-scroll").dispatchEvent(new Event("scroll"))`); await sleep(200);
+check("할 일 목록이 스크롤되면 창이 닫힌다", !(await popOpen()));
+await js(`showDay(todayText)`); await sleep(1500);
 
 check("자바스크립트 오류 없음", jsErrors.length === 0, jsErrors.join(" | "));
 console.log(failed ? `\n실패 ${failed}개` : "\n모두 통과");
