@@ -437,15 +437,93 @@ check("축소하면 더 많은 블록의 글자가 줄어든다(30분 블록 = 1
 await js(`setTimelineZoom(160)`); await sleep(400);
 const fs160 = JSON.parse(await js(`JSON.stringify(Object.fromEntries([...document.querySelectorAll("#timeline-grid .tl-plan")].filter(b => /^\\d+분 블록$/.test(b.querySelector(".tl-title").textContent)).map(b => [b.querySelector(".tl-title").textContent, parseFloat(b.style.getPropertyValue("--tl-fs"))])))`));
 check("최대 확대하면 5분 블록(13px)도 15분 블록(40px)도 글자 크기가 달라진다: 5분만 줄고 15분은 그대로", fs160["5분 블록"] < 1 && fs160["15분 블록"] === 1, fs160);
-// 시간 글자는 분이 아니라 블록 높이로 정한다. 빈칸을 눌러 만드는 30분 계획도 사용자의 배율(99px)이면 시간이 보여야 한다
-const timeOf = (title) => js(`(() => { const b = [...document.querySelectorAll("#timeline-grid .tl-plan")].find(x => x.querySelector(".tl-title") && x.querySelector(".tl-title").textContent === ${JSON.stringify(title)}); const t = b.querySelector(".tl-time"); return JSON.stringify(t ? { text: t.textContent, over: t.getBoundingClientRect().bottom - b.getBoundingClientRect().bottom } : null); })()`).then(JSON.parse);
+// 시간 글자(단계 4): 블록 높이로 정한다. 두 줄이 들어가면 제목 아래, 안 들어가면 제목 옆 한 줄. 짧은 블록도 시간이 보이고, 겹쳐서 아주 좁으면 시간만 숨긴다
+// 블록 하나의 글자 배치를 잰다. "옆"은 시간이 제목과 같은 줄에서 제목 오른쪽에 있다는 뜻, "아래"는 제목보다 아래에 있다는 뜻이다
+const textOf = (title, kind = "") => js(`(() => { const b = [...document.querySelectorAll("#timeline-grid .tl-block${kind}")].find(x => x.querySelector(".tl-title") && x.querySelector(".tl-title").textContent === ${JSON.stringify(title)}); if (!b) return "null";
+  const br = b.getBoundingClientRect(), ti = b.querySelector(".tl-title"), tr = ti.getBoundingClientRect(), t = b.querySelector(".tl-time"), shown = t && getComputedStyle(t).display !== "none", mr = shown ? t.getBoundingClientRect() : null;
+  return JSON.stringify({ one: b.classList.contains("tl-one-line"), text: t ? t.textContent : null, shown,
+    beside: shown && mr.left >= tr.right - 1 && Math.abs((mr.top + mr.height / 2) - (tr.top + tr.height / 2)) < tr.height / 2,
+    below: shown && mr.top >= tr.bottom - 1,
+    inside: !shown || (mr.bottom <= br.bottom + 1 && mr.right <= br.right + 1 && mr.top >= br.top - 1),
+    titleInside: tr.bottom <= br.bottom + 1 && tr.height > 0, titleCut: ti.scrollWidth > ti.clientWidth || ti.scrollHeight > ti.clientHeight + 1,
+    ratio: shown ? +(parseFloat(getComputedStyle(t).fontSize) / parseFloat(getComputedStyle(ti).fontSize)).toFixed(2) : null, titlePx: parseFloat(getComputedStyle(ti).fontSize), h: br.height, w: br.width }); })()`).then(JSON.parse);
 await js(`setTimelineZoom(99)`); await sleep(300);
-const time99 = await timeOf("30분 블록");
-check("99px 배율: 30분 계획에 시간이 보이고 블록 안에 들어간다", time99 && time99.text === "22:30–23:00" && time99.over <= 0, time99);
+const time99 = await textOf("30분 블록");
+check("99px 배율: 30분 계획(50px)은 두 줄 모양이라 시간이 제목 아래에 보이고 블록 안에 들어간다", time99 && time99.text === "22:30–23:00" && !time99.one && time99.below && time99.inside, time99);
 await js(`setTimelineZoom(64)`); await sleep(300);
-check("64px 배율: 30분 계획(32px)은 두 줄이 안 들어가서 시간을 그리지 않는다", (await timeOf("30분 블록")) === null, await timeOf("30분 블록"));
-const time45 = await timeOf("45분 블록");
-check("64px 배율: 45분 계획(48px)은 시간이 보이고 블록 안에 들어간다", time45 && time45.over <= 0, time45);
+const time30 = await textOf("30분 블록");
+check("64px 배율: 30분 계획(32px)은 두 줄이 안 들어가서 시간이 제목 옆 한 줄에 보인다", time30 && time30.one && time30.beside && time30.inside && time30.titleInside, time30);
+const time45 = await textOf("45분 블록");
+check("64px 배율: 45분 계획(48px)은 시간이 제목 아래에 보이고 블록 안에 들어간다", time45 && !time45.one && time45.below && time45.inside, time45);
+const time5 = await textOf("5분 블록");
+check("64px 배율: 5분 계획(16px)도 시간이 제목 옆에 보이고 블록 안에 들어간다", time5 && time5.one && time5.beside && time5.inside && time5.titleInside, time5);
+check("글자를 줄인 블록은 시간 글자도 함께 작아진다(제목 11.52px, 시간은 그 0.88배)", time5 && Math.abs(time5.titlePx - 11.52) < 0.1 && time5.ratio === 0.88, time5);
+await js(`setTimelineZoom(36)`); await sleep(300);
+const time30s = await textOf("30분 블록");
+check("36px 배율: 30분 계획(18px)도 시간이 옆에 보이고 블록 안에 들어간다", time30s && time30s.one && time30s.beside && time30s.inside && time30s.titleInside, time30s);
+await js(`setTimelineZoom(64)`); await sleep(300);
+
+// 다른 날짜(40일 뒤, 비어 있는 날)에서 짧은 일정, 긴 제목, 겹침, 끄는 도중, 글자 크기 설정을 본다. 오늘의 다른 시험 계획과 겹치지 않게 하려는 것이다
+const day4 = await js(`addDaysToText(todayText, 40)`);
+const at = (m) => day4 + "T" + String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0") + ":00+09:00";
+await api("/api/events", "POST", { calendarId: "me@test", title: "짧은 일정", allDay: false, start: at(450), end: at(470) });
+await api("/api/events", "POST", { calendarId: "me@test", title: "한 시간 일정", allDay: false, start: at(540), end: at(600) });
+for (const [start, end, title] of [[1080, 1110, "끌 계획"], [1140, 1170, "아주 긴 제목의 짧은 계획: 수학 문제집 3단원 복습하고 오답 정리"],
+  [1200, 1260, "아주 긴 제목의 한 시간 계획: 수학 문제집 3단원 복습하고 오답 노트 정리까지 끝내기 그리고 영어 단어 외우기"]]) {
+  await api("/api/time-blocks", "POST", { date: day4, start, end, title });
+}
+for (let i = 0; i < 4; i++) await api("/api/time-blocks", "POST", { date: day4, start: 1320, end: 1380, title: "겹침" + i });
+for (let i = 0; i < 3; i++) await api("/api/time-blocks", "POST", { date: day4, start: 1410, end: 1440, title: "셋겹침" + i });
+await js(`showDay(${JSON.stringify(day4)})`);
+await waitFor(async () => (await textOf("짧은 일정", ".tl-event")) !== null && (await textOf("셋겹침2")) !== null, 8000);
+await sleep(300);
+const ev20 = await textOf("짧은 일정", ".tl-event");
+check("일정도 같은 규칙: 20분 일정(21px)은 시간이 제목 옆에 보인다 (예전에는 1시간 미만이면 시간이 없었다)", ev20 && ev20.one && ev20.beside && ev20.inside && ev20.text === "07:30–07:50", ev20);
+const ev60 = await textOf("한 시간 일정", ".tl-event");
+check("일정도 두 줄이 들어가면 시간이 제목 아래에 있다", ev60 && !ev60.one && ev60.below && ev60.inside, ev60);
+const longOne = await textOf("아주 긴 제목의 짧은 계획: 수학 문제집 3단원 복습하고 오답 정리");
+check("한 줄 모양에서 제목이 길면 제목이 '…'로 줄고 시간은 옆에 남는다", longOne && longOne.one && longOne.titleCut && longOne.beside && longOne.inside, longOne);
+const longTwo = await textOf("아주 긴 제목의 한 시간 계획: 수학 문제집 3단원 복습하고 오답 노트 정리까지 끝내기 그리고 영어 단어 외우기");
+check("두 줄 모양에서 제목이 길어도 줄 수를 제한해 시간이 블록 안에 보인다", longTwo && !longTwo.one && longTwo.titleCut && longTwo.below && longTwo.inside, longTwo);
+const narrow4 = await Promise.all([0, 1, 2, 3].map((i) => textOf("겹침" + i)));
+check("4개가 겹쳐 아주 좁은 블록은 시간을 숨기고 제목을 보여준다", narrow4.every((x) => x && !x.shown && x.titleInside && !x.titleCut), narrow4);
+const three = await Promise.all([0, 1, 2].map((i) => textOf("셋겹침" + i)));
+check("3개가 겹친 30분 블록(한 줄 모양)도 제목 두 글자가 안 들어가면 시간을 숨기고 제목을 다 보여준다", three.every((x) => x && x.one && !x.shown && !x.titleCut), three);
+await js(`setTimelineZoom(160)`); await sleep(300);
+const three160 = await Promise.all([0, 1, 2].map((i) => textOf("셋겹침" + i)));
+check("최대 확대(두 줄 모양)에서는 3개가 겹쳐도 시간 한 줄이 들어가 제목 아래에 보인다", three160.every((x) => x && !x.one && x.shown && x.below && x.inside), three160);
+await js(`setTimelineZoom(64)`); await sleep(300);
+
+// 길이를 끄는 도중에도 표시가 바뀐다: 30분(한 줄) → 1시간으로 늘리면 두 줄, 다시 줄이면 한 줄. 손을 떼기 전에 본다
+await posAt(18 * 60 + 15);
+r = await blockRect("끌 계획");
+await mouse("mouseMoved", r.x, r.bottom - 3, 0); await mouse("mousePressed", r.x, r.bottom - 3);
+for (let i = 1; i <= 4; i++) await mouse("mouseMoved", r.x, r.bottom - 3 + HOUR / 2 * i / 4, 1);
+await sleep(100);
+const dragTwo = await textOf("끌 계획");
+check("길이를 늘리는 도중(30분 → 1시간): 두 줄 모양으로 바뀌고 시간 글자도 18:00–19:00", dragTwo && !dragTwo.one && dragTwo.below && dragTwo.text === "18:00–19:00", dragTwo);
+for (let i = 3; i >= 0; i--) await mouse("mouseMoved", r.x, r.bottom - 3 + HOUR / 2 * i / 4, 1);
+await sleep(100);
+const dragOne = await textOf("끌 계획");
+check("다시 줄이는 도중(30분): 한 줄 모양으로 돌아간다", dragOne && dragOne.one && dragOne.beside && dragOne.text === "18:00–18:30", dragOne);
+await mouse("mouseReleased", r.x, r.bottom - 3); await sleep(600);
+
+// 글자 크기 설정이 커지면 두 줄에 필요한 높이도 커진다 (설정 탭 슬라이더와 같은 길: settings 값을 바꾸고 applySettings. 저장은 하지 않는다)
+const fontBefore = await js(`settings.fontSize`);
+await js(`settings.fontSize = 20; applySettings()`); await sleep(300);
+const big = await textOf("끌 계획");
+await js(`setTimelineZoom(99)`); await sleep(300);
+const big99 = await textOf("끌 계획");
+check("글자 20px: 64px 배율의 30분은 한 줄, 99px 배율의 30분(50px)도 두 줄이 안 들어가 한 줄(16px에서는 두 줄)", big && big.one && big.beside && big99 && big99.one && big99.beside && big99.inside, [big, big99]);
+await js(`settings.fontSize = ${fontBefore}; applySettings()`); await sleep(300);
+const back99 = await textOf("끌 계획");
+check("글자 크기를 되돌리면 시간표를 다시 그려 두 줄로 돌아온다", back99 && !back99.one && back99.below, back99);
+await js(`setTimelineZoom(36)`); await sleep(300);
+await js(`settings.fontSize = 20; applySettings()`); await sleep(300);
+const big36 = await Promise.all(["끌 계획", "짧은 일정"].map((t) => textOf(t)));
+check("글자 20px에 최대 축소(16~18px 블록)여도 제목이 블록 밖으로 나가지 않는다", big36.every((x) => x && x.titleInside && x.inside), big36);
+await js(`settings.fontSize = ${fontBefore}; applySettings()`); await js(`setTimelineZoom(64)`);
+await js(`showDay(todayText)`); await sleep(1800);
 
 // 할 일을 지우면 시간표의 그 계획도 사라진다 (화면에서 직접 삭제 버튼을 눌러 확인)
 const jt = (await api("/api/tasks", "POST", { content: "삭제할 할 일", date: today, projectId: null })).data;

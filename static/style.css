@@ -1168,9 +1168,70 @@ input.color-dot::-webkit-color-swatch {
 }
 
 .tl-time {
-    font-size: 0.88em;
+    font-size: 0.88em;  /* em이라 블록 글자(--tl-fs)가 줄면 시간 글자도 함께 줄어든다 */
     color: var(--text-muted);
     font-variant-numeric: tabular-nums;
+}
+
+/* 시간표 안의 블록(위쪽 종일 알약은 빼고)은 "컨테이너"로 정한다. 컨테이너 쿼리(@container)는 화면 전체가 아니라
+   이 블록의 너비를 보고 규칙을 고른다. 겹쳐서 좁아진 블록만 시간 글자를 숨기는 데 쓴다(아래).
+   inline-size = 가로 크기만 본다는 뜻이다. 대신 블록의 가로 크기가 안의 글자에 따라 늘지 않게 되는데, 시간표 블록은 app.js가 너비를 정해 주므로 괜찮다 */
+.tl-grid .tl-block {
+    container: tl-block / inline-size;
+}
+
+/* 두 줄 모양(제목 아래에 시간): 제목이 길어도 시간 자리를 남기고 들어가는 줄 수(--tl-lines, app.js의 fitBlockText가 계산)만큼만 보여주고 "…"로 줄인다.
+   -webkit-line-clamp는 글자를 정한 줄 수에서 자르는 CSS로, display: -webkit-box와 함께 써야 작동한다 */
+.tl-grid .tl-block .tl-title {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: var(--tl-lines, none);
+    overflow: hidden;
+}
+
+/* 한 줄 모양(두 줄이 안 들어가는 짧은 블록): 시간을 제목 바로 옆에 붙인다.
+   flex = 안의 칸들을 가로로 나란히 놓는 배치. baseline = 크기가 다른 두 글자의 밑줄을 맞춘다 */
+.tl-block.tl-one-line {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4em;
+}
+
+/* 제목이 길면 시간이 밀려나지 않고 제목이 "…"로 줄어든다 (min-width: 0이 있어야 flex 안의 글자가 줄어든다) */
+.tl-grid .tl-one-line .tl-title {
+    display: block;
+    flex: 0 1 auto;
+    min-width: 0;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.tl-one-line .tl-time {
+    flex: none;
+    white-space: nowrap;
+}
+
+.tl-one-line .tl-memo {
+    display: none;
+}
+
+/* 겹쳐서 아주 좁은 블록: 제목을 먼저 보여주고 시간은 숨긴다. em은 블록 글자 크기 기준이다(블록 글자가 줄면 기준도 함께 준다).
+   시간 글자("16:45–17:00")는 실제로 재 보니 약 5.75em이다. 한 줄 모양은 시간 + 사이 간격 + 제목 두 글자쯤이 들어갈 너비(8.5em),
+   두 줄 모양은 시간 한 줄이 잘리지 않고 들어갈 너비(6em)를 기준으로 했다 */
+@container tl-block (width < 8.5em) {
+    .tl-one-line .tl-time {
+        display: none;
+    }
+}
+
+@container tl-block (width < 6em) {
+    .tl-grid .tl-block .tl-time {
+        display: none;
+    }
+
+    .tl-grid .tl-block .tl-title {
+        -webkit-line-clamp: var(--tl-lines-all, none);
+    }
 }
 
 /* 일정 메모: 블록이 충분히 길면 제목 아래에 보인다 */

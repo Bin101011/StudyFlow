@@ -1701,7 +1701,7 @@ function showEmptyMessage(listElement, message) {
 // 그날의 Google 일정(옅은 색 블록)과 "내 계획"(점선 블록)을 24시간 눈금 위에 놓는다. 지금 보고 있는 날짜(viewedDate)를 따라간다.
 //  - 일정은 /api/events에서, 계획은 /api/time-blocks에서 받는다. 계획은 내 컴퓨터에만 저장하고 Google에는 보내지 않는다.
 //  - 일정과 계획이 겹치면 폭을 나눠 나란히 놓는다(layoutOverlaps).
-//  - 빈 곳을 끌면 그 시간만큼의 계획이 만들어지고(한 번 누르기만 하면 1시간), 제목을 적고 Enter를 누르면 저장된다.
+//  - 빈 곳을 끌면 그 시간만큼의 계획이 만들어지고(한 번 누르기만 하면 30분), 제목을 적고 Enter를 누르면 저장된다.
 //  - 계획 블록은 끌어서 옮기고, 아래쪽 끝을 끌어서 길이를 바꾼다. 15분 단위로 맞춰진다.
 //  - 오늘 할 일(또는 할 일 목록)의 할 일을 시간표로 끌어다 놓으면 그 할 일과 연결된 계획이 만들어진다.
 //  - 블록을 누르면 작은 창이 뜬다. 일정이면 메모를 바로 쓰고(Enter 저장, Shift+Enter 줄바꿈), 계획이면 제목을 고치거나 지운다.
@@ -1724,7 +1724,14 @@ const TL_CLICK_LENGTH = 30;      // 빈 곳을 한 번 눌렀을 때 만들어�
 const TL_CREATE_START_STEP = 5;  // 새 계획을 누르거나 끌기 시작한 자리를 맞추는 단위(분). 확대 정도와 관계없이 같다
 const TL_DAY_MIN = 24 * 60;      // 하루의 분
 const TL_MIN_VISIBLE_PX = 16;    // 아주 짧은 블록도 눌러 볼 수 있게 보장하는 최소 높이(px). 기본 확대(64px/시간)에서 15분이 딱 이 높이다
-const TL_TWO_LINES_PX = 44;      // 계획 블록에 제목과 시간 두 줄이 들어가는 높이(px)
+// 블록 글자의 비율들 (style.css의 .tl-block, .tl-time과 같은 값). 설정 탭의 "글자 크기"가 바뀌면 두 줄에 필요한 높이도 바뀌므로
+// 고정된 px 대신 지금 글자 크기에서 계산한다(fitBlockText). 기본 글자(16px)에서 두 줄은 약 44px, 사용자의 14px에서는 약 40px이다
+const TL_BLOCK_FONT_RATIO = 0.9;   // 블록 글자 = 오늘 탭 글자의 0.9배
+const TL_LINE_RATIO = 1.3;         // 블록의 줄 높이(line-height) = 글자의 1.3배
+const TL_TIME_FONT_RATIO = 0.88;   // 시간 글자 = 블록 글자의 0.88배
+const TL_BLOCK_EDGE_PX = 9;        // 블록의 위아래 여백(3px씩)과 계획의 점선 테두리(1.5px씩)를 더한 값
+const TL_SHORT_PER_FONT = 5 / 3;   // 블록 높이가 블록 글자의 이 배(기본 글자 14.4px에서 24px)보다 작으면 글자를 줄인다
+const TL_SMALLEST_FONT_PX = 11.52; // 짧은 블록에서 줄인 글자의 하한(px). 기본 글자(14.4px)의 80%다. 글자 크기 설정이 커도 16px 블록에 한 줄이 들어가게 한다
 
 const timelineScroll = document.getElementById("timeline-scroll");
 const timelineEl = document.getElementById("timeline");
@@ -1966,11 +1973,35 @@ function layoutOverlaps(items) {
     closeCluster();
 }
 
-// 블록 높이에 맞춰 글자를 조금 줄인다: 블록이 짧으면(5분처럼 짧은 시간이거나 많이 축소했을 때) 제목이 블록 밖으로 잘리지 않도록
-// 24px 아래에서는 높이에 비례해 줄이되 최소 80%까지만 줄인다(많이 줄이면 안 읽힌다). 아주 짧으면 위아래 여백과 줄 간격도 줄인다
+// 블록 글자 한 개의 크기(px). 설정 탭의 "글자 크기"를 따르는 시간표의 글자 크기에서 구한다.
+// getComputedStyle = 브라우저가 CSS를 모두 적용한 뒤의 실제 값을 읽는 함수다 (오늘 탭이 숨어 있어도 글자 크기는 읽힌다)
+function blockFontPx() {
+    return (parseFloat(getComputedStyle(timelineGrid).fontSize) || 16) * TL_BLOCK_FONT_RATIO;
+}
+
+// 블록 높이에 맞춰 글자 배치를 정한다. 블록을 그릴 때, 확대/축소할 때, 길이를 끄는 동안 매번 부른다.
+// 1) 글자 크기: 블록이 짧으면(5분처럼 짧은 시간이거나 많이 축소했을 때) 제목이 블록 밖으로 잘리지 않도록
+//    높이에 비례해 줄이되 최소 80%까지만 줄인다(많이 줄이면 안 읽힌다). 단 글자 크기 설정이 커서 80%도 11.5px보다 크면 11.5px까지 줄인다.
+//    시간 글자도 같은 비율로 함께 작아진다. 아주 짧으면 위아래 여백과 줄 간격도 줄인다
+// 2) 시간 위치: 제목과 시간 두 줄이 들어가면 시간을 제목 아래에 두고, 안 들어가면 제목 옆에 한 줄로 붙인다(tl-one-line)
+// 3) 제목 줄 수: 두 줄 모양에서 제목이 길어 여러 줄로 넘어가면 시간이 아래로 밀려 잘린다. 시간 자리를 남기고 들어가는 줄 수만큼만 보여준다(--tl-lines).
+//    블록이 아주 좁아 시간을 숨길 때(style.css의 @container)는 시간 자리까지 제목이 쓴다(--tl-lines-all)
 function fitBlockText(element, heightPx) {
-    element.style.setProperty("--tl-fs", clampNumber(heightPx / 24, 0.8, 1));
-    element.classList.toggle("tl-short", heightPx < 24);
+    const font = blockFontPx();
+    const shortPx = font * TL_SHORT_PER_FONT;
+    // 가장 작게 줄이는 비율: 보통은 80%, 글자 크기 설정이 기본보다 커서 80%가 11.52px을 넘으면 11.52px이 되는 비율
+    // (0.01은 소수 계산의 아주 작은 오차 때문에 기본 글자에서 80%가 아닌 79.99%가 되는 것을 막는다)
+    const smallest = font * 0.8 > TL_SMALLEST_FONT_PX + 0.01 ? TL_SMALLEST_FONT_PX / font : 0.8;
+    const scale = clampNumber(heightPx / shortPx, smallest, 1);
+    element.style.setProperty("--tl-fs", scale);
+    element.classList.toggle("tl-short", heightPx < shortPx);
+
+    const titleLine = font * scale * TL_LINE_RATIO;     // 제목 한 줄의 높이
+    const timeLine = titleLine * TL_TIME_FONT_RATIO;    // 시간 한 줄의 높이
+    const inside = heightPx - TL_BLOCK_EDGE_PX;          // 여백과 테두리를 뺀 글자 자리
+    element.classList.toggle("tl-one-line", inside < titleLine + timeLine);
+    element.style.setProperty("--tl-lines", Math.max(1, Math.floor((inside - timeLine) / titleLine)));
+    element.style.setProperty("--tl-lines-all", Math.max(1, Math.floor(inside / titleLine)));
 }
 
 // 블록의 위치와 크기를 정한다 (세로는 시간, 가로는 겹침 배치)
@@ -2277,13 +2308,12 @@ function makeEventBlock(event, item) {
     const memo = memoText(event.description);
     let timeText = "종일";
     if (item) {
+        // 시간 글자는 짧은 일정에도 늘 넣는다. 제목 아래에 둘지 옆에 둘지, 좁아서 숨길지는 블록 크기로 정한다(fitBlockText, style.css)
         timeText = minToText(item.start) + "–" + minToText(item.end);
-        if (item.end - item.start >= 60) {  // 한 시간 이상이어야 시간 글자가 들어갈 자리가 있다
-            const time = document.createElement("div");
-            time.className = "tl-time";
-            time.textContent = timeText;
-            block.appendChild(time);
-        }
+        const time = document.createElement("div");
+        time.className = "tl-time";
+        time.textContent = timeText;
+        block.appendChild(time);
     }
     if (memo) {
         const memoLine = document.createElement("div");
@@ -2309,12 +2339,11 @@ function makePlanBlock(plan, item) {
     title.className = "tl-title";
     title.textContent = plan.title;
     block.appendChild(title);
-    if (minToY(item.end - item.start) >= TL_TWO_LINES_PX) {  // 분이 아니라 실제 높이로 정한다. 확대하면 30분 계획에도 시간이 보인다
-        const time = document.createElement("div");
-        time.className = "tl-time";
-        time.textContent = minToText(item.start) + "–" + minToText(item.end);
-        block.appendChild(time);
-    }
+    // 시간 글자는 늘 넣는다. 두 줄이 들어가면 제목 아래, 안 들어가면 제목 옆이다(fitBlockText). 10분 계획에도 시간이 보인다
+    const time = document.createElement("div");
+    time.className = "tl-time";
+    time.textContent = minToText(item.start) + "–" + minToText(item.end);
+    block.appendChild(time);
     const handle = document.createElement("div");
     handle.className = "tl-resize";
     block.appendChild(handle);
@@ -2531,7 +2560,7 @@ function beginPlanDrag(e, block, plan) {
             block.style.top = minToY(next.start) + "px";
             const dragHeight = Math.max(minToY(next.end - next.start), TL_MIN_VISIBLE_PX);
             block.style.height = dragHeight + "px";
-            fitBlockText(block, dragHeight);  // 길이를 바꾸는 동안 글자 크기도 따라간다
+            fitBlockText(block, dragHeight);  // 길이를 바꾸는 동안 글자 크기와 시간 위치(아래/옆)도 따라간다
             const time = block.querySelector(".tl-time");
             if (time) {
                 time.textContent = minToText(next.start) + "–" + minToText(next.end);
@@ -6832,6 +6861,9 @@ function limitSliderValue(key, value) {
 // 설정 이름 → 단위("px", "em" 등). 서버가 알려준 슬라이더 정의에서 loadSettings가 채운다
 const settingUnits = {};
 
+// 시간표 블록을 마지막으로 그릴 때 쓴 글자 크기 설정 (applySettings가 바뀐 것을 알아채는 데 쓴다)
+let timelineFontSetting = null;
+
 // 설정값을 CSS 변수에 넣어서 화면에 반영한다
 function applySettings() {
     for (const key in SETTING_CSS_VARS) {
@@ -6848,6 +6880,13 @@ function applySettings() {
         monthRowsSetting = monthRows;
         if (calendar.view.type === MONTH_VIEW) {
             gotoShownMonth(0);
+        }
+    }
+    // 글자 크기가 바뀌면 시간표 블록에 두 줄이 들어가는 높이도 바뀐다(fitBlockText). 시간표를 다시 그려 시간 글자 위치를 새로 정한다
+    if (settings.fontSize !== timelineFontSetting) {
+        timelineFontSetting = settings.fontSize;
+        if (timeline.date) {
+            renderTimeline();
         }
     }
     // 칸 크기가 바뀌었으니 FullCalendar가 레이아웃을 다시 계산하게 한다
