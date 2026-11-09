@@ -934,20 +934,68 @@ input.color-dot::-webkit-color-swatch {
     z-index: 3;
 }
 
-/* 오늘 할 일 앞의 순서 번호: 1번(첫 번째로 할 것)은 파랗게 */
+/* 오늘 할 일 앞의 순서 번호: 1번(첫 번째로 할 것)은 파랗게.
+   누르면 번호에서 빼거나 다시 넣는 버튼(<button>)이라서, 모든 버튼에 붙는 테두리·여백·배경(위의 button)을 지워 글자처럼 보이게 한다 */
 .task-rank {
     flex-shrink: 0;
     width: 16px;
     margin-right: -4px;
+    padding: 0;
+    border: none;
+    border-radius: 3px;
+    background: none;
     text-align: center;
     font-size: 0.8em;
     font-weight: 600;
+    line-height: 1.4;
     color: var(--text-muted);
     font-variant-numeric: tabular-nums;
 }
 
+/* 마우스를 올리면 누를 수 있다는 걸 알 수 있게 옅은 배경을 깐다 (button:hover의 테두리 색은 쓰지 않는다) */
+.task-rank:hover:not(:disabled) {
+    background-color: var(--surface-strong);
+}
+
 .task-rank.first {
     color: var(--accent);
+}
+
+/* 번호에서 뺀 할 일: 번호 자리에 번호와 같은 회색의 작은 점(지름 5px). 자리는 번호와 같은 폭이라 체크박스가 위아래로 줄 맞춰 선다.
+   글자 "·"는 너무 작고 흐려서(사용자 의견) 글자는 숨기고(font-size: 0) ::before로 동그라미를 그린다.
+   ::before는 요소 안 맨 앞에 CSS로만 만든 가짜 조각을 넣는 문법이다. 글자 "·"는 그대로 남아 있어 시험과 화면 읽기 프로그램이 읽을 수 있다.
+   높이를 체크박스(18px)와 같게 정해서 누르는 자리가 점보다 넉넉하다 */
+.task-rank.none {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 18px;
+    font-size: 0;
+}
+
+.task-rank.none::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background-color: var(--text-muted);
+}
+
+/* 오늘 할 일 목록: 끝내지 않은 할 일과 끝낸 할 일 사이에 가는 선. "끝내지 않은 줄 바로 다음에 오는 끝낸 줄"(+는 바로 다음 형제를 고르는 문법)
+   위에 선을 긋는다. 모두 끝냈거나 하나도 안 끝냈으면 그런 줄이 없어서 선도 없다. 선은 줄 밖(위쪽 여백)에 떠 있어서(position: absolute)
+   줄의 배치나 끌기(줄 위치 재기)에 끼어들지 않는다 */
+#today-tasks .task-row[data-done="0"] + .task-row[data-done="1"] {
+    position: relative;
+    margin-top: 11px;
+}
+
+#today-tasks .task-row[data-done="0"] + .task-row[data-done="1"]::before {
+    content: "";
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    top: -6px;
+    border-top: 1px solid var(--border-strong);
 }
 
 /* 창이 좁으면(1100px 미만) 화면 높이 맞춤을 풀고, 시간표와 할 일을 위에, 작은 달력과 할 일 목록을 그 아래 한 줄로 둔다 */

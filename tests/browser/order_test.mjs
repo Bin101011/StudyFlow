@@ -152,6 +152,83 @@ info = await rowsInfo();
 check("끝내지 않은 할 일이 하나뿐이면 번호를 보이지 않는다", info.filter((r) => !r.done).length === 1 && info.every((r) => r.rank === null), info);
 for (const t of all.slice(1)) await api("/api/tasks/" + t.id, "PATCH", { done: false });
 
+// 10b. 번호 없는 할 일: 번호 글자를 누르면 번호에서 빠지고 점이 남는다(글자는 "·", 모양은 CSS로 그린 5px 동그라미). 줄 자리는 그대로이고 번호만 건너뛴다
+console.log("--- 번호 없는 할 일 ---");
+await reloadList();
+const rankRect = (title) => js(`(() => { const li = [...document.querySelectorAll("#today-tasks .task-row")].find(l => l.querySelector(".task-content").textContent === ${JSON.stringify(title)}); const b = li.querySelector(".task-rank"); if (!b) return null; const r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, tag: b.tagName }; })()`);
+const noRankOf = async (title) => (await api("/api/tasks?date=" + today2)).data.tasks.find((t) => t.content === title).no_rank;
+const checkLefts = () => js(`[...document.querySelectorAll("#today-tasks .task-row")].filter(l => l.dataset.done !== "1").map(l => Math.round(l.querySelector("input[type=checkbox]").getBoundingClientRect().left))`);
+const orderNR = await titles();
+const X = orderNR[1];   // 2번 줄
+let rr = await rankRect(X);
+check("번호 글자는 누를 수 있는 버튼이다", rr && rr.tag === "BUTTON", rr);
+await click(rr.x, rr.y);
+check("번호를 누르면 서버에 번호 없음(no_rank 1)으로 저장된다", await waitFor(async () => (await noRankOf(X)) === 1, 4000));
+await waitFor(async () => (await rowsInfo()).find((r) => r.t === X).rank === "·", 3000);
+info = await rowsInfo();
+let open = info.filter((r) => !r.done);
+check("번호를 뺀 줄은 번호 자리에 점이 남는다", open[1].t === X && open[1].rank === "·" && !open[1].first, info);
+check("줄 자리는 그대로다(누르기가 끌기로 이어지지 않음)", JSON.stringify(await titles()) === JSON.stringify(orderNR), await titles());
+check("나머지 번호는 건너뛰어 1, 2, 3…으로 이어진다", JSON.stringify(open.filter((r) => r.t !== X).map((r) => r.rank)) === JSON.stringify(open.slice(1).map((_, i) => String(i + 1))), open);
+check("1번은 여전히 파랗다", open[0].rank === "1" && open[0].first, open[0]);
+let lefts = await checkLefts();
+check("점이 있는 줄도 체크박스가 다른 줄과 같은 선에 있다", lefts.every((x) => x === lefts[0]), lefts);
+check("점도 번호와 같은 폭이다", (await rankRect(X)).w === (await rankRect(open[0].t)).w, [await rankRect(X), await rankRect(open[0].t)]);
+const dotStyle = await js(`(() => { const li = [...document.querySelectorAll("#today-tasks .task-row")].find(l => l.querySelector(".task-content").textContent === ${JSON.stringify(X)}); const s = getComputedStyle(li.querySelector(".task-rank"), "::before"); return { w: s.width, h: s.height, bg: s.backgroundColor }; })()`);
+check("점은 지름 5px의 회색 동그라미로 그려진다(글자 점이 아니라)", dotStyle.w === "5px" && dotStyle.h === "5px" && dotStyle.bg !== "rgba(0, 0, 0, 0)", dotStyle);
+await shot("o_norank.png");
+
+// 번호 없는 줄을 끌어서 맨 위로: 자리는 바뀌고 여전히 점, 1번은 그다음 줄이 된다
+let bX = await box(X), bTop = await box(orderNR[0]);
+await drag(bX.x, bX.mid, bX.x, bTop.top + 4, 8);
+check("번호 없는 줄도 끌어서 순서를 바꿀 수 있다", await waitFor(async () => (await titles())[0] === X, 4000), await titles());
+info = await rowsInfo(); open = info.filter((r) => !r.done);
+check("맨 위에 있어도 점이고, 1번(파랑)은 그다음 줄이다", open[0].rank === "·" && !open[0].first && open[1].rank === "1" && open[1].first, open);
+
+// 할 일 목록에서 끌어와 점 줄 바로 뒤에 놓으면 알림은 화면 번호대로 "1번째"
+const inboxTitle = "번호 확인용 수집함 할 일";
+await api("/api/tasks", "POST", { content: inboxTitle, date: null, projectId: null });
+await js(`reloadTodayAndInbox()`); await sleep(1500);
+const ib = await js(`(() => { const li = [...document.querySelectorAll("#inbox-tasks .task-row")].find(l => l.querySelector(".task-content").textContent === ${JSON.stringify(inboxTitle)}); const c = li.querySelector(".task-content").getBoundingClientRect(); return { x: c.left + 20, y: c.top + c.height / 2 }; })()`);
+const second = await box((await titles())[1]);
+await drag(ib.x, ib.y, second.x, second.top + 4, 10);
+check("(준비) 수집함 할 일이 점 줄 뒤(두 번째 줄)에 들어간다", await waitFor(async () => (await titles())[1] === inboxTitle, 5000), await titles());
+const toastNR = await js(`document.getElementById("toast").textContent`);
+check("알림의 'N번째'는 번호 없는 줄을 세지 않는다(1번째)", /1번째로 정했습니다/.test(toastNR), toastNR);
+info = await rowsInfo();
+check("화면에서도 그 줄이 1번이다", info.find((r) => r.t === inboxTitle).rank === "1", info);
+
+// 점을 누르면 번호가 다시 붙는다
+rr = await rankRect(X);
+await click(rr.x, rr.y);
+check("점을 누르면 번호가 다시 붙는다(no_rank 0)", await waitFor(async () => (await noRankOf(X)) === 0, 4000));
+await waitFor(async () => (await rowsInfo()).find((r) => r.t === X).rank === "1", 3000);
+info = await rowsInfo(); open = info.filter((r) => !r.done);
+check("모든 줄이 다시 1부터 번호를 가진다", open.every((r, i) => r.rank === String(i + 1)) && open[0].t === X, open);
+
+// 번호 있는 할 일이 하나뿐이어도 번호 없는 할 일이 있으면 번호 칸을 보인다(점을 눌러 되돌릴 수 있어야 하므로)
+const all2 = (await api("/api/tasks?date=" + today2)).data.tasks.filter((t) => !t.done);
+for (const t of all2.slice(2)) await api("/api/tasks/" + t.id, "PATCH", { done: true });
+await api("/api/tasks/" + all2[1].id, "PATCH", { no_rank: true });
+await reloadList();
+info = await rowsInfo(); open = info.filter((r) => !r.done);
+check("번호 있는 할 일 하나 + 번호 없는 할 일 하나: '1'과 '·'가 보인다", JSON.stringify(open.map((r) => r.rank)) === '["1","·"]', open);
+await api("/api/tasks/" + all2[0].id, "PATCH", { no_rank: true });
+await reloadList();
+info = await rowsInfo(); open = info.filter((r) => !r.done);
+check("모두 번호 없으면 모두 점이다", JSON.stringify(open.map((r) => r.rank)) === '["·","·"]', open);
+check("끝낸 할 일에는 번호도 점도 없다", info.filter((r) => r.done).every((r) => r.rank === null), info);
+// 끝내지 않은 할 일과 끝낸 할 일 사이의 구분선: 끝낸 첫 줄에만 있고, 그 줄 위쪽 여백(두 줄 사이)에 있다
+const dividers = await js(`[...document.querySelectorAll("#today-tasks .task-row")].map((l, i, all) => { const s = getComputedStyle(l, "::before"); const has = s.content !== "none" && s.borderTopStyle === "solid"; const r = l.getBoundingClientRect(); const prev = i > 0 ? all[i - 1].getBoundingClientRect() : null; return { done: l.dataset.done, has, gapTop: prev ? Math.round(r.top - prev.bottom) : null, lineTop: parseFloat(s.top) }; })`);
+const firstDone = dividers.findIndex((d) => d.done === "1");
+check("구분선은 끝낸 첫 줄 위 하나뿐이다", firstDone > 0 && dividers.filter((d) => d.has).length === 1 && dividers[firstDone].has, dividers);
+check("구분선은 두 줄 사이 틈 안에 있다", dividers[firstDone].lineTop < 0 && -dividers[firstDone].lineTop <= dividers[firstDone].gapTop, dividers[firstDone]);
+await shot("o_divider.png");
+await api("/api/tasks/" + all2[0].id, "PATCH", { no_rank: false }); await api("/api/tasks/" + all2[1].id, "PATCH", { no_rank: false });
+for (const t of all2.slice(2)) await api("/api/tasks/" + t.id, "PATCH", { done: false });
+await reloadList();
+check("끝낸 할 일이 없으면 구분선도 없다", await js(`[...document.querySelectorAll("#today-tasks .task-row")].every(l => l.dataset.done === "0" && getComputedStyle(l, "::before").content === "none")`));
+
 // 11. 목록이 길어 스크롤될 때: 아래쪽 할 일을 위쪽으로 (끌면서 위 끝에 대고 있으면 목록이 스크롤된다)
 for (let i = 1; i <= 22; i++) await api("/api/tasks", "POST", { content: "많은 할 일 " + i, date: today2, projectId: null });
 await reloadList();

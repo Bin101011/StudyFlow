@@ -171,6 +171,10 @@ def init_db():
     # 할 일 메모: 할 일 줄 아래에 작은 글씨로 보이는 자유 메모. 이미 있던 할 일은 빈 글자("")로 시작한다 (DEFAULT '')
     if "memo" not in existing:
         run("ALTER TABLE tasks ADD COLUMN memo TEXT NOT NULL DEFAULT ''")
+    # no_rank: 오늘 탭의 1, 2, 3 번호에서 뺀 할 일이면 1. 줄 자리는 그대로이고 번호만 건너뛴다("점심"처럼 순서를 매길 필요 없는 일).
+    # 우선순위 탭과는 관계없다. 이미 있던 할 일은 모두 번호가 있는 채(0)로 시작한다. 다른 날로 옮겨도 그대로 남는다
+    if "no_rank" not in existing:
+        run("ALTER TABLE tasks ADD COLUMN no_rank INTEGER NOT NULL DEFAULT 0")
 
     # projects 표에도 folder_id(들어 있는 폴더, 없으면 NULL)를 덧붙인다
     columns, _ = run("PRAGMA table_info(projects)")
@@ -354,7 +358,7 @@ def add_task(content, date, project_id=None, parent_id=None):
 
 # 수정할 수 있는 칸의 이름들. 아래 update_row가 SQL 문장에 칸 이름을 직접 넣는데,
 # 칸 이름은 ?로 안전하게 넘길 수 없다. 그래서 화면이 보낸 이름을 그대로 쓰지 않고, 이 목록에 있는 것만 쓴다
-EDITABLE_COLUMNS = ("content", "date", "done", "done_at", "deadline", "importance", "urgency", "memo")
+EDITABLE_COLUMNS = ("content", "date", "done", "done_at", "deadline", "importance", "urgency", "memo", "no_rank")
 
 
 def update_task(task_id, changes):

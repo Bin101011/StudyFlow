@@ -3146,12 +3146,21 @@ function makeTaskRow(task, options) {
     content.textContent = task.content;
 
     // 오늘 탭 목록에서만: 끝내지 않은 할 일에 "1, 2, 3…" 번호를 붙인다. 끌어서 순서를 바꾸면 번호가 따라 바뀐다.
-    // 1번이 "첫 번째로 할 것"이라 파랗게 강조한다. 하나뿐이면 번호가 필요 없어서 loadTodayTasks가 rank를 주지 않는다
+    // 1번이 "첫 번째로 할 것"이라 파랗게 강조한다. 번호가 필요 없을 때(번호 있는 할 일이 하나뿐 등)는 loadTodayTasks가 rank를 주지 않는다.
+    // rank가 "none"이면 번호에서 뺀 할 일이다("점심"처럼 순서를 매길 필요 없는 일). 번호 자리에 점을 두어 체크박스 줄을 맞춘다(글자는 "·"이고, 보이는 모양은 style.css가 그리는 회색 동그라미).
+    // 번호나 점을 누르면 번호에서 빼거나 다시 넣는다. <button>이라서 누르기가 줄 끌기로 이어지지 않는다(beginTaskDrag가 버튼을 건너뛴다)
     if (options.rank) {
-        const rank = document.createElement("span");
-        rank.className = "task-rank" + (options.rank === 1 ? " first" : "");
-        rank.textContent = options.rank;
-        rank.title = options.rank + "번째로 할 일 (줄을 끌어서 순서를 바꿉니다)";
+        const unranked = options.rank === "none";
+        const rank = document.createElement("button");
+        rank.type = "button";
+        rank.className = "task-rank" + (options.rank === 1 ? " first" : "") + (unranked ? " none" : "");
+        rank.textContent = unranked ? "·" : options.rank;
+        rank.title = unranked
+            ? "번호 없는 할 일 (누르면 번호를 붙입니다)"
+            : options.rank + "번째로 할 일 (누르면 번호에서 뺍니다. 줄을 끌어서 순서를 바꿉니다)";
+        rank.addEventListener("click", function () {
+            updateTask(task.id, { no_rank: !unranked }, options.reload);
+        });
         item.classList.add("has-rank");  // 메모를 체크박스 글자 줄에 맞추려고 (style.css의 .task-memo-box)
         item.appendChild(rank);
     }
@@ -3367,21 +3376,36 @@ async function loadTodayTasks() {
         showEmptyMessage(todayTasksList, isToday ? "오늘 할 일이 없습니다." : "할 일이 없습니다.");
     }
     // 끝내지 않은 할 일의 번호를 화면 순서대로 기억해 둔다 (끌어서 순서를 바꿀 때 새 순서를 만드는 데 쓴다).
-    // 끝내지 않은 할 일이 둘 이상일 때만 1, 2, 3… 번호를 보여준다
+    // 번호에서 뺀 할 일(no_rank)도 자리는 그대로라서 여기에 함께 넣는다. 그래야 끌기 코드가 번호 없는 줄을 따로 다루지 않아도 된다
     const openTasks = data.tasks.filter(function (task) {
         return task.done !== 1;
     });
     todayTaskOrder = openTasks.map(function (task) {
         return task.id;
     });
+    todayUnrankedIds = new Set(openTasks.filter(function (task) {
+        return task.no_rank === 1;
+    }).map(function (task) {
+        return task.id;
+    }));
+    // 번호 칸을 보이는 때: 번호 있는 할 일이 둘 이상이거나(하나뿐이면 순서가 의미 없다), 번호에서 뺀 할 일이 하나라도 있을 때
+    // (점을 눌러 번호를 다시 넣을 수 있어야 하므로). 번호는 번호 있는 할 일만 1, 2, 3…으로 센다. 번호 없는 줄은 건너뛴다
+    const rankedCount = openTasks.length - todayUnrankedIds.size;
+    const showRanks = rankedCount >= 2 || todayUnrankedIds.size > 0;
     let rankCounter = 0;
     data.tasks.forEach(function (task) {
         const isOpen = task.done !== 1;
-        if (isOpen) {
-            rankCounter++;
+        let rank = null;
+        if (isOpen && showRanks) {
+            if (task.no_rank === 1) {
+                rank = "none";
+            } else {
+                rankCounter++;
+                rank = rankCounter;
+            }
         }
         todayTasksList.appendChild(makeTaskRow(task, {
-            rank: isOpen && openTasks.length >= 2 ? rankCounter : null,
+            rank: rank,
             reload: reloadTodayAndInbox,
             moveLabel: isToday ? "내일로" : "다음 날로",
             moveDate: addDaysToText(date, 1),
@@ -3759,6 +3783,7 @@ let taskDrag = null;  // 끄는 중에만 값이 있다: { task, item, from, sta
 // 끝내지 않은 할 일 앞에 1, 2, 3… 번호가 붙는다. "밀린 할 일"이나 "할 일 목록"의 줄을 이 목록에 놓으면 오늘 할 일이 되면서 그 자리에 들어간다.
 // 끄는 동안에는 놓일 자리에 파란 줄이 보인다. 끝낸 할 일은 항상 맨 아래에 있고 끌 수 없다.
 let todayTaskOrder = [];  // 끝내지 않은 오늘 할 일의 번호들, 지금 화면의 순서대로 (loadTodayTasks가 채운다)
+let todayUnrankedIds = new Set();  // 그중 번호에서 뺀(no_rank) 할 일들의 번호 (loadTodayTasks가 채운다. 놓은 뒤 알림의 "N번째"를 셀 때 쓴다)
 
 // "오늘 할 일" 목록이 들어 있는 스크롤 상자 (밀린 할 일과 오늘 할 일이 함께 들어 있다). 여기에 놓으면 순서가 정해진다
 function tasksListArea() {
@@ -3823,7 +3848,16 @@ async function dropTaskOnList(task, index, alreadyInList) {
         }
         await sendRequest("/api/tasks/order", "PUT", { date: viewedDate, ids: ids });
         if (!alreadyInList) {
-            showToast("'" + task.content + "'을(를) " + (viewedDate === todayText ? "오늘" : viewedDate.slice(5).replace("-", "/")) + " 할 일 " + (ids.indexOf(task.id) + 1) + "번째로 정했습니다");
+            // "N번째"는 화면의 번호와 같게, 앞에 있는 줄 중 번호 있는 것만 센다. 번호 없는 할 일이면 몇 번째인지 말하지 않는다
+            const dayText = (viewedDate === todayText ? "오늘" : viewedDate.slice(5).replace("-", "/")) + " 할 일";
+            if (task.no_rank === 1) {
+                showToast("'" + task.content + "'을(를) " + dayText + "로 정했습니다");
+            } else {
+                const position = ids.slice(0, ids.indexOf(task.id)).filter(function (id) {
+                    return !todayUnrankedIds.has(id);
+                }).length + 1;
+                showToast("'" + task.content + "'을(를) " + dayText + " " + position + "번째로 정했습니다");
+            }
         }
     } catch (error) {
         showToast("순서를 바꾸지 못했습니다: " + error.message);

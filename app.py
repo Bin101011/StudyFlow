@@ -1235,7 +1235,7 @@ def api_create_task():
     return jsonify(database.add_task(content, date, project_id, parent_id)), 201
 
 
-# 할 일 일부 수정 (PATCH): 체크 표시(done), 날짜 이동(date), 내용 고치기(content). 보낸 것만 바꾼다
+# 할 일 일부 수정 (PATCH): 체크 표시(done), 날짜 이동(date), 내용 고치기(content), 번호 빼기(no_rank) 등. 보낸 것만 바꾼다
 @app.route("/api/tasks/<int:task_id>", methods=["PATCH"])
 def api_update_task(task_id):
     data = request.get_json()
@@ -1274,6 +1274,11 @@ def api_update_task(task_id):
         if len(memo) > TASK_MEMO_MAX:
             return jsonify({"error": f"메모는 {TASK_MEMO_MAX}자까지 쓸 수 있습니다."}), 400
         changes["memo"] = memo.strip()  # 앞뒤 공백과 줄바꿈은 정리한다. 내용이 없으면 빈 글자("")가 되어 메모가 지워진다
+    if "no_rank" in data:
+        # 오늘 탭의 번호에서 빼기(true)/다시 넣기(false). done처럼 true/false를 1/0으로 바꿔 저장한다
+        if not isinstance(data["no_rank"], bool):
+            return jsonify({"error": "'no_rank'는 true 또는 false여야 합니다."}), 400
+        changes["no_rank"] = 1 if data["no_rank"] else 0
 
     if not changes:
         return jsonify({"error": "바꿀 값이 없습니다."}), 400
