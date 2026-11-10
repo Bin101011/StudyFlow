@@ -40,6 +40,9 @@ start_background_tasks()
 # pywebview가 알아서 서버를 켜고, 그 화면을 창에 보여준다
 window = webview.create_window("StudyFlow", app, width=1200, height=800)
 
+# 창 안 서버가 켜질 때 한꺼번에 들어온 파일 요청을 거절하지 않게 한다. 안 하면 가끔(PC가 바쁠 때) app.js를 못 받아 빈 화면에서 멈춘다 (single_instance.py, N36)
+single_instance.widen_server_backlog()
+
 # 창을 닫을 때 남은 글을 저장한 뒤 닫게 한다. 저장이 멈춰도 3초 안에는 닫힌다 (close_guard.py, docs/review-2026-11.md의 N30)
 close_guard.install(window)
 

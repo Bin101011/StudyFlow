@@ -109,6 +109,21 @@ def remove_old_webview_profiles(root, keep):
     return None
 
 
+# 창 안 서버의 "접수 대기 자리" 수 (아래 widen_server_backlog)
+SERVER_BACKLOG = 64
+
+
+def widen_server_backlog():
+    """pywebview가 띄우는 창 안 서버가 동시에 들어온 연결을 거절하지 않게, 접수를 기다리는 자리(backlog)를 5개에서 64개로 늘린다.
+    pywebview는 파이썬 기본 서버(wsgiref의 WSGIServer)를 쓰는데, 이 서버는 접수(accept) 전의 연결을 5개까지만 줄 세운다.
+    화면은 켜자마자 CSS·JS 파일 8~9개를 한꺼번에 요청한다. 그 순간 서버가 조금이라도 늦으면(켤 때 뒤에서 하는 일 등) 6번째부터
+    Windows가 연결을 바로 거절하고, app.js를 못 받으면 메뉴만 보이고 달력이 비고 "동기화 확인 중..."에서 멈춘다
+    (docs/review-2026-11.md의 N36. 2026-11-10 진짜 앱에서 임시 기록으로 잡았다: 5개만 서버에 오고 나머지는 서버에 닿기 전에 실패).
+    클래스의 값을 바꾸므로 서버가 만들어지기 전(webview.start 전)에 불러야 한다. 이 프로그램에서 이 서버 종류는 창 안 서버 하나뿐이다."""
+    from wsgiref.simple_server import WSGIServer
+    WSGIServer.request_queue_size = SERVER_BACKLOG
+
+
 # 창을 닫은 뒤 화면 요청(노트·메모 저장 등)이 끝나기를 기다리는 최대 시간(초)
 REQUEST_WAIT_SECONDS = 5
 
