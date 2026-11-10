@@ -1097,6 +1097,18 @@ def api_update_time_block(block_id):
     return jsonify(time_block_json(database.get_time_block(block_id)))
 
 
+# [할 일로 만들기]: 할 일과 연결되지 않은 계획으로 그날의 할 일을 만들고 연결한다(번호 없이). 보낼 값은 없다(블록의 날짜와 제목을 쓴다).
+# 만든 뒤의 블록과 새 할 일 번호를 돌려준다. 409: "지금 상태와 맞지 않아 할 수 없다"(이미 할 일과 연결된 계획)
+@app.route("/api/time-blocks/<int:block_id>/make-task", methods=["POST"])
+def api_make_task_from_time_block(block_id):
+    result, task_id = database.make_task_from_time_block(block_id)
+    if result == "missing":
+        return jsonify({"error": "블록을 찾을 수 없습니다."}), 404
+    if result == "linked":
+        return jsonify({"error": "이미 할 일과 연결된 계획입니다."}), 409
+    return jsonify({"block": time_block_json(database.get_time_block(block_id)), "taskId": task_id}), 201
+
+
 @app.route("/api/time-blocks/<int:block_id>", methods=["DELETE"])
 def api_delete_time_block(block_id):
     if not database.delete_time_block(block_id):

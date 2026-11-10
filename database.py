@@ -614,6 +614,33 @@ def add_time_block(date, start_min, end_min, title, task_id=None):
     return get_time_block(block_id)
 
 
+def make_task_from_time_block(block_id):
+    """할 일과 연결되지 않은 계획 블록으로 할 일을 만들고, 그 블록을 새 할 일과 연결한다([할 일로 만들기] 버튼).
+    할 일은 블록의 날짜와 제목으로, 프로젝트 없이, 오늘 탭 번호에서 뺀 채(no_rank 1) 만든다. "점심" 같은 계획이 할 일이 되어도
+    1, 2, 3 순서를 흐리지 않게 하려는 것이다. 순서(sort_order)는 비어 있어서 그날 목록의 맨 뒤에 붙는다.
+    돌려주는 값: (결과, 새 할 일 번호). 결과는 "ok", 블록이 없으면 "missing", 이미 할 일과 연결돼 있으면 "linked".
+
+    할 일 만들기와 블록 연결을 연결 하나의 "with connection:" 안에서 한다. 이 안의 문장들은 한 거래(트랜잭션)라서
+    모두 끝나야 함께 저장(commit)되고, 중간에 오류가 나면 모두 없던 일이 된다(rollback). 그래서 할 일만 생기고 연결은 안 된 반쪽 상태가 남지 않는다.
+    BEGIN IMMEDIATE: 거래를 시작하면서 바로 쓰기 잠금을 잡는다. 같은 블록을 두 번 빠르게 눌러 요청이 둘 와도,
+    두 번째는 첫 번째가 끝날 때까지 기다린 뒤 "이미 연결됨"을 보게 되어 할 일이 두 개 생기지 않는다"""
+    with contextlib.closing(connect()) as connection:
+        with connection:
+            connection.execute("BEGIN IMMEDIATE")
+            block = connection.execute("SELECT date, title, task_id FROM time_blocks WHERE id = ?", (block_id,)).fetchone()
+            if block is None:
+                return "missing", None
+            if block["task_id"] is not None:
+                return "linked", None
+            cursor = connection.execute(
+                "INSERT INTO tasks (content, date, no_rank) VALUES (?, ?, 1)",
+                (block["title"], block["date"]),
+            )
+            task_id = cursor.lastrowid
+            connection.execute("UPDATE time_blocks SET task_id = ? WHERE id = ?", (task_id, block_id))
+    return "ok", task_id
+
+
 # 블록에서 고칠 수 있는 칸들 (EDITABLE_COLUMNS와 같은 이유로 고정된 목록. 날짜와 연결된 할 일은 바꾸지 않는다)
 EDITABLE_TIME_BLOCK_COLUMNS = ("start_min", "end_min", "title")
 

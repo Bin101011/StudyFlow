@@ -110,5 +110,42 @@ check("삭제 200", c.delete("/api/time-blocks/%d" % b["id"]).status_code == 200
 check("지운 블록은 목록에 없다", b["id"] not in [x["id"] for x in c.get("/api/time-blocks?date=" + D).get_json()])
 check("없는 블록 삭제 404", c.delete("/api/time-blocks/%d" % b["id"]).status_code == 404)
 check("GET 잘못된 날짜 400", c.get("/api/time-blocks?date=abc").status_code == 400)
+# [할 일로 만들기]: 할 일과 연결되지 않은 계획 → 그날의 할 일(번호 없음)을 만들고 연결한다
+M = "2026-11-20"
+free = post("/api/time-blocks", {"date": M, "start": 720, "end": 780, "title": "점심"}).get_json()
+r = c.post("/api/time-blocks/%d/make-task" % free["id"])
+made = r.get_json()
+check("할 일로 만들기 201 + 블록이 새 할 일과 연결됨", r.status_code == 201 and made["block"]["taskId"] == made["taskId"] and made["block"]["title"] == "점심", made)
+check("블록의 시간과 날짜는 그대로", made["block"]["start"] == 720 and made["block"]["end"] == 780 and made["block"]["date"] == M, made)
+new_task = database.get_task(made["taskId"])
+check("새 할 일: 계획의 이름·날짜, 프로젝트 없음, 번호 없음, 안 끝냄", new_task["content"] == "점심" and new_task["date"] == M and new_task["project_id"] is None and new_task["no_rank"] == 1 and new_task["done"] == 0, new_task)
+database.add_task("먼저 있던 할 일", M)
+check("그날 할 일 목록에 나온다(정한 순서 없음 → 만든 순서)", [t["content"] for t in c.get("/api/tasks?date=" + M).get_json()["tasks"]] == ["점심", "먼저 있던 할 일"])
+count = database.run("SELECT COUNT(*) AS n FROM tasks")[0][0]["n"]
+r = c.post("/api/time-blocks/%d/make-task" % free["id"])
+check("이미 연결된 계획은 409, 할 일이 또 생기지 않는다", r.status_code == 409 and database.run("SELECT COUNT(*) AS n FROM tasks")[0][0]["n"] == count, r.get_json())
+check("없는 블록 404", c.post("/api/time-blocks/99999/make-task").status_code == 404)
+# 연결 뒤의 동작은 기존 연결 계획과 같다
+patch("/api/tasks/%d" % made["taskId"], {"content": "점심 먹기"})
+check("할 일 이름을 바꾸면 계획 제목도 따라 바뀐다", c.get("/api/time-blocks?date=" + M).get_json()[0]["title"] == "점심 먹기")
+c.delete("/api/time-blocks/%d" % free["id"])
+check("계획을 지워도 할 일은 남는다", database.get_task(made["taskId"]) is not None)
+free2 = post("/api/time-blocks", {"date": M, "start": 900, "end": 960, "title": "산책"}).get_json()
+t2 = c.post("/api/time-blocks/%d/make-task" % free2["id"]).get_json()["taskId"]
+patch("/api/tasks/%d" % t2, {"date": "2026-11-21"})
+check("할 일을 다른 날로 옮기면 계획이 사라진다", all(b["id"] != free2["id"] for b in c.get("/api/time-blocks?date=" + M).get_json()))
+# 거래(트랜잭션): 연결 단계에서 실패하면 할 일도 만들어지지 않는다. UPDATE time_blocks를 막는 임시 장치(트리거)로 실패를 만든다
+free3 = post("/api/time-blocks", {"date": M, "start": 1000, "end": 1030, "title": "실패 확인"}).get_json()
+count = database.run("SELECT COUNT(*) AS n FROM tasks")[0][0]["n"]
+database.run("CREATE TRIGGER block_link_fail BEFORE UPDATE OF task_id ON time_blocks BEGIN SELECT RAISE(ABORT, 'test'); END")
+raised = False
+try:
+    database.make_task_from_time_block(free3["id"])
+except Exception:
+    raised = True
+database.run("DROP TRIGGER block_link_fail")
+check("연결에 실패하면 오류가 나고 할 일도 남지 않는다(반쪽 없음)", raised and database.run("SELECT COUNT(*) AS n FROM tasks")[0][0]["n"] == count and database.get_time_block(free3["id"])["task_id"] is None)
+check("그 뒤 다시 누르면 정상으로 만들어진다", c.post("/api/time-blocks/%d/make-task" % free3["id"]).status_code == 201)
+
 print("\n실패 %d개" % failed if failed else "\n모두 통과")
 sys.exit(1 if failed else 0)

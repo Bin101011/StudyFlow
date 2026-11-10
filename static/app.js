@@ -3061,7 +3061,39 @@ function openPlanPopover(plan, anchor, options) {
         }, "danger");
         const spacer = document.createElement("span");
         spacer.className = "spacer";
-        buttons.append(deleteButton, spacer, makePopoverButton("닫기", closeTimelinePopover));
+        buttons.append(deleteButton, spacer);
+
+        // [할 일로 만들기]: 빈칸에 만든 계획(할 일과 연결 안 됨)만. 그날의 할 일을 번호 없이 만들고 이 계획과 연결한다.
+        // 빈칸 계획을 저절로 할 일로 만들지 않는 건, "점심" 같은 계획까지 밀린 할 일·우선순위 탭·달력 요약에 쌓이기 때문이다. 필요한 것만 사용자가 고른다
+        if (!linked) {
+            const makeTaskButton = makePopoverButton("할 일로 만들기", async function () {
+                // 고치던 제목과 시간을 먼저 저장한다. 할 일 이름은 서버가 블록에 저장된 제목으로 정하기 때문이다.
+                // 시간이 틀렸으면 Enter처럼 창을 닫지 않고 알린다(고칠 수 있게)
+                commitStartOrEnd(document.activeElement);
+                const times = readTimes();
+                if (times.error) {
+                    showToast(times.error);
+                    return;
+                }
+                const name = titleInput.value.trim() || plan.title;  // 비운 제목은 저장하지 않으므로(onClose) 원래 제목이 이름이 된다
+                const saveEdits = popover.onClose;
+                popover.onClose = null;  // 아래에서 직접 기다리며 저장하므로, 창이 닫힐 때 또 저장하지 않게
+                closeTimelinePopover();
+                await saveEdits();
+                try {
+                    await sendRequest("/api/time-blocks/" + plan.id + "/make-task", "POST");
+                    showToast("'" + name + "'을(를) 할 일로 만들었습니다 (번호 없이)");
+                } catch (error) {
+                    showToast("할 일로 만들지 못했습니다: " + error.message);
+                }
+                await reloadTodayAndTimeline();  // 가운데 할 일 목록과 시간표(연결된 계획 모양)를 함께 새로 그린다
+            });
+            makeTaskButton.className = "tl-make-task";
+            makeTaskButton.title = "이 계획으로 그날의 할 일을 만들고 연결합니다 (번호 없이 목록 끝에 들어갑니다)";
+            buttons.appendChild(makeTaskButton);
+        }
+
+        buttons.appendChild(makePopoverButton("닫기", closeTimelinePopover));
         el.appendChild(buttons);
     });
 }
@@ -3146,7 +3178,7 @@ function makeTaskRow(task, options) {
     content.textContent = task.content;
 
     // 오늘 탭 목록에서만: 끝내지 않은 할 일에 "1, 2, 3…" 번호를 붙인다. 끌어서 순서를 바꾸면 번호가 따라 바뀐다.
-    // 1번이 "첫 번째로 할 것"이라 파랗게 강조한다. 번호가 필요 없을 때(번호 있는 할 일이 하나뿐 등)는 loadTodayTasks가 rank를 주지 않는다.
+    // 1번이 "첫 번째로 할 것"이라 파랗게 강조한다. 끝낸 할 일과 오늘 탭 밖(밀린 할 일, 프로젝트 카드)에는 loadTodayTasks 등이 rank를 주지 않는다.
     // rank가 "none"이면 번호에서 뺀 할 일이다("점심"처럼 순서를 매길 필요 없는 일). 번호 자리에 점을 두어 체크박스 줄을 맞춘다(글자는 "·"이고, 보이는 모양은 style.css가 그리는 회색 동그라미).
     // 번호나 점을 누르면 번호에서 빼거나 다시 넣는다. <button>이라서 누르기가 줄 끌기로 이어지지 않는다(beginTaskDrag가 버튼을 건너뛴다)
     if (options.rank) {
@@ -3388,15 +3420,14 @@ async function loadTodayTasks() {
     }).map(function (task) {
         return task.id;
     }));
-    // 번호 칸을 보이는 때: 번호 있는 할 일이 둘 이상이거나(하나뿐이면 순서가 의미 없다), 번호에서 뺀 할 일이 하나라도 있을 때
-    // (점을 눌러 번호를 다시 넣을 수 있어야 하므로). 번호는 번호 있는 할 일만 1, 2, 3…으로 센다. 번호 없는 줄은 건너뛴다
-    const rankedCount = openTasks.length - todayUnrankedIds.size;
-    const showRanks = rankedCount >= 2 || todayUnrankedIds.size > 0;
+    // 끝내지 않은 할 일에는 하나뿐이어도 늘 번호 칸이 있다(번호 또는 점). 예전에는 하나뿐이면 번호를 숨겼는데, 그러면 하나 남은 할 일의
+    // 점을 눌러 번호를 붙인 순간 번호 칸이 사라져서 다시 점으로 돌릴 수 없었다(2026-11-10 사용자 요청으로 바꿈).
+    // 번호는 번호 있는 할 일만 1, 2, 3…으로 센다. 번호 없는 줄은 건너뛴다
     let rankCounter = 0;
     data.tasks.forEach(function (task) {
         const isOpen = task.done !== 1;
         let rank = null;
-        if (isOpen && showRanks) {
+        if (isOpen) {
             if (task.no_rank === 1) {
                 rank = "none";
             } else {

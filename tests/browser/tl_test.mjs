@@ -883,6 +883,58 @@ await js(`document.querySelector("#tasks-column .column-scroll").dispatchEvent(n
 check("할 일 목록이 스크롤되면 창이 닫힌다", !(await popOpen()));
 await js(`showDay(todayText)`); await sleep(1500);
 
+console.log("--- P. 할 일로 만들기 ---");
+const dayP = await js(`addDaysToText(todayText, 51)`);
+await api("/api/tasks", "POST", { content: "수학 숙제", date: dayP, projectId: null });
+await api("/api/tasks", "POST", { content: "영어 단어", date: dayP, projectId: null });
+const linkedP = (await api("/api/tasks", "POST", { content: "물리 보고서", date: dayP, projectId: null })).data;
+await api("/api/time-blocks", "POST", { date: dayP, start: 600, end: 660, taskId: linkedP.id });
+await api("/api/time-blocks", "POST", { date: dayP, start: 720, end: 750, title: "점심" });
+await api("/api/time-blocks", "POST", { date: dayP, start: 900, end: 960, title: "산책" });
+await js(`showDay(${JSON.stringify(dayP)})`);
+await waitFor(async () => (await planTitles()).includes("산책") && (await js(`document.querySelectorAll("#today-tasks .task-row").length`)) === 3, 8000);
+await sleep(300);
+const plansP = async () => (await api("/api/time-blocks?date=" + dayP)).data;
+const tasksP = async () => (await api("/api/tasks?date=" + dayP)).data.tasks;
+const makeBtn = () => js(`(() => { const b = document.querySelector(".tl-popover .tl-make-task"); if (!b) return null; const r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, text: b.textContent }; })()`);
+const rowsP = async () => JSON.parse(await js(`JSON.stringify([...document.querySelectorAll("#today-tasks .task-row")].map(li => ({ t: li.querySelector(".task-content").textContent, rank: li.querySelector(".task-rank") ? li.querySelector(".task-rank").textContent : null, slot: li.querySelector(".task-slot") ? li.querySelector(".task-slot").textContent : null })))`));
+
+// ① 버튼은 할 일과 연결되지 않은 계획에만 있다
+await openPlanO("물리 보고서", 630);
+check("할 일과 연결된 계획의 창에는 [할 일로 만들기]가 없다", (await popOpen()) && (await makeBtn()) === null);
+await key("Escape"); await sleep(300);
+await openPlanO("점심", 735);
+let mb = await makeBtn();
+check("빈칸 계획의 창에는 [할 일로 만들기]가 있다", mb && mb.text === "할 일로 만들기", mb);
+await shot("p_button.png");
+
+// ② 고치던 제목·시간을 저장한 뒤 할 일로 만든다 (Enter 없이 바로 버튼)
+await js(`document.querySelector(".tl-popover .tl-title-input").select()`); await type("점심 약속");
+await clickPopTime(0); await type("1215");
+mb = await makeBtn(); await click(mb.x, mb.y);
+check("누르면 창이 닫힌다", await waitFor(async () => !(await popOpen()), 2000));
+check("서버: 계획이 새 할 일과 연결되고, 고치던 제목과 시간(12:15–12:45)이 먼저 저장됐다", await waitFor(async () => { const x = (await plansP()).find((b) => b.title === "점심 약속"); return x && x.taskId !== null && x.start === 735 && x.end === 765; }), await plansP());
+const madeP = (await tasksP()).find((t) => t.content === "점심 약속");
+check("새 할 일: 그날 날짜, 번호 없음, 프로젝트 없음", madeP && madeP.date === dayP && madeP.no_rank === 1 && madeP.project_id === null, madeP);
+check("알림: '점심 약속'을(를) 할 일로 만들었습니다", /'점심 약속'을\(를\) 할 일로 만들었습니다/.test(await js(`document.getElementById("toast").textContent`)), await js(`document.getElementById("toast").textContent`));
+check("가운데 목록 끝에 점(번호 없음)과 시간 글자와 함께 나타나고, 기존 번호는 그대로", await waitFor(async () => JSON.stringify(await rowsP()) === JSON.stringify([{ t: "수학 숙제", rank: "1", slot: null }, { t: "영어 단어", rank: "2", slot: null }, { t: "물리 보고서", rank: "3", slot: "10:00–11:00" }, { t: "점심 약속", rank: "·", slot: "12:15–12:45" }]), 4000), await rowsP());
+check("만든 계획은 하나뿐이다(계획이 늘거나 줄지 않음)", (await plansP()).length === 3, await plansP());
+await shot("p_made.png");
+
+// ③ 다시 열면 연결된 계획의 창이다(버튼 없음, 연결 안내)
+await openPlanO("점심 약속", 750);
+check("만든 뒤 다시 열면 버튼이 없고 '할 일과 연결됨' 안내가 있다", (await makeBtn()) === null && (await js(`!!document.querySelector(".tl-popover .tl-pop-tip")`)));
+await key("Escape"); await sleep(300);
+
+// ④ 시간이 틀렸으면 만들지 않고 창을 열어 둔다
+await openPlanO("산책", 930);
+await clickPopTime(1); await type("abc");
+const countBefore = (await tasksP()).length;
+mb = await makeBtn(); await click(mb.x, mb.y); await sleep(600);
+check("끝 시간이 틀리면 창이 열린 채 알림이 뜨고 할 일을 만들지 않는다", (await popOpen()) && /읽을 수 없습니다/.test(await js(`document.getElementById("toast").textContent`)) && (await tasksP()).length === countBefore && (await plansP()).find((b) => b.title === "산책").taskId === null);
+await key("Escape"); await sleep(300);
+await js(`showDay(todayText)`); await sleep(1500);
+
 check("자바스크립트 오류 없음", jsErrors.length === 0, jsErrors.join(" | "));
 console.log(failed ? `\n실패 ${failed}개` : "\n모두 통과");
 ws.close(); edge.kill(); process.exit(failed ? 1 : 0);

@@ -149,7 +149,17 @@ const all = (await api("/api/tasks?date=" + today2)).data.tasks;
 for (const t of all.slice(1)) await api("/api/tasks/" + t.id, "PATCH", { done: true });
 await reloadList();
 info = await rowsInfo();
-check("끝내지 않은 할 일이 하나뿐이면 번호를 보이지 않는다", info.filter((r) => !r.done).length === 1 && info.every((r) => r.rank === null), info);
+check("끝내지 않은 할 일이 하나뿐이어도 1이 보인다(끝낸 할 일에는 없음)", info.filter((r) => !r.done).length === 1 && info.filter((r) => !r.done)[0].rank === "1" && info.filter((r) => r.done).every((r) => r.rank === null), info);
+// 하나뿐일 때도 번호 ↔ 점을 오갈 수 있다 (예전에는 점을 눌러 번호를 붙이면 번호 칸이 사라져서 다시 점으로 못 돌렸다)
+const oneTitle = info.find((r) => !r.done).t;
+const oneRank = () => js(`(() => { const li = [...document.querySelectorAll("#today-tasks .task-row")].find(l => l.querySelector(".task-content").textContent === ${JSON.stringify(oneTitle)}); const b = li.querySelector(".task-rank"); if (!b) return null; const r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, text: b.textContent }; })()`);
+let one = await oneRank(); await click(one.x, one.y);
+check("하나뿐인 할 일의 1을 누르면 점이 된다", await waitFor(async () => ((await oneRank()) || {}).text === "·", 4000), await oneRank());
+one = await oneRank(); await click(one.x, one.y);
+check("점을 누르면 다시 1이 된다", await waitFor(async () => ((await oneRank()) || {}).text === "1", 4000), await oneRank());
+one = await oneRank(); await click(one.x, one.y);
+check("다시 누르면 또 점이 된다(번호 칸이 사라지지 않는다)", await waitFor(async () => ((await oneRank()) || {}).text === "·", 4000), await oneRank());
+await api("/api/tasks/" + all[0].id, "PATCH", { no_rank: false });
 for (const t of all.slice(1)) await api("/api/tasks/" + t.id, "PATCH", { done: false });
 
 // 10b. 번호 없는 할 일: 번호 글자를 누르면 번호에서 빠지고 점이 남는다(글자는 "·", 모양은 CSS로 그린 5px 동그라미). 줄 자리는 그대로이고 번호만 건너뛴다
