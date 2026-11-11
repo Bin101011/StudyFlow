@@ -2279,7 +2279,23 @@ function refreshTaskSlots() {
             });
             const plans = plansByTask[row.dataset.taskId];
             const anchor = row.querySelector(".task-content, .task-edit-input");
-            if (!plans || !anchor) {
+            if (!anchor) {
+                return;
+            }
+            // 시간표에 아직 없는 오늘 할 일(끝내지 않은 것): 같은 자리에 "+ 시간"을 둔다. 마우스를 올린 줄에서만 보이고(style.css),
+            // 누르면 시각을 써서 넣는 창이 열린다. 시간표를 아직 불러오는 중(다른 날짜)이거나 이름을 고치는 중이면 두지 않는다
+            if (!plans) {
+                if (list === todayTasksList && timeline.date === viewedDate && row.dataset.done === "0" && !row.classList.contains("editing")) {
+                    const empty = document.createElement("span");
+                    empty.className = "task-slot task-slot-empty";
+                    empty.textContent = "+ 시간";
+                    empty.title = "시각을 써서 시간표에 넣습니다 (끌어다 놓지 않아도 됩니다)";
+                    const task = { id: Number(row.dataset.taskId), content: anchor.textContent };
+                    empty.addEventListener("click", function () {
+                        openNewPlanPopover(task, empty);
+                    });
+                    anchor.after(empty);
+                }
                 return;
             }
             plans.sort(function (a, b) {
@@ -2843,6 +2859,147 @@ function makePlanTimeInput(value, label) {
     return input;
 }
 
+// 길이 칸의 글자를 분으로 바꾼다. 읽을 수 없거나 0 이하면 null.
+// 읽는 모양: "90"(분), "90분", "90m", "1:30", "2시간", "1.5h", "1시간 30분", "1h30", "1h30m" (띄어쓰기와 대소문자는 상관없다)
+// match: 글자가 정규식(/…/ 모양의 글자 규칙)에 맞으면 맞은 조각들을, 안 맞으면 null을 돌려준다. ^와 $는 "처음부터 끝까지 전부"라는 뜻이다
+function parseDurationText(text) {
+    const t = String(text).trim().toLowerCase().replace(/\s+/g, "");
+    let m;
+    let minutes = null;
+    if ((m = t.match(/^(\d+)(?:m|min|분)?$/))) {
+        minutes = Number(m[1]);                                    // "90", "90분"
+    } else if ((m = t.match(/^(\d+):(\d{1,2})$/)) && Number(m[2]) < 60) {
+        minutes = Number(m[1]) * 60 + Number(m[2]);                // "1:30"
+    } else if ((m = t.match(/^(\d+(?:\.\d+)?)(?:h|시간)$/))) {
+        minutes = Math.round(parseFloat(m[1]) * 60);               // "2시간", "1.5h"
+    } else if ((m = t.match(/^(\d+)(?:h|시간)(\d+)(?:m|분)?$/))) {
+        minutes = Number(m[1]) * 60 + Number(m[2]);                // "1시간30분", "1h30"
+    }
+    return minutes > 0 ? minutes : null;
+}
+
+// 계획 작은 창의 시간 줄: [시작] – [끝] [길이]. 기존 계획 창(openPlanPopover)과 새 계획 창(openNewPlanPopover)이 같이 쓴다.
+//  - 시작을 바꾸면 끝이 같은 길이만큼 따라 움직이고(일정 창과 같다), 끝을 바꾸면 길이가 바뀌고, 길이를 바꾸면 끝이 바뀐다.
+//    끝이 하루 끝(24:00)을 넘으면 거기서 자른다.
+//  - 세 칸 모두 ↑/↓는 5분씩, Shift와 함께면 1시간씩.
+//  - 칸의 값은 칸을 떠날 때(blur)나 commit(칸)을 부를 때 확정된다. 창은 Enter를 받으면 먼저 commit을 부른다.
+// 돌려주는 값: { row(화면에 붙일 줄), startInput, endInput, lengthInput, readTimes, commit, handleArrow }
+function makePlanTimeRow(start, end) {
+    const row = document.createElement("div");
+    row.className = "tl-pop-times";
+    const startInput = makePlanTimeInput(minToText(start), "시작 시간");
+    const endInput = makePlanTimeInput(minToText(end), "끝 시간");
+    const lengthInput = makePlanTimeInput(durationText(end - start), "길이");
+    lengthInput.classList.add("tl-pop-length-input");
+    lengthInput.title = "길이: 90, 1:30, 1시간 30분, 1h30처럼 쓰면 끝이 따라옵니다";
+    const dash = document.createElement("span");
+    dash.textContent = "–";
+    row.append(startInput, dash, endInput, lengthInput);
+
+    let length = end - start;  // 시작을 바꿀 때 끝을 이만큼 뒤에 둔다. 끝이나 길이를 바꾸면 새로 정해진다
+
+    // 시작·끝 칸을 읽어 { start, end }를 돌려준다. 읽을 수 없거나 너무 짧거나 길이 칸이 틀렸으면 { error }
+    function readTimes() {
+        const s = parsePlanTime(startInput.value, false);
+        const e = parsePlanTime(endInput.value, true);
+        if (s === null || e === null) {
+            return { error: "시간을 읽을 수 없습니다. 14:30이나 1430처럼 써 주세요." };
+        }
+        if (lengthInput.classList.contains("invalid")) {
+            return { error: "길이를 읽을 수 없습니다. 90이나 1시간 30분처럼 써 주세요." };
+        }
+        if (e - s < TL_MIN_PLAN_LENGTH) {
+            return { error: "끝은 시작보다 " + TL_MIN_PLAN_LENGTH + "분 이상 늦어야 합니다." };
+        }
+        return { start: s, end: e };
+    }
+    // 길이 칸을 지금 시작·끝에 맞춘다 (시작·끝이 틀렸으면 그대로 둔다)
+    function showLength() {
+        const s = parsePlanTime(startInput.value, false);
+        const e = parsePlanTime(endInput.value, true);
+        if (s !== null && e !== null && e - s >= TL_MIN_PLAN_LENGTH) {
+            lengthInput.value = durationText(e - s);
+            lengthInput.classList.remove("invalid");
+        }
+    }
+    // 칸의 글자를 "14:30" 모양으로 정리한다. 읽을 수 없으면 글자는 그대로 두고 빨간 칸으로 알린다
+    function tidy(input, isEnd) {
+        const min = parsePlanTime(input.value, isEnd);
+        if (min !== null) {
+            input.value = minToText(min);
+        }
+        input.classList.toggle("invalid", min === null);
+        return min;
+    }
+    // 끝을 시작 + length로 놓는다. 하루 끝을 넘으면 24:00에서 자른다
+    function placeEnd(s) {
+        if (s !== null && s + TL_MIN_PLAN_LENGTH <= TL_DAY_MIN) {
+            endInput.value = minToText(Math.min(s + length, TL_DAY_MIN));
+            endInput.classList.remove("invalid");
+        }
+    }
+    function commitStart() {
+        placeEnd(tidy(startInput, false));
+        showLength();
+    }
+    function commitEnd() {
+        const e = tidy(endInput, true);
+        const s = parsePlanTime(startInput.value, false);
+        if (e !== null && s !== null && e - s >= TL_MIN_PLAN_LENGTH) {
+            length = e - s;
+        }
+        showLength();
+    }
+    function commitLength() {
+        const minutes = parseDurationText(lengthInput.value);
+        lengthInput.classList.toggle("invalid", minutes === null);
+        if (minutes === null) {
+            return;
+        }
+        length = Math.max(minutes, TL_MIN_PLAN_LENGTH);
+        placeEnd(parsePlanTime(startInput.value, false));
+        showLength();
+    }
+    startInput.addEventListener("blur", commitStart);
+    endInput.addEventListener("blur", commitEnd);
+    lengthInput.addEventListener("blur", commitLength);
+
+    // Enter나 ↑/↓를 누른 칸의 값을 확정한다(칸을 떠날 때 blur가 하는 일과 같다). 시간 칸이 아니면 아무 일도 하지 않는다
+    function commit(input) {
+        if (input === startInput) {
+            commitStart();
+        } else if (input === endInput) {
+            commitEnd();
+        } else if (input === lengthInput) {
+            commitLength();
+        }
+    }
+    // ↑/↓ 키: 시간 칸이면 5분(Shift면 1시간)씩 움직이고 true를 돌려준다. 다른 키나 다른 칸이면 false
+    function handleArrow(e, input) {
+        if ((e.key !== "ArrowUp" && e.key !== "ArrowDown") || ![startInput, endInput, lengthInput].includes(input)) {
+            return false;
+        }
+        e.preventDefault();
+        const step = (e.shiftKey ? 60 : 5) * (e.key === "ArrowUp" ? 1 : -1);
+        if (input === lengthInput) {
+            const s = parsePlanTime(startInput.value, false);
+            const current = parseDurationText(lengthInput.value) || length;
+            const most = s === null ? TL_DAY_MIN : TL_DAY_MIN - s;  // 하루 끝을 넘는 길이는 만들지 않는다
+            lengthInput.value = durationText(clampNumber(current + step, TL_MIN_PLAN_LENGTH, Math.max(most, TL_MIN_PLAN_LENGTH)));
+        } else {
+            const isEnd = input === endInput;
+            const current = parsePlanTime(input.value, isEnd);
+            const base = current === null ? (isEnd ? end : start) : current;
+            input.value = minToText(isEnd ? clampNumber(base + step, TL_MIN_PLAN_LENGTH, TL_DAY_MIN) : clampNumber(base + step, 0, TL_DAY_MIN - TL_MIN_PLAN_LENGTH));
+        }
+        commit(input);
+        input.select();
+        return true;
+    }
+
+    return { row: row, startInput: startInput, endInput: endInput, lengthInput: lengthInput, readTimes: readTimes, commit: commit, handleArrow: handleArrow };
+}
+
 // 내 계획의 작은 창: 제목, 시작·끝 시간, (할 일과 연결됐으면) 완료 체크, [삭제] [닫기].
 //  - 제목과 시간은 Enter를 누르거나 창이 닫힐 때(다른 곳을 누름, 시간표나 할 일 목록 스크롤, 확대 등) 바뀌었으면 저장한다. Esc는 되돌리고 닫는다.
 //  - 할 일과 연결된 계획의 제목은 그 할 일의 이름이다(서버가 할 일 이름을 보내 준다). 고치면 할 일 이름이 바뀌어서 가운데 칸과 프로젝트 탭에도 새 이름이 나온다.
@@ -2862,17 +3019,13 @@ function openPlanPopover(plan, anchor, options) {
         titleInput.setAttribute("aria-label", linked ? "할 일 이름" : "계획 제목");
         el.appendChild(titleInput);
 
-        // 시간 줄: [시작] – [끝] (길이)
-        const timeRow = document.createElement("div");
-        timeRow.className = "tl-pop-times";
-        const startInput = makePlanTimeInput(minToText(plan.start), "시작 시간");
-        const endInput = makePlanTimeInput(minToText(plan.end), "끝 시간");
-        const dash = document.createElement("span");
-        dash.textContent = "–";
-        const lengthText = document.createElement("span");
-        lengthText.className = "tl-pop-length";
-        timeRow.append(startInput, dash, endInput, lengthText);
-        el.appendChild(timeRow);
+        // 시간 줄: [시작] – [끝] [길이] (makePlanTimeRow)
+        const time = makePlanTimeRow(plan.start, plan.end);
+        const startInput = time.startInput;
+        const endInput = time.endInput;
+        const readTimes = time.readTimes;
+        const commitStartOrEnd = time.commit;  // 쓰던 시간 칸(시작·끝·길이)의 값을 확정한다
+        el.appendChild(time.row);
 
         if (linked) {
             const tip = document.createElement("p");
@@ -2880,53 +3033,6 @@ function openPlanPopover(plan, anchor, options) {
             tip.textContent = "할 일과 연결됨 · 이름을 고치면 할 일 이름도 바뀝니다";
             el.appendChild(tip);
         }
-
-        // 두 칸을 읽어 { start, end }를 돌려준다. 읽을 수 없거나 너무 짧으면 { error }
-        function readTimes() {
-            const start = parsePlanTime(startInput.value, false);
-            const end = parsePlanTime(endInput.value, true);
-            if (start === null || end === null) {
-                return { error: "시간을 읽을 수 없습니다. 14:30이나 1430처럼 써 주세요." };
-            }
-            if (end - start < TL_MIN_PLAN_LENGTH) {
-                return { error: "끝은 시작보다 " + TL_MIN_PLAN_LENGTH + "분 이상 늦어야 합니다." };
-            }
-            return { start: start, end: end };
-        }
-        function refreshLength() {
-            const times = readTimes();
-            lengthText.textContent = times.error ? "" : "(" + durationText(times.end - times.start) + ")";
-        }
-        refreshLength();
-
-        // 칸의 글자를 "14:30" 모양으로 정리한다. 읽을 수 없으면 글자는 그대로 두고 빨간 칸으로 알린다
-        function tidy(input, isEnd) {
-            const min = parsePlanTime(input.value, isEnd);
-            if (min !== null) {
-                input.value = minToText(min);
-            }
-            input.classList.toggle("invalid", min === null);
-            return min;
-        }
-        let length = plan.end - plan.start;  // 시작을 바꿀 때 끝을 이만큼 뒤에 둔다
-        function commitStart() {
-            const start = tidy(startInput, false);
-            if (start !== null && start + TL_MIN_PLAN_LENGTH <= TL_DAY_MIN) {
-                endInput.value = minToText(Math.min(start + length, TL_DAY_MIN));  // 하루 끝을 넘으면 24:00에서 자른다
-                endInput.classList.remove("invalid");
-            }
-            refreshLength();
-        }
-        function commitEnd() {
-            const end = tidy(endInput, true);
-            const start = parsePlanTime(startInput.value, false);
-            if (end !== null && start !== null && end - start >= TL_MIN_PLAN_LENGTH) {
-                length = end - start;
-            }
-            refreshLength();
-        }
-        startInput.addEventListener("blur", commitStart);
-        endInput.addEventListener("blur", commitEnd);
 
         if (linked) {
             // 연결된 할 일의 완료를 시간표에서 바로 체크한다
@@ -2986,8 +3092,8 @@ function openPlanPopover(plan, anchor, options) {
             await (linked && newTitle ? reloadTodayAndTimeline() : reloadPlans());
         };
 
-        // 세 칸 공통 키: Enter = 저장하고 닫기, Esc = 되돌리고 닫기. 시간 칸은 ↑/↓로 5분씩(Shift면 1시간씩) 움직인다
-        [titleInput, startInput, endInput].forEach(function (input) {
+        // 네 칸 공통 키: Enter = 저장하고 닫기, Esc = 되돌리고 닫기. 시간 칸은 ↑/↓로 5분씩(Shift면 1시간씩) 움직인다
+        [titleInput, startInput, endInput, time.lengthInput].forEach(function (input) {
             input.addEventListener("keydown", function (e) {
                 if (e.isComposing) {
                     return;  // 한글을 조합하는 중의 Enter는 글자를 확정하는 키다
@@ -2999,7 +3105,7 @@ function openPlanPopover(plan, anchor, options) {
                     if (times.error) {
                         // 시간이 틀렸으면 닫지 않고 빨간 칸으로 알린다(고칠 수 있게)
                         showToast(times.error);
-                        (startInput.classList.contains("invalid") ? startInput : endInput).classList.add("invalid");
+                        markTimeError(time);
                         return;
                     }
                     closeTimelinePopover();
@@ -3007,26 +3113,11 @@ function openPlanPopover(plan, anchor, options) {
                     e.preventDefault();
                     popover.onClose = null;  // 아무것도 저장하지 않는다
                     closeTimelinePopover();
-                } else if ((e.key === "ArrowUp" || e.key === "ArrowDown") && input !== titleInput) {
-                    e.preventDefault();
-                    const isEnd = input === endInput;
-                    const current = parsePlanTime(input.value, isEnd);
-                    const base = current === null ? (isEnd ? plan.end : plan.start) : current;
-                    const step = (e.shiftKey ? 60 : 5) * (e.key === "ArrowUp" ? 1 : -1);
-                    input.value = minToText(isEnd ? clampNumber(base + step, TL_MIN_PLAN_LENGTH, TL_DAY_MIN) : clampNumber(base + step, 0, TL_DAY_MIN - TL_MIN_PLAN_LENGTH));
-                    commitStartOrEnd(input);
-                    input.select();
+                } else {
+                    time.handleArrow(e, input);
                 }
             });
         });
-        // Enter나 ↑/↓를 누른 칸의 값을 확정한다(칸을 떠날 때 blur가 하는 일과 같다)
-        function commitStartOrEnd(input) {
-            if (input === startInput) {
-                commitStart();
-            } else if (input === endInput) {
-                commitEnd();
-            }
-        }
 
         if (options.focusTime) {
             startInput.focus();
@@ -3096,6 +3187,101 @@ function openPlanPopover(plan, anchor, options) {
 
         buttons.appendChild(makePopoverButton("닫기", closeTimelinePopover));
         el.appendChild(buttons);
+    });
+}
+
+// 시간 줄이 틀렸을 때(readTimes가 error) 어느 칸이 문제인지 빨간 칸으로 보여 준다. 이미 빨간 칸이 있으면 그대로 두고, 없으면 끝 칸을 빨갛게 한다
+// (둘 다 읽히는데 끝이 시작보다 빠른 경우)
+function markTimeError(time) {
+    if (!time.startInput.classList.contains("invalid") && !time.lengthInput.classList.contains("invalid")) {
+        time.endInput.classList.add("invalid");
+    }
+}
+
+// 시간 정하기 창의 처음 시작 시각: 오늘을 보고 있으면 지금 시각을 5분 단위로 올린 값(14:23 → 14:25), 다른 날이면 09:00.
+// 기본 길이(1시간)가 하루 안에 들어가도록 23:00보다 늦게는 잡지 않는다
+function defaultNewPlanStart() {
+    let start = 9 * 60;
+    if (viewedDate === todayText) {
+        const now = new Date();
+        start = Math.ceil((now.getHours() * 60 + now.getMinutes()) / 5) * 5;
+    }
+    return Math.min(start, TL_DAY_MIN - TL_DEFAULT_LENGTH);
+}
+
+// 시간표에서 그 시각이 보이지 않으면 보이도록 스크롤한다(칸 위쪽 1/3쯤에 오게). 이미 보이면 움직이지 않는다
+function revealTimelineMinute(min) {
+    const y = minToY(min) + TL_SCROLL_PAD;
+    if (y < timelineScroll.scrollTop || y > timelineScroll.scrollTop + timelineScroll.clientHeight - 30) {
+        timelineCenterHold = false;  // 사용자가 정한 자리로 옮긴 것이므로, 칸 높이가 바뀌어도 설정 위치로 되돌리지 않는다
+        timelineScroll.scrollTop = Math.max(0, y - timelineScroll.clientHeight / 3);
+    }
+}
+
+// 시간 정하기 창: 아직 시간표에 없는 오늘 할 일을 마우스로 끌지 않고 시각을 써서 넣는다(할 일 줄의 "+ 시간"을 누르면 열린다).
+//  - 시작·끝·길이 칸은 계획 창과 같다(makePlanTimeRow). 처음에는 시작 칸이 선택되어 있어서 바로 "1430"처럼 쓰면 된다.
+//  - Enter나 [넣기]를 눌러야 만든다. 다른 곳을 누르거나 Esc로 닫으면 아무것도 만들지 않는다(실수로 계획이 생기지 않게).
+//    계획 창은 닫힐 때 저장하지만, 그건 이미 있는 계획을 고치는 것이라 다르다.
+// task: { id, content }, anchor: 창을 붙일 곳("+ 시간" 글자)
+function openNewPlanPopover(task, anchor) {
+    showTimelinePopover("n:" + task.id, anchor, function (el) {
+        const title = document.createElement("h3");
+        title.textContent = task.content;
+        el.appendChild(title);
+
+        const start = defaultNewPlanStart();
+        const time = makePlanTimeRow(start, Math.min(start + TL_DEFAULT_LENGTH, TL_DAY_MIN));
+        el.appendChild(time.row);
+
+        const tip = document.createElement("p");
+        tip.className = "tl-pop-tip";
+        tip.textContent = "시작이나 길이를 쓰고 Enter를 누르면 시간표에 넣습니다";
+        el.appendChild(tip);
+
+        async function create() {
+            time.commit(document.activeElement);  // 쓰던 칸을 먼저 확정한다(시작을 바꿨으면 끝이 따라오게)
+            const times = time.readTimes();
+            if (times.error) {
+                showToast(times.error);
+                markTimeError(time);
+                return;
+            }
+            closeTimelinePopover();
+            try {
+                await createPlan(times.start, times.end, null, task.id);
+                showToast("'" + task.content + "'을(를) " + minToText(times.start) + "–" + minToText(times.end) + "에 넣었습니다");
+            } catch (error) {
+                showToast("시간표에 넣지 못했습니다: " + error.message);
+            }
+            await reloadPlans();  // 시간표를 다시 그리면 할 일 옆 "+ 시간"도 "14:30–15:30"으로 바뀐다(refreshTaskSlots)
+            revealTimelineMinute(times.start);
+        }
+
+        [time.startInput, time.endInput, time.lengthInput].forEach(function (input) {
+            input.addEventListener("keydown", function (e) {
+                if (e.isComposing) {
+                    return;
+                }
+                if (e.key === "Enter") {
+                    e.preventDefault();
+                    create();
+                } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    closeTimelinePopover();
+                } else {
+                    time.handleArrow(e, input);
+                }
+            });
+        });
+
+        const buttons = document.createElement("div");
+        buttons.className = "tl-pop-buttons";
+        const spacer = document.createElement("span");
+        spacer.className = "spacer";
+        buttons.append(spacer, makePopoverButton("닫기", closeTimelinePopover), makePopoverButton("넣기", create, "primary"));
+        el.appendChild(buttons);
+
+        time.startInput.focus();  // 포커스되면 글자 전체가 선택된다(makePlanTimeInput)
     });
 }
 

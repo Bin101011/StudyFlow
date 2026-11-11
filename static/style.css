@@ -1524,7 +1524,22 @@ input.color-dot::-webkit-color-swatch {
     text-decoration: underline;
 }
 
-/* 계획 작은 창의 시간 줄: [시작] – [끝] (길이) */
+/* 시간표에 아직 없는 할 일의 "+ 시간": 마우스를 올린 줄에서만 보인다. 안 보일 때도 자리는 차지해서(visibility: hidden)
+   마우스를 올리고 내릴 때 줄의 다른 것(프로젝트 이름표 등)이 움직이지 않는다 */
+.task-slot.task-slot-empty {
+    visibility: hidden;
+    color: var(--text-faint);
+}
+
+.task-row:hover .task-slot-empty {
+    visibility: visible;
+}
+
+.task-slot-empty:hover {
+    color: var(--accent);
+}
+
+/* 계획 작은 창의 시간 줄: [시작] – [끝] [길이] */
 .tl-pop-times {
     display: flex;
     align-items: center;
@@ -1544,9 +1559,9 @@ input.color-dot::-webkit-color-swatch {
     background-color: var(--danger-soft);
 }
 
-.tl-pop-length {
-    color: var(--text-muted);
-    font-size: 12px;
+/* 길이 칸: "1시간 30분"이 들어가는 폭. 시작·끝 칸보다 넓고, 300px 창 안에 한 줄로 들어간다 */
+.tl-pop-times input.tl-pop-length-input {
+    width: 84px;
 }
 
 /* 메모 입력 칸들(일정 줄, 하루 메모, 일정 창)이 같이 쓰는 모양 */
