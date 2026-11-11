@@ -1591,8 +1591,9 @@ async function pasteCopiedEvent() {
 
 // 키보드를 눌렀을 때: Ctrl+C / Ctrl+V면 위의 복사/붙여넣기를 실행한다
 document.addEventListener("keydown", function (e) {
-    // 입력 창이 열려 있거나 글자 입력 칸에 커서가 있으면, 그 칸의 평소 복사/붙여넣기가 우선이다
-    if (eventDialog.open || ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)) {
+    // 창이 하나라도 열려 있거나 글자 입력 칸에 커서가 있으면, 그 칸의 평소 복사/붙여넣기가 우선이다.
+    // (예전에는 일정 창만 봤다. 아침 정리 창은 마우스가 일정 위에 있을 때 저절로 뜰 수 있어서, 창 뒤의 일정이 복사·붙여넣기되지 않게 모든 창을 본다)
+    if (document.querySelector("dialog[open]") || ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)) {
         return;
     }
     // 캘린더 탭이 아닌 곳에서는 동작하지 않는다
@@ -7076,6 +7077,7 @@ const wrapAllDayCheckbox = document.getElementById("wrap-all-day-checkbox");
 const pomodoroSliderListElement = document.getElementById("pomodoro-slider-list");
 const todaySliderListElement = document.getElementById("today-slider-list");
 const pomodoroSoundCheckbox = document.getElementById("pomodoro-sound-checkbox");
+const overdueReviewCheckbox = document.getElementById("overdue-review-checkbox");  // 아침 정리 창 켜기 (아래 "아침 정리 창" 구역)
 
 // 설정 이름 → 그 값을 담는 CSS 변수 이름. 슬라이더 값이 바뀌면 이 CSS 변수를 바꾼다
 const SETTING_CSS_VARS = {
@@ -7210,6 +7212,7 @@ async function loadSettings() {
         });
 
         pomodoroSoundCheckbox.checked = settings.pomodoroSound !== false;
+        overdueReviewCheckbox.checked = settings.overdueReviewEnabled !== false;
         document.querySelector('input[name="month-rows"][value="' + (settings.monthRows === 7 ? 7 : 6) + '"]').checked = true;
         document.querySelector('input[name="project-columns"][value="' + ([2, 3, 4].includes(settings.projectColumns) ? settings.projectColumns : 2) + '"]').checked = true;
         document.querySelector('input[name="project-folder-columns"][value="' + (settings.projectFolderColumns === 2 ? 2 : 1) + '"]').checked = true;
@@ -7701,6 +7704,302 @@ calendarRemoveConfirm.addEventListener("click", async function () {
 // 설정과 캘린더 목록을 동시에 불러온다. loadCalendarList는 settingsReady(설정 불러오기가 끝났다는 약속)를 기다린다
 const settingsReady = loadSettings();
 loadCalendarList();
+
+// ---------- 아침 정리 창 (밀린 할 일 정리) ----------
+// 끝낸 일을 체크하지 못해서 밀린 할 일로 남는 경우가 많다. 그래서 그날 앱을 처음 열 때(켜 둔 채 자정을 넘긴 경우도) 밀린 할 일이 있으면
+// 작은 창을 띄워 하나씩 정리하게 한다. 줄마다:
+//  [끝냈음]  하려던 날짜에 끝낸 것으로 적는다(서버가 그 할 일의 날짜로 정한다). 그래서 오늘 목록이 아니라 원래 날짜의 목록에 "끝냄"으로 나온다
+//  [오늘로]  날짜를 오늘로 옮긴다. 정말 오늘 끝낸 일이면 옮긴 뒤 오늘 탭에서 체크한다
+//  [건너뛰기]  아무것도 바꾸지 않고 이 창에서만 뺀다 (오늘 탭의 밀린 할 일에는 그대로 있다). 못 한 줄을 빼고 [전부 끝냈음]을 누를 때 쓴다
+// 창을 닫으면 그날 날짜를 설정(overdueReviewDate)에 적어서, 그날은 다시 저절로 뜨지 않는다. 오늘 탭 "밀린 할 일" 옆 [정리]로는 언제든 연다.
+
+const reviewDialog = document.getElementById("review-dialog");
+const reviewList = document.getElementById("review-list");
+const reviewCount = document.getElementById("review-count");
+const reviewFinishAllButton = document.getElementById("review-finish-all");
+const REVIEW_WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
+
+// 이 실행에서 "오늘 창을 띄울지" 이미 판단한 날짜. 1분마다 확인할 때 같은 날에는 서버에 다시 묻지 않으려고 기억한다
+let reviewCheckedDate = null;
+// 지금 열린 정리 창의 상태: { date: 연 날의 오늘, changed: 할 일을 바꿨는지(닫을 때 화면을 새로 그릴지), finishAllArmed: [전부 끝냈음]을 한 번 눌렀는지 }
+let review = null;
+
+// 지금 창을 저절로 띄우면 방해가 되는 상태인지: 다른 창이 열려 있음, 글자를 쓰는 중, 끄는 중, 작은 창·메뉴가 떠 있음.
+// 이럴 때는 띄우지 않고 1분 뒤에 다시 본다
+function isUserBusyForReview() {
+    const active = document.activeElement;
+    // 닫힌 창 안의 입력 칸은 빼고 본다. 창을 닫은 직후에는 브라우저가 포커스를 그 칸에 잠깐 남겨 두기 때문이다
+    const typing = active && (["INPUT", "SELECT", "TEXTAREA"].includes(active.tagName) || active.isContentEditable) &&
+        !active.closest("dialog:not([open])");
+    return Boolean(document.querySelector("dialog[open]") || typing || timelineDrag || taskDrag || projectDrag ||
+        priorityDrag || timelinePopover || priorityMenu);
+}
+
+// 하루 한 번 저절로 띄울지 판단한다. 앱을 켤 때, 1분마다, 창을 다시 볼 때(노트북을 열었을 때 등) 부른다
+async function checkOverdueReview() {
+    const today = toDateText(new Date());
+    if (reviewCheckedDate === today) {
+        return;
+    }
+    await settingsReady;
+    // 설정을 못 불러왔으면 띄우지 않는다. 닫을 때 날짜를 저장할 수 없어서 켤 때마다 뜨게 되기 때문이다
+    if (!settingsLoaded || settings.overdueReviewEnabled === false || settings.overdueReviewDate === today) {
+        reviewCheckedDate = today;
+        return;
+    }
+    if (isUserBusyForReview()) {
+        return;  // reviewCheckedDate를 적지 않았으니 1분 뒤에 다시 본다
+    }
+    reviewCheckedDate = today;
+    openOverdueReview(true);
+}
+
+// 정리 창을 연다. auto: 저절로 연 것인지(true) [정리] 버튼으로 연 것인지(false)
+async function openOverdueReview(auto) {
+    if (reviewDialog.open) {
+        return;
+    }
+    const today = toDateText(new Date());
+    let overdue;
+    try {
+        const response = await fetch("/api/tasks?date=" + today);
+        if (!response.ok) {
+            throw new Error(await errorMessageFrom(response));
+        }
+        overdue = (await response.json()).overdue;
+    } catch (error) {
+        if (auto) {
+            reviewCheckedDate = null;  // 서버가 잠깐 바빴을 수 있으니 1분 뒤에 다시 해 본다
+            console.error("밀린 할 일을 불러오지 못했습니다:", error);
+        } else {
+            showToast("밀린 할 일을 불러오지 못했습니다: " + error.message);
+        }
+        return;
+    }
+    // 불러오는 사이에 사용자가 다른 창을 열었거나 글을 쓰기 시작했으면, 저절로 띄우는 것은 다음 확인으로 미룬다
+    if (reviewDialog.open || (auto && isUserBusyForReview())) {
+        if (auto) {
+            reviewCheckedDate = null;
+        }
+        return;
+    }
+    if (overdue.length === 0) {
+        if (!auto) {
+            showToast("밀린 할 일이 없습니다.");
+        }
+        return;  // 저절로 연 경우는 조용히 넘어간다. 날짜는 적지 않는다(창을 띄우지 않았으므로)
+    }
+
+    review = { date: today, changed: false, finishAllArmed: false };
+    reviewList.innerHTML = "";
+    overdue.forEach(function (task) {
+        reviewList.appendChild(makeReviewRow(task));
+    });
+    updateReviewCount();
+    reviewDialog.showModal();
+    // showModal은 창 안의 첫 버튼에 포커스를 준다. 그게 [전부 끝냈음]이면 Enter 한 번에 눌릴 수 있으니 [닫기]로 옮긴다
+    document.getElementById("review-close").focus();
+}
+
+// "2026-11-08" → "11/8 (토)"
+function reviewDateLabel(dateText) {
+    const date = dateFromText(dateText);
+    return (date.getMonth() + 1) + "/" + date.getDate() + " (" + REVIEW_WEEKDAYS[date.getDay()] + ")";
+}
+
+// 정리 창의 한 줄: 할 일 이름(+ 프로젝트 이름표), 하려던 날짜, [끝냈음] [오늘로] [건너뛰기]
+function makeReviewRow(task) {
+    const row = document.createElement("li");
+    row.className = "review-row";
+    row.dataset.taskId = task.id;
+
+    const main = document.createElement("span");
+    main.className = "review-main";
+    const name = document.createElement("span");
+    name.className = "review-name";
+    name.textContent = task.content;  // textContent: 할 일 이름에 < > 같은 글자가 있어도 HTML로 해석하지 않고 글자 그대로 보인다
+    main.appendChild(name);
+    if (task.project_name) {
+        main.appendChild(makeProjectChip(task.project_name, task.project_color, task.parent_content));
+    }
+    row.appendChild(main);
+
+    const date = document.createElement("span");
+    date.className = "review-date";
+    date.textContent = reviewDateLabel(task.date);
+    row.appendChild(date);
+
+    [["끝냈음", "done"], ["오늘로", "today"], ["건너뛰기", "later"]].forEach(function (pair) {
+        const button = document.createElement("button");
+        button.textContent = pair[0];
+        button.dataset.action = pair[1];
+        button.addEventListener("click", function () {
+            reviewRowAction(row, task, pair[1]);
+        });
+        row.appendChild(button);
+    });
+    return row;
+}
+
+// 하려던 날짜에 끝낸 것으로 적는다. 돌려주는 값: 건너뛴 번호들(그 사이 다른 곳에서 지웠거나 체크한 할 일)
+async function finishOnPlannedDate(ids) {
+    const response = await fetch("/api/tasks/finish-on-planned-date", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: ids }),
+    });
+    if (!response.ok) {
+        throw new Error(await errorMessageFrom(response));
+    }
+    return (await response.json()).skipped;
+}
+
+// 줄의 버튼을 눌렀을 때
+async function reviewRowAction(row, task, action) {
+    disarmReviewFinishAll();
+    if (action === "later") {
+        removeReviewRow(row);
+        return;
+    }
+    // 보내는 동안 그 줄의 버튼을 막는다 (두 번 눌러 요청이 둘 가지 않게)
+    const buttons = row.querySelectorAll("button");
+    buttons.forEach(function (button) {
+        button.disabled = true;
+    });
+    try {
+        if (action === "done") {
+            const skipped = await finishOnPlannedDate([task.id]);
+            if (skipped.length > 0) {
+                showToast("'" + task.content + "'은(는) 이미 끝냈거나 지워져서 건너뛰었습니다.");
+            }
+        } else {
+            await sendRequest("/api/tasks/" + task.id, "PATCH", { date: review.date });
+        }
+    } catch (error) {
+        showToast("할 일을 바꾸지 못했습니다: " + error.message);
+        buttons.forEach(function (button) {
+            button.disabled = false;
+        });
+        return;
+    }
+    review.changed = true;
+    removeReviewRow(row);
+}
+
+// 줄을 창에서 뺀다. 남은 줄이 없으면 창을 닫는다
+function removeReviewRow(row) {
+    row.remove();
+    if (reviewList.children.length === 0) {
+        reviewDialog.close();
+    } else {
+        updateReviewCount();
+    }
+}
+
+function updateReviewCount() {
+    reviewCount.textContent = reviewList.children.length + "개";
+}
+
+function disarmReviewFinishAll() {
+    if (review) {
+        review.finishAllArmed = false;
+    }
+    reviewFinishAllButton.classList.remove("armed");
+    reviewFinishAllButton.textContent = "전부 끝냈음";
+}
+
+// [전부 끝냈음]: 실수로 누르면 하나씩 체크를 풀어야 하므로, 한 번 더 눌러야 실행한다(삭제 버튼과 같은 방식)
+reviewFinishAllButton.addEventListener("click", async function () {
+    if (!review) {
+        return;
+    }
+    const rows = Array.from(reviewList.children);
+    if (!review.finishAllArmed) {
+        review.finishAllArmed = true;
+        reviewFinishAllButton.classList.add("armed");
+        reviewFinishAllButton.textContent = "정말 " + rows.length + "개 모두? (한 번 더)";
+        return;
+    }
+    disarmReviewFinishAll();
+    reviewFinishAllButton.disabled = true;
+    try {
+        const ids = rows.map(function (row) {
+            return Number(row.dataset.taskId);
+        });
+        const skipped = await finishOnPlannedDate(ids);
+        if (skipped.length > 0) {
+            showToast(skipped.length + "개는 이미 끝냈거나 지워져서 건너뛰었습니다.");
+        }
+        review.changed = true;
+        reviewDialog.close();
+    } catch (error) {
+        showToast("할 일을 바꾸지 못했습니다: " + error.message);
+    } finally {
+        reviewFinishAllButton.disabled = false;
+    }
+});
+
+document.getElementById("review-close").addEventListener("click", function () {
+    reviewDialog.close();
+});
+
+// 창이 닫히면([닫기], Esc, 마지막 줄 처리): 그날은 다시 저절로 띄우지 않게 날짜를 적고, 바꾼 것이 있으면 화면을 새로 그린다
+reviewDialog.addEventListener("close", function () {
+    if (!review) {
+        return;
+    }
+    const closed = review;
+    review = null;
+    disarmReviewFinishAll();
+    reviewList.innerHTML = "";
+    if (settingsLoaded && settings.overdueReviewDate !== closed.date) {
+        settings.overdueReviewDate = closed.date;
+        saveSettings();
+    }
+    if (closed.changed) {
+        refreshAfterOverdueReview();
+    }
+});
+
+// 정리 창에서 할 일을 바꾼 뒤, 지금 보이는 탭을 서버 내용으로 다시 그린다 (오늘 탭: 밀린 할 일과 오늘 목록, 캘린더: 날짜별 할 일 요약 등)
+function refreshAfterOverdueReview() {
+    const activeTab = document.querySelector(".tab-content.active").id;
+    if (activeTab === "today") {
+        reloadTodayAndInbox().catch(function (error) {
+            showToast("할 일을 다시 불러오지 못했습니다: " + error.message);
+        });
+    } else if (activeTab === "projects") {
+        loadProjects().catch(function (error) {
+            console.error("프로젝트를 다시 불러오지 못했습니다:", error);
+        });
+    } else if (activeTab === "priority") {
+        loadPriority().catch(function (error) {
+            console.error("우선순위를 다시 불러오지 못했습니다:", error);
+        });
+    }
+    // 캘린더 탭의 날짜별 할 일 요약은 다른 탭에 있어도 새로 받아 둔다 (가볍고, 탭을 열 때도 다시 받는다)
+    refreshCalendarTasks();
+}
+
+// 오늘 탭 "밀린 할 일" 옆 [정리]
+document.getElementById("overdue-review-open").addEventListener("click", function () {
+    openOverdueReview(false);
+});
+
+// 설정 탭의 "그날 처음 열 때 밀린 할 일 정리 창 띄우기"
+overdueReviewCheckbox.addEventListener("change", function () {
+    settings.overdueReviewEnabled = overdueReviewCheckbox.checked;
+    saveSettings();
+});
+
+// 앱을 켤 때 한 번, 그 뒤로는 1분마다(켜 둔 채 자정을 넘긴 경우), 창을 다시 볼 때 확인한다
+checkOverdueReview();
+setInterval(checkOverdueReview, 60000);
+document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) {
+        checkOverdueReview();
+    }
+});
 
 // ---------- 자동 동기화 ----------
 // 서버는 1분마다 Google에 "바뀐 게 있나?" 묻는다(syncToken). 화면은 그 결과를 15초마다 서버(내 컴퓨터)에서 확인해서,

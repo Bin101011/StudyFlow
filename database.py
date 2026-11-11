@@ -99,7 +99,7 @@ def init_db():
             date       TEXT,                               -- 하려는 날짜 "2026-10-19". 없어도 된다(NULL)
             done       INTEGER NOT NULL DEFAULT 0,         -- 완료 여부. 0이면 안 함, 1이면 함
             project_id INTEGER,                            -- 연결된 프로젝트(projects.id). 없어도 된다
-            done_at    TEXT,                               -- 체크한 시각 "2026-10-19T14:30:05". 안 끝냈으면 NULL
+            done_at    TEXT,                               -- 체크한 시각 "2026-10-19T14:30:05". 안 끝냈으면 NULL (아침 정리 창의 [끝냈음]은 하려던 날의 23:59:59)
             deadline   TEXT,                               -- 마감일 "2026-11-10". 언제까지 끝내야 하는지. 없어도 된다
             parent_id  INTEGER                             -- 상위 단계(tasks.id). 하위 단계일 때만 값이 있다
         )
@@ -386,6 +386,42 @@ def update_task(task_id, changes):
     if updated and changes.get("done"):
         run("UPDATE tasks SET done = 1, done_at = ? WHERE parent_id = ? AND done = 0", (changes["done_at"], task_id))
     return updated
+
+
+# "원래 날짜에 끝냄"으로 기록할 때 쓰는 시각. 몇 시에 끝냈는지는 모르므로 그날의 맨 끝으로 둔다.
+# done_at은 앞 10글자(날짜)만 쓰이므로(list_tasks) 시각 부분은 화면에 영향이 없다
+PLANNED_DAY_DONE_TIME = "T23:59:59"
+
+
+def finish_tasks_on_planned_date(task_ids, today):
+    """아침 정리 창의 [끝냈음]/[전부 끝냈음]: 할 일들을 "하려던 날짜(date)에 끝낸 것"으로 기록한다.
+    끝낸 날짜(done_at)를 오늘이 아니라 그 할 일의 date로 적으므로, 오늘 탭의 오늘 목록이 아니라 원래 날짜의 목록에 "끝냄"으로 나온다.
+    화면이 시각을 보내지 않고 서버가 할 일의 date로만 정하므로, 아무 날짜나 끝낸 날로 적을 수는 없다.
+
+    이렇게 기록하지 않고 건너뛰는 할 일(돌려주는 skipped에 들어간다):
+    - 없는 할 일, 이미 끝낸 할 일, 날짜가 없는 할 일
+    - 날짜가 오늘(today)보다 뒤인 할 일: 아직 오지 않은 날에 끝냈다고 적을 수는 없다
+    - 하위 단계가 있는 할 일: 제목 역할이라 정리 창에 나오지 않는다(list_overdue_tasks의 NO_CHILDREN).
+      하위 단계는 날짜가 저마다 달라서 "원래 날짜"를 하나로 정할 수 없으므로, 잘못 와도 손대지 않는다
+
+    여러 개를 한 거래(트랜잭션)로 고친다. BEGIN IMMEDIATE로 쓰기 잠금을 먼저 잡아서, 확인한 뒤 고치기 전에 다른 요청이 끼어들지 못하게 한다.
+    돌려주는 값: (끝낸 번호 리스트, 건너뛴 번호 리스트)"""
+    finished, skipped = [], []
+    with contextlib.closing(connect()) as connection:
+        with connection:
+            connection.execute("BEGIN IMMEDIATE")
+            for task_id in task_ids:
+                task = connection.execute(
+                    f"SELECT t.date, t.done, {NO_CHILDREN} AS is_leaf FROM tasks t WHERE t.id = ?", (task_id,)
+                ).fetchone()
+                if task is None or task["done"] == 1 or task["date"] is None or task["date"] > today or not task["is_leaf"]:
+                    skipped.append(task_id)
+                    continue
+                connection.execute(
+                    "UPDATE tasks SET done = 1, done_at = ? WHERE id = ?", (task["date"] + PLANNED_DAY_DONE_TIME, task_id)
+                )
+                finished.append(task_id)
+    return finished, skipped
 
 
 def update_row(table, allowed_columns, row_id, changes):

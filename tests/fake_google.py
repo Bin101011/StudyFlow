@@ -16,6 +16,9 @@ TMP = tempfile.mkdtemp(prefix="studyflow_test_")
 # 실제 DB / 설정 파일을 건드리지 않도록, app을 가져오기 전에 임시 위치로 바꾼다
 database.DB_PATH = os.path.join(TMP, "test.db")
 settings_store.SETTINGS_PATH = os.path.join(TMP, "settings.json")
+# 아침 정리 창(밀린 할 일 정리)은 시험에서 기본으로 끈다. 밀린 할 일을 만드는 화면 시험이 많은데, 창이 뜨면 그 뒤의 누르기를 다 막기 때문이다.
+# 정리 창을 보는 시험(review_test)은 설정 저장(PUT /api/settings)으로 직접 켠다
+settings_store.OVERDUE_REVIEW_ENABLED_DEFAULT = False
 
 
 class OfflineError(OSError):

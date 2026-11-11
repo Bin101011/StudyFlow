@@ -111,6 +111,13 @@ EVENT_DEFAULT_MINUTES_KEY = "eventDefaultMinutes"
 EVENT_DEFAULT_MINUTES_ALLOWED = (15, 30, 60, 90, 120, 180)
 EVENT_DEFAULT_MINUTES_DEFAULT = 60
 
+# 10) 아침 정리 창(밀린 할 일 정리): 그날 앱을 처음 열 때 밀린 할 일이 있으면 띄울지(True/False)와,
+#     마지막으로 창을 닫은 날("2026-11-10" 모양, 아직 없으면 빈 글자). 창을 닫은 날에는 다시 저절로 띄우지 않는다
+OVERDUE_REVIEW_ENABLED_KEY = "overdueReviewEnabled"
+OVERDUE_REVIEW_ENABLED_DEFAULT = True  # 시험 서버(tests/fake_google.py)는 이 값을 False로 바꿔서, 다른 화면 시험에 창이 뜨지 않게 한다
+OVERDUE_REVIEW_DATE_KEY = "overdueReviewDate"
+DATE_TEXT_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
+
 # "00:00"~"23:59" 모양의 시각 글자. re.fullmatch로 쓰면 앞뒤에 다른 글자가 붙은 값은 걸러진다
 TIME_TEXT_PATTERN = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
 
@@ -148,6 +155,8 @@ def default_settings():
     settings[EVENT_DEFAULT_START_KEY] = EVENT_DEFAULT_START_DEFAULT
     settings[EVENT_DEFAULT_ALL_DAY_KEY] = False
     settings[EVENT_DEFAULT_MINUTES_KEY] = EVENT_DEFAULT_MINUTES_DEFAULT
+    settings[OVERDUE_REVIEW_ENABLED_KEY] = OVERDUE_REVIEW_ENABLED_DEFAULT
+    settings[OVERDUE_REVIEW_DATE_KEY] = ""
     return settings
 
 
@@ -221,6 +230,15 @@ def clean_settings(raw, base=None):
     event_minutes = raw.get(EVENT_DEFAULT_MINUTES_KEY)
     if isinstance(event_minutes, int) and not isinstance(event_minutes, bool) and event_minutes in EVENT_DEFAULT_MINUTES_ALLOWED:
         settings[EVENT_DEFAULT_MINUTES_KEY] = event_minutes
+
+    review_enabled = raw.get(OVERDUE_REVIEW_ENABLED_KEY)
+    if isinstance(review_enabled, bool):  # 켜기/끄기 값은 true/false만 인정한다
+        settings[OVERDUE_REVIEW_ENABLED_KEY] = review_enabled
+
+    review_date = raw.get(OVERDUE_REVIEW_DATE_KEY)
+    # 빈 글자("아직 없음") 또는 "2026-11-10" 모양의 날짜만 인정한다
+    if isinstance(review_date, str) and (review_date == "" or DATE_TEXT_PATTERN.fullmatch(review_date)):
+        settings[OVERDUE_REVIEW_DATE_KEY] = review_date
 
     month_rows = raw.get(MONTH_ROWS_KEY)
     if isinstance(month_rows, int) and not isinstance(month_rows, bool) and month_rows in MONTH_ROWS_ALLOWED:

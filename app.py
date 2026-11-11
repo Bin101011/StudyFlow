@@ -1210,6 +1210,21 @@ def api_reorder_tasks():
     return jsonify({"ok": True})
 
 
+# 아침 정리 창의 [끝냈음]/[전부 끝냈음]: 밀린 할 일을 "하려던 날짜에 끝낸 것"으로 기록한다. 보낼 값: {"ids": [3, 5]}
+# 끝낸 날짜는 화면이 보내지 않는다. 서버가 그 할 일의 날짜로 정한다(database.finish_tasks_on_planned_date).
+# 없거나 이미 끝냈거나 날짜가 없는 할 일은 건너뛰고 skipped로 알려준다. 그 사이 다른 곳에서 지웠거나 체크했을 수 있어서 오류로 막지 않는다
+@app.route("/api/tasks/finish-on-planned-date", methods=["POST"])
+def api_finish_tasks_on_planned_date():
+    data = request.get_json(silent=True)
+    ids = data.get("ids") if isinstance(data, dict) else None
+    if not is_id_list(ids) or not ids:
+        return jsonify({"error": "'ids'는 겹치지 않는 할 일 번호의 목록이어야 합니다."}), 400
+    # 이 컴퓨터의 오늘. 화면도 같은 컴퓨터의 시계로 "밀린 할 일"을 정하므로 기준이 같다
+    today = datetime.date.today().isoformat()
+    finished, skipped = database.finish_tasks_on_planned_date(ids, today)
+    return jsonify({"finished": finished, "skipped": skipped})
+
+
 # 할 일 추가 (POST)
 @app.route("/api/tasks", methods=["POST"])
 def api_create_task():

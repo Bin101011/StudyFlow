@@ -153,7 +153,11 @@
                     <div class="column-scroll">
                         <!-- 지난 날짜에 끝내지 못한 할 일. 있을 때만 보인다 -->
                         <div id="overdue-section" hidden>
-                            <h3>밀린 할 일</h3>
+                            <!-- 제목 옆 [정리]: 아침 정리 창을 다시 연다 (창을 넘긴 날에도 원할 때 정리할 수 있게) -->
+                            <div class="overdue-head">
+                                <h3>밀린 할 일</h3>
+                                <button id="overdue-review-open" title="밀린 할 일을 하나씩 정리하는 창을 엽니다">정리</button>
+                            </div>
                             <ul id="overdue-tasks" class="today-list"></ul>
                         </div>
 
@@ -341,6 +345,11 @@
                     <span class="settings-unit">이 시각이 가운데에 옵니다</span>
                 </div>
                 <p class="settings-hint">오늘 탭을 열거나 날짜를 넘길 때 시간표가 이 시각을 가운데에 놓고 시작합니다.</p>
+                <label class="settings-row">
+                    <input type="checkbox" id="overdue-review-checkbox">
+                    <span>그날 처음 열 때 밀린 할 일 정리 창 띄우기</span>
+                </label>
+                <p class="settings-hint">밀린 할 일이 있으면 하루에 한 번 정리 창이 뜹니다. 창을 닫은 날에는 다시 뜨지 않고, 오늘 탭의 "밀린 할 일" 옆 [정리] 버튼으로 언제든 열 수 있습니다.</p>
                 <button id="today-settings-reset">기본값으로</button>
             </section>
 
@@ -571,6 +580,23 @@
             <span class="spacer"></span>
             <button id="dday-cancel">취소</button>
             <button id="dday-save" class="primary">저장</button>
+        </div>
+    </dialog>
+
+    <!-- 아침 정리 창: 지난 날짜에 끝내지 못한 할 일(밀린 할 일)을 하나씩 정리한다. 줄은 app.js가 채운다.
+         [끝냈음]은 하려던 날짜에 끝낸 것으로 적고, [오늘로]는 날짜를 오늘로 옮기고, [건너뛰기]는 그대로 두고 이 창에서만 뺀다 -->
+    <dialog id="review-dialog">
+        <h2>밀린 할 일 정리</h2>
+        <p class="review-hint">[끝냈음]은 원래 하려던 날에 끝낸 것으로 적습니다. 오늘 끝낸 일이면 [오늘로] 옮긴 뒤 체크하세요.</p>
+        <div class="review-top">
+            <span id="review-count"></span>
+            <span class="spacer"></span>
+            <button id="review-finish-all">전부 끝냈음</button>
+        </div>
+        <ul id="review-list"></ul>
+        <div class="dialog-buttons">
+            <span class="spacer"></span>
+            <button id="review-close">닫기</button>
         </div>
     </dialog>
 
