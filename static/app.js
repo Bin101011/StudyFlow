@@ -737,6 +737,7 @@ async function errorMessageFrom(response) {
 
 // 서버에 JSON 요청을 보낸다. 실패하면 서버가 알려준 이유를 담은 Error를 던진다.
 // method: "POST"(만들기), "PATCH"(일부 고치기), "DELETE"(지우기)
+// 성공하면 서버가 돌려준 내용(JSON)을 돌려준다. 대부분은 쓰지 않고, 새로 만든 계획의 번호가 필요한 곳(되돌리기 기록)만 쓴다
 async function sendRequest(url, method, body) {
     const response = await fetch(url, {
         method: method,
@@ -746,7 +747,14 @@ async function sendRequest(url, method, body) {
         body: body ? JSON.stringify(body) : undefined,
     });
     if (!response.ok) {
-        throw new Error(await errorMessageFrom(response));
+        const error = new Error(await errorMessageFrom(response));
+        error.status = response.status;  // 응답 번호(404 등). 되돌리기(Ctrl+Z)가 "대상이 이미 없음"(404)을 알아보는 데 쓴다
+        throw error;
+    }
+    try {
+        return await response.json();
+    } catch (error) {
+        return null;  // 내용이 JSON이 아니면 돌려줄 것이 없다
     }
 }
 
@@ -2446,6 +2454,7 @@ function autoScrollTimeline(clientY) {
 
 // ----- 계획 만들기 / 옮기기 / 길이 바꾸기 / 지우기 -----
 
+// 계획을 만든다. 만들어진 계획({ id, date, start, end, title, ... })을 돌려준다
 async function createPlan(start, end, title, taskId) {
     const body = { date: viewedDate, start: start, end: end };
     if (taskId) {
@@ -2453,7 +2462,7 @@ async function createPlan(start, end, title, taskId) {
     } else {
         body.title = title;
     }
-    await sendRequest("/api/time-blocks", "POST", body);
+    return await sendRequest("/api/time-blocks", "POST", body);
 }
 
 // 빈 곳을 끌어서(또는 눌러서) 새 계획을 만든다: 끈 만큼, 누르기만 하면 30분짜리 블록에 제목 입력 칸이 열린다.
@@ -2538,7 +2547,8 @@ function openPlanCreator(block, start, end) {
             return;
         }
         try {
-            await createPlan(start, end, text, null);
+            const plan = await createPlan(start, end, text, null);
+            rememberPlanCreated(plan, text);  // Ctrl+Z로 이 계획을 지울 수 있게 기록한다
         } catch (error) {
             showToast("계획을 만들지 못했습니다: " + error.message);
         }
@@ -2599,6 +2609,11 @@ function beginPlanDrag(e, block, plan) {
             if (next.start !== plan.start || next.end !== plan.end) {
                 try {
                     await sendRequest("/api/time-blocks/" + plan.id, "PATCH", { start: next.start, end: next.end });
+                    // Ctrl+Z로 원래 시간으로 돌릴 수 있게 기록한다
+                    rememberUndo({
+                        requests: [{ url: "/api/time-blocks/" + plan.id, method: "PATCH", body: { start: plan.start, end: plan.end } }],
+                        message: "'" + plan.title + "'을(를) " + minToText(plan.start) + "–" + minToText(plan.end) + "(으)로 되돌렸습니다",
+                    });
                 } catch (error) {
                     showToast("계획을 옮기지 못했습니다: " + error.message);
                 }
@@ -3042,14 +3057,19 @@ function openPlanPopover(plan, anchor, options) {
             checkbox.type = "checkbox";
             checkbox.checked = plan.taskDone;
             checkbox.addEventListener("change", function () {
-                updateTask(plan.taskId, { done: checkbox.checked }, reloadTodayAndTimeline);
+                // 체크한 것만 Ctrl+Z로 되돌린다(체크 풀기는 원래 끝낸 시각을 되살릴 수 없어서 기록하지 않는다).
+                // 가운데 목록에 있는 할 일만 기록한다. 그 목록에는 하위 단계가 없는 할 일만 나온다(하위 단계까지 함께 끝내는 경우를 빼려는 것)
+                const inList = todayTasksList.querySelector('.task-row[data-task-id="' + plan.taskId + '"]') !== null;
+                const undo = checkbox.checked && inList ? taskCheckUndo(plan.taskId, plan.title) : null;
+                updateTask(plan.taskId, { done: checkbox.checked }, reloadTodayAndTimeline, undo);
             });
             row.append(checkbox, "할 일 완료");
             el.appendChild(row);
         }
 
         // 창이 닫힐 때 바뀐 것을 저장한다. 제목과 시간은 따로 보낸다(하나가 실패해도 다른 하나는 저장되게)
-        popover.onClose = async function () {
+        // skipUndo: true면 Ctrl+Z 기록을 남기지 않는다([할 일로 만들기]가 부를 때. 그 동작은 통째로 되돌리지 않기로 했다)
+        popover.onClose = async function (skipUndo) {
             // 시간 칸에 쓰다가 바로 다른 곳을 누르면 칸을 떠나기(blur) 전에 창이 닫힌다. 쓰던 칸을 먼저 확정해야 시작을 바꿨을 때 끝도 따라 움직인다
             commitStartOrEnd(document.activeElement);
             const text = titleInput.value.trim();
@@ -3066,27 +3086,46 @@ function openPlanPopover(plan, anchor, options) {
             if (!newTitle && !newTimes) {
                 return;
             }
+            // Ctrl+Z로 되돌릴 요청들. 저장에 성공한 것만 담는다(이름과 시간을 함께 고쳤으면 한 번의 Ctrl+Z로 둘 다 돌린다)
+            const undoRequests = [];
             if (linked && newTitle) {
                 try {
                     await sendRequest("/api/tasks/" + plan.taskId, "PATCH", { content: newTitle });
+                    undoRequests.push({ url: "/api/tasks/" + plan.taskId, method: "PATCH", body: { content: plan.title } });
                 } catch (error) {
                     showToast("할 일 이름을 고치지 못했습니다: " + error.message);
                 }
             }
             const changes = {};
+            const undoChanges = {};
             if (newTimes) {
                 changes.start = newTimes.start;
                 changes.end = newTimes.end;
+                undoChanges.start = plan.start;
+                undoChanges.end = plan.end;
             }
             if (!linked && newTitle) {
                 changes.title = newTitle;
+                undoChanges.title = plan.title;
             }
             if (Object.keys(changes).length > 0) {
                 try {
                     await sendRequest("/api/time-blocks/" + plan.id, "PATCH", changes);
+                    undoRequests.push({ url: "/api/time-blocks/" + plan.id, method: "PATCH", body: undoChanges });
                 } catch (error) {
                     showToast("계획을 고치지 못했습니다: " + error.message);
                 }
+            }
+            if (undoRequests.length > 0 && skipUndo !== true) {
+                let what;
+                if (newTitle && newTimes) {
+                    what = "'" + plan.title + "'의 이름과 시간(" + minToText(plan.start) + "–" + minToText(plan.end) + ")을";
+                } else if (newTitle) {
+                    what = "이름을 '" + plan.title + "'(으)로";
+                } else {
+                    what = "'" + plan.title + "'을(를) " + minToText(plan.start) + "–" + minToText(plan.end) + "(으)로";
+                }
+                rememberUndo({ requests: undoRequests, message: what + " 되돌렸습니다" });
             }
             // 할 일 이름을 바꿨으면 가운데 할 일 목록도 새로 받는다(계획도 함께 받는다). 아니면 계획만 받는다
             await (linked && newTitle ? reloadTodayAndTimeline() : reloadPlans());
@@ -3171,7 +3210,7 @@ function openPlanPopover(plan, anchor, options) {
                 const saveEdits = popover.onClose;
                 popover.onClose = null;  // 아래에서 직접 기다리며 저장하므로, 창이 닫힐 때 또 저장하지 않게
                 closeTimelinePopover();
-                await saveEdits();
+                await saveEdits(true);  // true: 이 저장은 Ctrl+Z 기록에 남기지 않는다 ([할 일로 만들기]는 되돌리지 않는 동작이라, 반쪽만 되돌아가지 않게)
                 try {
                     await sendRequest("/api/time-blocks/" + plan.id + "/make-task", "POST");
                     showToast("'" + name + "'을(를) 할 일로 만들었습니다 (번호 없이)");
@@ -3248,7 +3287,8 @@ function openNewPlanPopover(task, anchor) {
             }
             closeTimelinePopover();
             try {
-                await createPlan(times.start, times.end, null, task.id);
+                const plan = await createPlan(times.start, times.end, null, task.id);
+                rememberPlanCreated(plan, task.content);  // Ctrl+Z로 이 계획을 지울 수 있게(할 일은 그대로 남는다)
                 showToast("'" + task.content + "'을(를) " + minToText(times.start) + "–" + minToText(times.end) + "에 넣었습니다");
             } catch (error) {
                 showToast("시간표에 넣지 못했습니다: " + error.message);
@@ -3316,10 +3356,16 @@ function dropStartMinutes(clientY) {
 
 async function dropTaskOnTimeline(task, start) {
     try {
-        if (task.date !== viewedDate) {
+        const sameDate = task.date === viewedDate;
+        if (!sameDate) {
             await sendRequest("/api/tasks/" + task.id, "PATCH", { date: viewedDate });
         }
-        await createPlan(start, start + TL_DEFAULT_LENGTH, null, task.id);
+        const plan = await createPlan(start, start + TL_DEFAULT_LENGTH, null, task.id);
+        // 그날의 할 일을 놓은 것만 Ctrl+Z로 되돌린다. 다른 날(밀린 할 일, 할 일 목록)에서 온 할 일은 날짜까지 바뀌어서
+        // 계획만 지우면 반쪽만 되돌아가므로 기록하지 않는다
+        if (sameDate) {
+            rememberPlanCreated(plan, task.content);
+        }
         showToast("'" + task.content + "'을(를) " + minToText(start) + "–" + minToText(start + TL_DEFAULT_LENGTH) + "에 배치했습니다");
     } catch (error) {
         showToast("시간표에 놓지 못했습니다: " + error.message);
@@ -3339,6 +3385,7 @@ async function dropTaskOnTimeline(task, start) {
 //   unscheduleOnly: 오늘 탭에서 쓴다. 프로젝트에 연결된 할 일은 지우는 대신 "오늘에서만 빼기"(날짜 제거)로 바꾼다
 //   toInbox: 오늘 탭에서 쓴다. 프로젝트 없는 할 일에 "목록으로"(날짜를 빼서 할 일 목록으로 돌려보내기) 버튼을 둔다
 //   dragFrom: "inbox"(할 일 목록의 줄)나 "loose"(오늘 탭의 프로젝트 없는 할 일 줄)이면 그 줄을 끌어서 옮길 수 있다
+//   undoable: 오늘 탭에서 쓴다. 체크, 번호 빼기·넣기, 이름 고치기를 Ctrl+Z로 되돌릴 수 있게 기록한다
 function makeTaskRow(task, options) {
     const item = document.createElement("li");
     item.className = "task-row";
@@ -3357,7 +3404,9 @@ function makeTaskRow(task, options) {
     checkbox.checked = task.done === 1;
     checkbox.disabled = !!options.derived;  // 하위 단계가 있는 단계는 직접 체크하지 않는다
     checkbox.addEventListener("change", function () {
-        updateTask(task.id, { done: checkbox.checked }, options.reload);
+        // 오늘 탭에서 체크한 것은 Ctrl+Z로 되돌릴 수 있게 기록한다. 체크를 푼 것은 원래 끝낸 시각을 되살릴 수 없어서 기록하지 않는다
+        const undo = options.undoable && checkbox.checked ? taskCheckUndo(task.id, task.content) : null;
+        updateTask(task.id, { done: checkbox.checked }, options.reload, undo);
     });
 
     const content = document.createElement("span");
@@ -3378,7 +3427,14 @@ function makeTaskRow(task, options) {
             ? "번호 없는 할 일 (누르면 번호를 붙입니다)"
             : options.rank + "번째로 할 일 (누르면 번호에서 뺍니다. 줄을 끌어서 순서를 바꿉니다)";
         rank.addEventListener("click", function () {
-            updateTask(task.id, { no_rank: !unranked }, options.reload);
+            // Ctrl+Z로 반대로 돌릴 수 있게 기록한다 (번호는 오늘 탭에만 있다)
+            const undo = {
+                requests: [{ url: "/api/tasks/" + task.id, method: "PATCH", body: { no_rank: unranked } }],
+                message: unranked
+                    ? "'" + task.content + "'을(를) 다시 번호에서 뺐습니다"
+                    : "'" + task.content + "'에 다시 번호를 붙였습니다",
+            };
+            updateTask(task.id, { no_rank: !unranked }, options.reload, undo);
         });
         item.classList.add("has-rank");  // 메모를 체크박스 글자 줄에 맞추려고 (style.css의 .task-memo-box)
         item.appendChild(rank);
@@ -3411,6 +3467,13 @@ function makeTaskRow(task, options) {
             }
             try {
                 await sendRequest("/api/tasks/" + task.id, "PATCH", { content: text });
+                if (options.undoable) {
+                    // Ctrl+Z로 원래 이름으로 돌릴 수 있게 기록한다 (오늘 탭에서 고친 것만)
+                    rememberUndo({
+                        requests: [{ url: "/api/tasks/" + task.id, method: "PATCH", body: { content: task.content } }],
+                        message: "이름을 '" + task.content + "'(으)로 되돌렸습니다",
+                    });
+                }
                 task.content = text;
                 await options.reload();  // 목록을 다시 그리면 새 이름으로 나온다
             } catch (error) {
@@ -3633,6 +3696,7 @@ async function loadTodayTasks() {
             toInbox: true,
             // 끌 수 있는 할 일: 프로젝트 없는 할 일("loose")은 시간표나 "할 일 목록"으로, 프로젝트 할 일("project")은 시간표로(또는 작은 달력 날짜로)
             dragFrom: task.done === 1 ? null : (task.project_id ? "project" : "loose"),
+            undoable: true,
         }));
     });
 
@@ -3652,16 +3716,21 @@ async function loadTodayTasks() {
                 unscheduleOnly: true,
                 toInbox: true,
                 dragFrom: task.project_id ? "project" : "loose",
+                undoable: true,
             }));
         });
     }
     refreshTaskSlots();  // 시간표에 배치한 할 일 옆에 "16:30–18:30"을 붙인다
 }
 
-// 할 일의 일부(완료 여부, 날짜)를 바꾸고 reload()로 목록을 다시 불러온다
-async function updateTask(taskId, changes, reload) {
+// 할 일의 일부(완료 여부, 날짜)를 바꾸고 reload()로 목록을 다시 불러온다.
+// undo: Ctrl+Z 기록(rememberUndo에 넣을 묶음). 주면 바꾸기에 성공했을 때만 기록한다
+async function updateTask(taskId, changes, reload, undo) {
     try {
         await sendRequest("/api/tasks/" + taskId, "PATCH", changes);
+        if (undo) {
+            rememberUndo(undo);
+        }
     } catch (error) {
         showToast("할 일을 바꾸지 못했습니다: " + error.message);
     }
@@ -4056,6 +4125,7 @@ function hideTaskDropLine() {
 // 줄을 오늘 할 일 목록의 index번째 자리에 놓는다. 이미 목록에 있던 줄이면 순서만 바꾸고,
 // 밀린 할 일이나 할 일 목록에서 온 줄이면 먼저 날짜를 보고 있는 날짜로 정한 뒤 그 자리에 넣는다
 async function dropTaskOnList(task, index, alreadyInList) {
+    const previousOrder = todayTaskOrder.slice();  // 옮기기 전 순서 (Ctrl+Z로 되돌릴 때 쓴다)
     const ids = todayTaskOrder.filter(function (id) {
         return id !== task.id;
     });
@@ -4065,6 +4135,14 @@ async function dropTaskOnList(task, index, alreadyInList) {
             await sendRequest("/api/tasks/" + task.id, "PATCH", { date: viewedDate });  // 날짜가 바뀌면 서버가 이전 순서를 비운다
         }
         await sendRequest("/api/tasks/order", "PUT", { date: viewedDate, ids: ids });
+        // 같은 목록 안에서 순서만 바꾼 것은 Ctrl+Z로 이전 순서로 돌릴 수 있게 기록한다. 다른 목록에서 끌어온 것은 날짜도 바뀌어서 기록하지 않는다.
+        // 제자리에 놓았으면(순서가 그대로) 기록하지 않는다
+        if (alreadyInList && ids.join(",") !== previousOrder.join(",")) {
+            rememberUndo({
+                requests: [{ url: "/api/tasks/order", method: "PUT", body: { date: viewedDate, ids: previousOrder } }],
+                message: "할 일 순서를 되돌렸습니다",
+            });
+        }
         if (!alreadyInList) {
             // "N번째"는 화면의 번호와 같게, 앞에 있는 줄 중 번호 있는 것만 센다. 번호 없는 할 일이면 몇 번째인지 말하지 않는다
             const dayText = (viewedDate === todayText ? "오늘" : viewedDate.slice(5).replace("-", "/")) + " 할 일";
@@ -4082,6 +4160,109 @@ async function dropTaskOnList(task, index, alreadyInList) {
     }
     await reloadTodayAndInbox();  // 서버에 있는 실제 순서로 화면을 맞춘다 (실패했으면 제자리로 돌아온다)
 }
+
+// ---------- Ctrl+Z 되돌리기 (오늘 탭) ----------
+// 오늘 탭에서 한 동작 중 위험이 낮은 것만 Ctrl+Z로 하나씩 되돌린다(최근 20개). 앱을 켜 둔 동안만 기억한다(새로 켜면 비어 있다).
+//  - 되돌리는 것: 계획 옮기기·길이 바꾸기·시간 고치기, 계획 만들기(→ 지우기), 계획·할 일 이름 고치기, 같은 목록 안의 순서 바꾸기,
+//    할 일 체크(→ 체크 풀기), 번호 빼기·넣기
+//  - 되돌리지 않는 것: 날짜가 바뀌는 동작("내일로", 다른 목록에서 끌어오기 등), 체크 풀기, 지우기, [할 일로 만들기], 정리 창, Google 일정.
+//    날짜가 바뀌면 서버가 순서와 다른 날의 계획을 함께 지우는 등, 요청 하나로는 원래대로 돌릴 수 없어서다(docs/feature-plan-2026-11.md 단계 9)
+// 기록 하나는 "되돌릴 때 보낼 요청들"이다. 동작을 할 때(서버 저장에 성공한 뒤) 미리 만들어 둔다. 그래서 DB가 바뀐 내용을 따로 기억하지 않아도 된다.
+// 글자 칸에 커서가 있으면 그 칸의 평소 Ctrl+Z(글자 되돌리기)가 우선이다. 끄는 중, 작은 창이나 다른 창이 열려 있을 때도 동작하지 않는다
+
+const UNDO_LIMIT = 20;  // 기억하는 최대 개수. 넘으면 가장 오래된 것부터 버린다
+// 되돌리기 기록들(가장 최근 것이 맨 뒤). 하나의 모양: { requests: [{ url, method, body }], message: 되돌린 뒤 알림 글자, date: 그 동작을 한 날짜(보고 있던 날) }
+let undoStack = [];
+let undoRunning = false;  // 되돌리는 중이면 true (Ctrl+Z를 빠르게 여러 번 눌러도 하나씩 차례로)
+
+// 되돌리기 기록을 하나 더한다. 그 동작을 할 때 보고 있던 날짜를 함께 적는다(다른 날을 보면서 되돌리면 알림에 날짜를 붙이려고)
+function rememberUndo(entry) {
+    entry.date = viewedDate;
+    undoStack.push(entry);
+    if (undoStack.length > UNDO_LIMIT) {
+        undoStack.shift();  // shift(): 리스트의 맨 앞(가장 오래된 것)을 빼낸다
+    }
+}
+
+// 새로 만든 계획의 되돌리기 = 그 계획 지우기. 연결된 할 일은 지우지 않는다(계획만 사라진다)
+function rememberPlanCreated(plan, title) {
+    if (!plan || typeof plan.id !== "number") {
+        return;  // 서버가 만든 계획을 돌려주지 않았으면 무엇을 지울지 모르므로 기록하지 않는다
+    }
+    rememberUndo({
+        requests: [{ url: "/api/time-blocks/" + plan.id, method: "DELETE" }],
+        message: "'" + title + "' 계획을 지웠습니다 (만들기 되돌림)",
+    });
+}
+
+// 할 일 체크의 되돌리기 = 체크 풀기
+function taskCheckUndo(taskId, name) {
+    return {
+        requests: [{ url: "/api/tasks/" + taskId, method: "PATCH", body: { done: false } }],
+        message: "'" + name + "'의 체크를 풀었습니다",
+    };
+}
+
+// 가장 최근 기록 하나를 되돌린다
+async function undoLast() {
+    if (undoRunning) {
+        return;
+    }
+    const entry = undoStack.pop();  // pop(): 리스트의 맨 뒤(가장 최근 것)를 빼낸다
+    if (!entry) {
+        showToast("되돌릴 것이 없습니다");
+        return;
+    }
+    undoRunning = true;
+    try {
+        // 요청이 여럿이면 차례로 보낸다. 모두 "원래 값으로 정하기"라서 같은 요청을 두 번 보내도 결과가 같다(실패 뒤 다시 시도해도 안전하다)
+        for (const request of entry.requests) {
+            await sendRequest(request.url, request.method, request.body);
+        }
+        const where = entry.date !== viewedDate ? " (" + entry.date.slice(5).replace("-", "/") + ")" : "";
+        showToast(entry.message + where);
+    } catch (error) {
+        if (error.status === undefined || error.status >= 500) {
+            // 서버에 닿지 않았거나 서버가 잠깐 탈이 난 것: 기록을 돌려놓아서 다시 Ctrl+Z로 시도할 수 있게 한다
+            undoStack.push(entry);
+            showToast("되돌리지 못했습니다: " + error.message);
+        } else if (error.status === 404) {
+            // 그 사이 계획이나 할 일을 지웠다: 되돌릴 대상이 없으므로 기록을 버린다
+            showToast("되돌릴 대상이 이미 없습니다 (지워진 계획이나 할 일)");
+        } else {
+            showToast("되돌리지 못했습니다: " + error.message);
+        }
+    }
+    try {
+        await reloadTodayAndTimeline();  // 할 일 목록과 시간표를 서버의 실제 모습으로 다시 그린다
+    } finally {
+        undoRunning = false;
+    }
+}
+
+document.addEventListener("keydown", function (e) {
+    // Ctrl+Z만 (Ctrl+Shift+Z, Alt 조합은 아니다). 한글 입력 상태에서는 e.key가 "ㅋ"일 수 있어서 키의 자리(e.code)로도 본다.
+    // 꾹 눌러서 저절로 반복된 입력(e.repeat)은 무시한다(여러 개가 한꺼번에 되돌아가지 않게)
+    if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.repeat) {
+        return;
+    }
+    if (e.code !== "KeyZ" && e.key.toLowerCase() !== "z") {
+        return;
+    }
+    if (!document.getElementById("today").classList.contains("active")) {
+        return;  // 오늘 탭에서만
+    }
+    // 창(대화상자)이 열려 있거나 글자 칸에 커서가 있으면 그 칸의 평소 되돌리기가 우선이다 (체크박스·버튼에 포커스가 남은 것은 괜찮다)
+    if (arrowKeysBelongToElement()) {
+        return;
+    }
+    // 끄는 중, 시간표 작은 창이나 새 계획 칸이 열려 있으면 하지 않는다(그 동작과 뒤섞이지 않게)
+    if (timelineDrag || taskDrag || timelinePopover || timelineGrid.querySelector(".tl-creating")) {
+        return;
+    }
+    e.preventDefault();
+    undoLast();
+});
 
 // ----- 프로젝트 단계 순서 바꾸기 -----
 // 프로젝트 카드 안의 단계(맨 위 단계, 하위 단계)를 끌어서 같은 묶음 안의 다른 자리에 놓으면 순서가 바뀌고 서버에 저장된다.
