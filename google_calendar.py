@@ -2,6 +2,7 @@ import datetime
 import http.client
 import json
 import os.path
+import sys
 import time
 import uuid
 
@@ -35,8 +36,10 @@ class CredentialsProblem(Exception):
     (이 오류가 없던 때는 "인터넷 연결을 확인하세요"가 떠서, 처음 설치한 사람이 엉뚱한 곳을 헤맸다)"""
 
 # 화면에 보여줄 안내 문장
+# exe로 실행하면 main.py가 없으므로 StudyFlow.exe가 있는 폴더라고 안내한다 (sys.frozen: app_paths.py 참고)
+CREDENTIALS_FOLDER_HINT = "StudyFlow.exe가 있는 폴더" if getattr(sys, "frozen", False) else "프로젝트 폴더(main.py가 있는 폴더)"
 CREDENTIALS_MISSING_MESSAGE = (
-    "credentials.json 파일이 없습니다. README의 'Google 연결하기'를 따라 만든 파일을 프로젝트 폴더(main.py가 있는 폴더)에 넣으세요. "
+    f"credentials.json 파일이 없습니다. README의 'Google 연결하기'를 따라 만든 파일을 {CREDENTIALS_FOLDER_HINT}에 넣으세요. "
     "이름이 credentials.json.json이 아닌지도 확인하세요."
 )
 CREDENTIALS_UNREADABLE_MESSAGE = (
@@ -65,8 +68,9 @@ _login_message = ""  # "needed"일 때 화면에 보여줄 이유 (로그인을 
 # 옛 로그인 정보로 만들어 둔 Google 연결을 버리고 새로 만든다 (안 그러면 다시 로그인해도 껐다 켜기 전까지 계속 실패한다)
 login_generation = 0
 
-# 이 파일이 있는 폴더. 어디서 실행하든 credentials.json, token.json을 이 폴더에서 찾기 위함
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# 어디서 실행하든 credentials.json, token.json을 늘 같은 폴더에서 찾기 위함.
+# 데이터 폴더: 파이썬으로 실행하면 프로젝트 폴더, exe로 실행하면 StudyFlow.exe가 있는 폴더 (app_paths.py)
+from app_paths import DATA_DIR as BASE_DIR
 CREDENTIALS_PATH = os.path.join(BASE_DIR, "credentials.json")  # Google에서 받은 앱 신분증
 TOKEN_PATH = os.path.join(BASE_DIR, "token.json")  # 로그인 결과를 저장하는 파일
 

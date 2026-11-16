@@ -14,7 +14,8 @@ import re
 import shutil
 import threading
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# 데이터 폴더: 파이썬으로 실행하면 프로젝트 폴더, exe로 실행하면 StudyFlow.exe가 있는 폴더 (app_paths.py)
+from app_paths import DATA_DIR as BASE_DIR
 BACKUP_DIR = os.path.join(BASE_DIR, "notes_backup")
 
 # 노트를 찾을 때 안으로 들어가지 않는 폴더 이름. 점(.)으로 시작하는 폴더(.obsidian, .git, .venv 등)는 이름과 상관없이 항상 건너뛴다.

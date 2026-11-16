@@ -6,8 +6,9 @@ import datetime
 import os
 import sqlite3
 
-# 이 파일이 있는 폴더에 studyflow.db를 만든다 (settings.json과 같은 방식)
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# 데이터 폴더에 studyflow.db를 만든다 (settings.json과 같은 방식)
+# 데이터 폴더: 파이썬으로 실행하면 프로젝트 폴더, exe로 실행하면 StudyFlow.exe가 있는 폴더 (app_paths.py)
+from app_paths import DATA_DIR as BASE_DIR
 DB_PATH = os.path.join(BASE_DIR, "studyflow.db")
 
 

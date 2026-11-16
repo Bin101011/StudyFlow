@@ -9,7 +9,8 @@ import threading
 # 로그 파일을 여는 것보다 먼저 해야 한다: 켜져 있는 쪽이 쓰고 있는 로그를 두 번째 프로그램이 지워 버리지 않도록
 import single_instance
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# 데이터 폴더: 파이썬으로 실행하면 프로젝트 폴더, exe로 실행하면 StudyFlow.exe가 있는 폴더 (app_paths.py)
+from app_paths import DATA_DIR as BASE_DIR
 if not single_instance.acquire(os.path.join(BASE_DIR, "studyflow.lock")):
     single_instance.show_already_running_message()
     sys.exit(0)

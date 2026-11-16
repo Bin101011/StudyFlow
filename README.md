@@ -90,6 +90,24 @@ powershell -ExecutionPolicy Bypass -File .\make_shortcut.ps1
 
 바탕화면에 `StudyFlow` 바로가기가 생깁니다. 이 방식으로 실행하면 화면에 나오지 않는 메시지가 `studyflow.log` 파일에 기록되니, 문제가 생기면 그 파일을 보세요.
 
+### exe로 만들기 (선택)
+
+Python 없이 더블클릭으로 켜지는 `StudyFlow.exe`를 만들 수 있습니다. 위의 **설치**를 마친 뒤 한 번 실행하세요. 1~2분쯤 걸립니다.
+
+```powershell
+# exe를 만드는 도구(PyInstaller)를 .venv에 설치한다 (처음 한 번)
+.venv\Scripts\python -m pip install pyinstaller
+
+# exe를 만든다
+powershell -ExecutionPolicy Bypass -File .\build_exe.ps1
+```
+
+`dist\StudyFlow` 폴더가 생기고, 그 안에 `StudyFlow.exe`와 `_internal` 폴더가 있습니다. **두 개는 늘 같이 있어야 켜집니다.** 이 폴더를 통째로 원하는 곳(예: `C:\Users\이름\StudyFlow앱`)에 옮기고, 필요하면 `StudyFlow.exe`를 오른쪽 클릭 → **바탕 화면에 바로 가기 만들기**를 하세요. 다른 컴퓨터에도 이 폴더만 복사하면 Python 없이 켜집니다.
+
+- exe로 켜면 `credentials.json`, `token.json`, `studyflow.db`, `settings.json` 등은 **`StudyFlow.exe`가 있는 폴더**에 둡니다(프로젝트 폴더가 아님). 프로젝트 폴더에서 쓰던 데이터를 그대로 쓰려면 이 파일들을 `StudyFlow.exe` 옆으로 복사하세요.
+- exe를 다시 만들기 전에 `dist\StudyFlow` 폴더를 다른 곳으로 옮겨 두세요. 다시 만들 때 그 폴더를 지우고 새로 만들기 때문입니다. (그 안에 내 데이터가 있으면 `build_exe.ps1`이 멈추고 알려 줍니다.)
+- 코드를 고친 뒤에는 exe를 다시 만들어야 고친 내용이 exe에 들어갑니다.
+
 ### 노트 탭 쓰기 (선택)
 
 Obsidian을 쓴다면 **설정 탭 → 노트 (Obsidian)** 에 vault 폴더 경로(예: `C:\Users\이름\문서\Obsidian Vault`)를 적으세요. 쓰지 않으면 비워 두면 됩니다.
@@ -129,7 +147,7 @@ Obsidian을 쓴다면 **설정 탭 → 노트 (Obsidian)** 에 vault 폴더 경�
 | 바로가기로 켰는데 창이 안 뜸 | 프로젝트 폴더의 `studyflow.log` 마지막 줄을 확인하세요. |
 | 와이파이는 되는데 "인터넷 연결을 확인하세요"가 가끔 뜸 | 놀던 연결이 끊긴 경우 프로그램이 새 연결로 알아서 다시 시도합니다. 그래도 계속 뜨면 `studyflow.log`에서 `[연결 재시도]`와 그 뒤의 오류(`WinError 10053/10054`는 공유기나 보안 프로그램이 연결을 끊은 것, `NameResolutionError`는 DNS 문제)를 확인하세요. |
 | 화면이 예전 모습 그대로임 | 프로그램을 완전히 닫았다가 다시 켜세요. |
-| "StudyFlow가 이미 켜져 있습니다"가 뜸 | StudyFlow는 한 번에 하나만 켜집니다. 작업 표시줄에 창이 있는지 보세요. 방금 닫았다면 몇 초 뒤에 다시 켜세요. 창이 없는데도 계속 뜨면 작업 관리자에서 `pythonw.exe`(또는 `python.exe`)를 끝내세요. |
+| "StudyFlow가 이미 켜져 있습니다"가 뜸 | StudyFlow는 한 번에 하나만 켜집니다. 작업 표시줄에 창이 있는지 보세요. 방금 닫았다면 몇 초 뒤에 다시 켜세요. 창이 없는데도 계속 뜨면 작업 관리자에서 `pythonw.exe`(또는 `python.exe`, exe로 켰다면 `StudyFlow.exe`)를 끝내세요. |
 
 ## 만든 방식
 
