@@ -102,7 +102,7 @@ Python 없이 더블클릭으로 켜지는 `StudyFlow.exe`를 만들 수 있습�
 powershell -ExecutionPolicy Bypass -File .\build_exe.ps1
 ```
 
-`dist\StudyFlow` 폴더가 생기고, 그 안에 `StudyFlow.exe`와 `_internal` 폴더가 있습니다. **두 개는 늘 같이 있어야 켜집니다.** 이 폴더를 통째로 원하는 곳(예: `C:\Users\이름\StudyFlow앱`)에 옮기고, 필요하면 `StudyFlow.exe`를 오른쪽 클릭 → **바탕 화면에 바로 가기 만들기**를 하세요. 다른 컴퓨터에도 이 폴더만 복사하면 Python 없이 켜집니다.
+다 되면 `dist\StudyFlow` 폴더가 탐색기로 열리고, 그 안에 `StudyFlow.exe`와 `_internal` 폴더가 있습니다. **두 개는 늘 같이 있어야 켜집니다.** `StudyFlow.exe`만 따로 복사하면 켤 때 "Failed to load Python DLL … 지정된 모듈을 찾을 수 없습니다" 오류가 납니다. 바탕화면에 두고 싶으면 exe를 옮기지 말고 **바로 가기**를 만드세요. 이 폴더를 통째로 원하는 곳(예: `C:\Users\이름\StudyFlow앱`)에 옮기고, 필요하면 `StudyFlow.exe`를 오른쪽 클릭 → **바탕 화면에 바로 가기 만들기**를 하세요. 다른 컴퓨터에도 이 폴더만 복사하면 Python 없이 켜집니다.
 
 - exe로 켜면 `credentials.json`, `token.json`, `studyflow.db`, `settings.json` 등은 **`StudyFlow.exe`가 있는 폴더**에 둡니다(프로젝트 폴더가 아님). 프로젝트 폴더에서 쓰던 데이터를 그대로 쓰려면 이 파일들을 `StudyFlow.exe` 옆으로 복사하세요.
 - exe를 다시 만들기 전에 `dist\StudyFlow` 폴더를 다른 곳으로 옮겨 두세요. 다시 만들 때 그 폴더를 지우고 새로 만들기 때문입니다. (그 안에 내 데이터가 있으면 `build_exe.ps1`이 멈추고 알려 줍니다.)
