@@ -4,8 +4,9 @@ import os
 import re
 import threading
 
-# 이 파일이 있는 폴더. settings.json을 항상 같은 자리에 두기 위함
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# settings.json을 항상 같은 자리에 두기 위함.
+# 데이터 폴더: 파이썬으로 실행하면 프로젝트 폴더, exe로 실행하면 StudyFlow.exe가 있는 폴더 (app_paths.py)
+from app_paths import DATA_DIR as BASE_DIR
 SETTINGS_PATH = os.path.join(BASE_DIR, "settings.json")
 
 # 슬라이더 설정들의 정의. 이름(key), 화면에 보일 이름(label), 범위(min~max), 눈금 간격(step), 기본값(default).

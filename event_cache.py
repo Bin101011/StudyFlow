@@ -15,7 +15,8 @@ from googleapiclient.errors import HttpError
 import google_calendar
 
 # 기억해둔 일정을 파일에도 저장해두는 곳. 프로그램을 껐다 켜도 남아 있고, 인터넷이 끊겼을 때 이걸 보여준다
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# 데이터 폴더: 파이썬으로 실행하면 프로젝트 폴더, exe로 실행하면 StudyFlow.exe가 있는 폴더 (app_paths.py)
+from app_paths import DATA_DIR as BASE_DIR
 CACHE_PATH = os.path.join(BASE_DIR, "events_cache.json")
 FILE_VERSION = 2  # 저장 형식이 바뀌면 올린다. 번호가 다른 옛 파일은 읽지 않고 버린다 (2: 일정 메모(description)를 담기 시작)
 

@@ -26,3 +26,7 @@ studyflow.log
 studyflow.lock
 # 노트 탭이 수정 전에 한 번씩 복사해 두는 노트 백업 (내 노트 내용이 들어 있다)
 notes_backup/
+
+# exe 만들기(build_exe.ps1)의 중간 파일과 결과물. 코드에서 언제든 다시 만들 수 있어서 올리지 않는다
+build/
+dist/
