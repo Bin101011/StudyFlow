@@ -34,14 +34,19 @@ POMODORO_SLIDER_DEFINITIONS = [
 # 오늘 탭의 슬라이더 설정들. 설정 탭의 "오늘 탭" 칸에 따로 보인다.
 # 시간표 너비: 오늘 탭 왼쪽 시간표 칸의 가로 길이. 기본값 400은 처음 만들 때의 값이고, 넓히면 겹친 블록의 제목이 덜 잘리지만 가운데 할 일 칸이 좁아진다
 # 오른쪽 칸 너비: 작은 달력과 할 일 목록이 있는 칸의 가로 길이. 넓히면 달력도 함께 넓어진다
+# 메모 칸 높이: 가운데 칸 바닥의 하루 메모 입력 칸의 세로 길이. 기본값 110은 예전 모양(글자 크기 16px에서 네 줄)과 거의 같다.
+#   창이 낮아서 다 들어가지 않으면 화면(style.css)이 할 일 목록을 조금 남기고 메모 칸을 줄여서 보여 준다
+# 세 값 모두 오늘 탭에서 칸 경계(메모는 메모 위의 선)를 마우스로 끌어서도 바꿀 수 있다 (app.js의 "오늘 탭 크기 끌기")
 TIMELINE_WIDTH_KEY = "timelineWidth"
 TODAY_RIGHT_WIDTH_KEY = "todayRightWidth"
+DAY_MEMO_HEIGHT_KEY = "dayMemoHeight"
 TODAY_SLIDER_DEFINITIONS = [
     {"key": TIMELINE_WIDTH_KEY, "label": "시간표 너비", "min": 300, "max": 500, "step": 10, "default": 400, "unit": "px"},
     {"key": TODAY_RIGHT_WIDTH_KEY, "label": "오른쪽 칸 너비", "min": 300, "max": 500, "step": 10, "default": 300, "unit": "px"},
+    {"key": DAY_MEMO_HEIGHT_KEY, "label": "메모 칸 높이", "min": 60, "max": 600, "step": 10, "default": 110, "unit": "px"},
 ]
 # 두 칸을 합친 너비의 한계. 가운데 할 일 칸이 너무 좁아지지 않게 한다. 화면(app.js)도 /api/settings로 이 값을 받아 슬라이더를 막는다
-TODAY_WIDTHS_MAX = 850
+TODAY_WIDTHS_MAX = 900  # 처음에는 850이었고, 2026-11-20에 사용자 요청으로 900으로 넓혔다
 
 # 숫자 슬라이더 설정 전체 (clean_settings와 default_settings가 같이 쓴다)
 ALL_SLIDER_DEFINITIONS = SLIDER_DEFINITIONS + POMODORO_SLIDER_DEFINITIONS + TODAY_SLIDER_DEFINITIONS

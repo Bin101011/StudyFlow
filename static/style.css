@@ -911,6 +911,70 @@ input.color-dot::-webkit-color-swatch {
     flex-direction: column;
 }
 
+/* 칸 사이의 손잡이(.col-resize-handle)가 이 두 칸을 기준으로 자리를 잡는다 */
+#timeline-column,
+#inbox-column {
+    position: relative;
+}
+
+/* 칸 경계 손잡이: 칸 사이 빈 곳(32px) 한가운데에 폭 12px로 눕힌다. 칸 바깥에 있어서 시간표의 스크롤바나 블록 끌기와 겹치지 않는다.
+   평소에는 보이지 않고, 마우스를 올리면 커서가 ↔ 모양이 되고 가운데에 파란 세로선이 생긴다.
+   touch-action: none은 터치 화면에서 끌 때 브라우저가 화면 스크롤로 가로채지 않게 한다 */
+.col-resize-handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 12px;
+    cursor: col-resize;
+    touch-action: none;
+    z-index: 5;
+}
+
+#timeline-column > .col-resize-handle {
+    right: -22px;  /* 칸의 오른쪽 끝에서 10~22px = 빈 곳(32px)의 가운데 */
+}
+
+#inbox-column > .col-resize-handle {
+    left: -22px;
+}
+
+/* ::after = 손잡이 안에 CSS로만 그린 세로선. 마우스를 올렸거나 끄는 중일 때만 색이 생긴다 */
+.col-resize-handle::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 5px;
+    width: 2px;
+    border-radius: 1px;
+    transition: background-color 0.15s;
+}
+
+.col-resize-handle:hover::after,
+.col-resize-handle.dragging::after {
+    background-color: var(--accent);
+}
+
+/* 끄는 동안에는 마우스가 다른 칸 위를 지나가도 커서 모양을 유지하고, 지나가는 글자가 선택(파랗게 칠해짐)되지 않게 한다 */
+body.resizing-x,
+body.resizing-x * {
+    cursor: col-resize !important;
+    user-select: none;
+}
+
+body.resizing-y,
+body.resizing-y * {
+    cursor: row-resize !important;
+    user-select: none;
+}
+
+/* 창이 좁아 칸 배치가 바뀌면(아래 1100px 미만 규칙) 칸 경계 손잡이는 숨긴다. 그때는 설정 탭의 슬라이더로 바꾼다 */
+@media (max-width: 1099px) {
+    .col-resize-handle {
+        display: none;
+    }
+}
+
 /* 칸 안에서 스크롤되는 목록 상자. 스크롤바가 글자를 가리지 않도록 오른쪽에 여유를 둔다 */
 .column-scroll {
     flex: 1;
@@ -1608,20 +1672,63 @@ input.color-dot::-webkit-color-swatch {
     color: var(--text-faint);
 }
 
-/* 하루 메모: 할 일 칸의 바닥에 고정된다 (위의 할 일 목록만 스크롤되므로 밀려나지 않는다) */
+/* 하루 메모: 할 일 칸의 바닥에 고정된다 (위의 할 일 목록만 스크롤되므로 밀려나지 않는다).
+   메모 칸의 높이는 설정값(--day-memo-height)이다. 창이 낮아서 다 들어가지 않으면 메모가 먼저 줄어든다(flex-shrink 1).
+   할 일 목록은 80px까지만 줄어들어서(아래 #tasks-column .column-scroll), 메모를 아주 높게 정해도 목록이 사라지지 않는다 */
 .day-memo {
-    flex: none;
+    flex: 0 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    position: relative;  /* 위쪽 선의 손잡이(.memo-resize-handle)가 이 상자를 기준으로 자리를 잡는다 */
     margin-top: 10px;
     padding-top: 12px;
     border-top: 1px solid var(--border);
 }
 
+#tasks-column .column-scroll {
+    min-height: 80px;
+}
+
 .day-memo h2 {
+    flex: none;
     margin-bottom: 8px;
 }
 
+/* resize: none — 입력 칸 오른쪽 아래의 브라우저 기본 손잡이는 없앤다(높이는 위쪽 선을 끌어서 바꾸고, 그래야 저장된다) */
 .day-memo textarea {
-    min-height: 110px;
+    flex: 0 1 auto;
+    height: var(--day-memo-height, 110px);
+    min-height: 60px;
+    resize: none;
+}
+
+/* 메모 위쪽 선(border-top)을 잡는 손잡이: 선 위아래로 5px씩 넉넉하게 잡히고, 마우스를 올리면 선이 파랗게 굵어진다 */
+.memo-resize-handle {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -6px;
+    height: 11px;
+    cursor: row-resize;
+    touch-action: none;
+    z-index: 2;
+}
+
+.memo-resize-handle::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 4px;
+    height: 3px;
+    border-radius: 2px;
+    transition: background-color 0.15s;
+}
+
+.memo-resize-handle:hover::after,
+.memo-resize-handle.dragging::after {
+    background-color: var(--accent);
 }
 
 .day-memo textarea:disabled {

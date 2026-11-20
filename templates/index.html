@@ -134,6 +134,8 @@
                             <div id="timeline-grid" class="tl-grid"></div>
                         </div>
                     </div>
+                    <!-- 시간표 칸과 가운데 칸 사이의 손잡이: 좌우로 끌면 시간표 칸의 너비가 바뀐다 (app.js의 "오늘 탭 크기 끌기") -->
+                    <div class="col-resize-handle" id="timeline-resize-handle" title="좌우로 끌어서 시간표 칸 너비 바꾸기"></div>
                 </section>
 
                 <section class="today-column" id="tasks-column">
@@ -167,6 +169,8 @@
                     <!-- 하루 메모: 이 날짜에 대한 자유 메모. 칸의 바닥에 고정되어 할 일이 많아져도 밀려나지 않는다.
                          입력을 멈추면 저절로 저장된다 (내 컴퓨터에만 저장, Google에는 보내지 않는다) -->
                     <div class="day-memo">
+                        <!-- 메모 위의 선을 잡는 손잡이: 위로 끌면 메모 칸이 높아지고, 아래로 끌면 낮아진다 -->
+                        <div class="memo-resize-handle" id="day-memo-resize-handle" title="위아래로 끌어서 메모 칸 높이 바꾸기"></div>
                         <h2>메모 <span id="day-memo-status" class="day-memo-status"></span></h2>
                         <textarea id="day-memo" rows="4" placeholder="이 날의 메모를 자유롭게 적으세요" disabled></textarea>
                     </div>
@@ -174,6 +178,8 @@
 
                 <!-- 작은 달력 + 할 일 목록(수집함): 날짜를 아직 정하지 않은 할 일(프로젝트 없는 것만). 줄의 버튼으로 날짜를 정하거나, 가운데 "할 일" 칸이나 시간표로 끌어다 놓는다 -->
                 <section class="today-column" id="inbox-column">
+                    <!-- 가운데 칸과 오른쪽 칸 사이의 손잡이: 좌우로 끌면 오른쪽 칸의 너비가 바뀐다 -->
+                    <div class="col-resize-handle" id="inbox-resize-handle" title="좌우로 끌어서 오른쪽 칸 너비 바꾸기"></div>
                     <!-- 작은 달력: 날짜를 누르면 그날로 이동한다. 칸은 app.js가 만든다 -->
                     <div id="mini-calendar" class="mini-calendar"></div>
                     <h2>할 일 목록 <span id="inbox-count" class="inbox-count"></span></h2>
@@ -336,7 +342,7 @@
 
             <section class="settings-section">
                 <h2>오늘 탭</h2>
-                <p class="settings-hint">오늘 탭 왼쪽 시간표 칸과 오른쪽 칸(작은 달력, 할 일 목록)의 너비입니다. 넓힐수록 가운데 할 일 칸이 좁아져서, 두 칸의 합은 850px까지만 됩니다. 시간표의 확대/축소(한 시간의 높이)는 시간표 위에서 두 손가락으로 벌리거나 오므려서 바꿉니다.</p>
+                <p class="settings-hint">오늘 탭 왼쪽 시간표 칸과 오른쪽 칸(작은 달력, 할 일 목록)의 너비, 가운데 칸 바닥의 메모 칸 높이입니다. 오늘 탭에서 칸 사이의 빈 곳이나 메모 위의 선을 마우스로 끌어도 바뀝니다. 너비는 넓힐수록 가운데 할 일 칸이 좁아져서, 두 칸의 합은 900px까지만 됩니다. 시간표의 확대/축소(한 시간의 높이)는 시간표 위에서 두 손가락으로 벌리거나 오므려서 바꿉니다.</p>
                 <!-- 슬라이더는 app.js가 서버(/api/settings)에서 정의를 받아 여기에 만든다 -->
                 <div id="today-slider-list"></div>
                 <div class="settings-row">

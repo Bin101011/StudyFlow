@@ -7457,6 +7457,7 @@ const SETTING_CSS_VARS = {
     letterSpacing: "--letter-spacing",
     timelineWidth: "--timeline-width",  // 오늘 탭 시간표 칸의 너비
     todayRightWidth: "--today-right-width",  // 오늘 탭 오른쪽 칸(작은 달력, 할 일 목록)의 너비
+    dayMemoHeight: "--day-memo-height",  // 오늘 탭 하루 메모 입력 칸의 높이
 };
 
 // 오늘 탭의 두 칸은 합계에 한계가 있다. 서로의 짝과 한계(서버가 알려 준다)를 적어 둔다
@@ -7471,6 +7472,8 @@ function limitSliderValue(key, value) {
 
 // 설정 이름 → 단위("px", "em" 등). 서버가 알려준 슬라이더 정의에서 loadSettings가 채운다
 const settingUnits = {};
+// 설정 이름 → 서버가 알려준 슬라이더 정의(범위 min~max 등). 오늘 탭에서 칸을 끌 때 범위를 지키는 데 쓴다
+const sliderDefinitions = {};
 
 // 시간표 블록을 마지막으로 그릴 때 쓴 글자 크기 설정 (applySettings가 바뀐 것을 알아채는 데 쓴다)
 let timelineFontSetting = null;
@@ -7522,6 +7525,7 @@ async function saveSettings() {
 // 슬라이더 한 줄(이름 + 슬라이더 + 현재 값)을 만들어 container에 붙인다. def는 서버가 알려준 슬라이더 정의다
 function buildSlider(def, container) {
     settingUnits[def.key] = def.unit;
+    sliderDefinitions[def.key] = def;
 
     const row = document.createElement("label");
     row.className = "settings-row";
@@ -7634,6 +7638,97 @@ document.getElementById("today-settings-reset").addEventListener("click", functi
     timelineCenterInput.value = TIMELINE_CENTER_DEFAULT;
     timelineCenterInput.classList.remove("invalid");
     resetSliders(todaySliderListElement);
+});
+
+// ----- 오늘 탭 크기 끌기 -----
+// 오늘 탭에서 칸 사이의 빈 곳을 좌우로 끌면 칸 너비가, 메모 위의 선을 위아래로 끌면 메모 칸 높이가 바뀐다.
+// 설정 탭의 슬라이더와 같은 설정값(timelineWidth, todayRightWidth, dayMemoHeight)을 바꾸는 또 하나의 방법이다.
+// 끄는 동안은 화면에만 바로 반영하고, 마우스를 놓을 때 한 번 저장한다 (슬라이더의 input/change와 같은 방식).
+//
+// Pointer Events: pointerdown(누름) → pointermove(움직임) → pointerup(뗌). 마우스·터치패드·펜을 한 가지 방법으로 다루는 브라우저 이벤트다.
+// setPointerCapture: 끄는 동안 포인터가 손잡이 밖(다른 칸 위)으로 나가도 움직임을 계속 이 손잡이가 받게 한다. 그래서 빨리 끌어도 놓치지 않는다.
+
+// 설정 탭의 슬라이더와 옆의 값 글자를 지금 설정값에 맞춘다 (오늘 탭에서 끌어서 바꾼 값이 설정 탭에도 보이게)
+function syncSliderDisplay(key) {
+    const slider = document.querySelector('input[type=range][data-key="' + key + '"]');
+    if (slider) {
+        slider.value = settings[key];
+        slider.nextElementSibling.textContent = settings[key] + slider.dataset.unit;
+    }
+}
+
+// handle(손잡이)을 끌어서 설정 key의 값(px)을 바꾸게 한다.
+//  axis: "x"(좌우로 끌기) 또는 "y"(위아래로 끌기)
+//  direction: 1이면 오른쪽(아래)으로 끌 때 커지고, -1이면 왼쪽(위)으로 끌 때 커진다
+//  measure(): 지금 화면에 실제로 보이는 크기(px). 끄기를 시작할 때와, 값을 바꾼 뒤 CSS가 줄였는지 볼 때 쓴다
+function setupResizeHandle(handle, key, axis, direction, measure) {
+    let start = null;  // 끄기 시작할 때의 { pos: 포인터 위치, size: 크기, changed: 값을 바꿨는지 }. null이면 끄는 중이 아니다
+
+    handle.addEventListener("pointerdown", function (event) {
+        // 왼쪽 버튼만, 그리고 설정을 불러온 뒤에만 (못 불러왔으면 범위도 모르고 저장도 안 된다)
+        if (event.button !== 0 || !settingsLoaded || !sliderDefinitions[key]) {
+            return;
+        }
+        event.preventDefault();  // 끄는 동안 글자가 선택되지 않게
+        handle.setPointerCapture(event.pointerId);
+        start = { pos: axis === "x" ? event.clientX : event.clientY, size: measure(), changed: false };
+        handle.classList.add("dragging");
+        document.body.classList.add(axis === "x" ? "resizing-x" : "resizing-y");
+    });
+
+    handle.addEventListener("pointermove", function (event) {
+        if (!start) {
+            return;
+        }
+        const def = sliderDefinitions[key];
+        const pos = axis === "x" ? event.clientX : event.clientY;
+        // 시작 크기 + 움직인 거리. 범위(min~max) 안으로 맞추고, 오늘 탭 두 칸의 합계 한계도 지킨다(limitSliderValue)
+        let value = Math.round(start.size + (pos - start.pos) * direction);
+        value = Math.max(def.min, Math.min(def.max, value));
+        value = Math.max(def.min, limitSliderValue(key, value));
+        if (value === settings[key]) {
+            return;
+        }
+        settings[key] = value;
+        document.documentElement.style.setProperty(SETTING_CSS_VARS[key], value + "px");
+        // 창이 작아서 CSS가 그만큼 키워 주지 못했으면(예: 메모를 너무 높게) 실제로 보이는 크기를 값으로 쓴다.
+        // 그래야 놓은 뒤 반대로 끌 때 손잡이가 바로 따라온다 (보이지 않는 여분이 저장되지 않는다)
+        const shown = Math.round(measure());
+        if (shown < value) {
+            settings[key] = Math.max(def.min, shown);
+            document.documentElement.style.setProperty(SETTING_CSS_VARS[key], settings[key] + "px");
+        }
+        start.changed = true;
+        syncSliderDisplay(key);
+    });
+
+    // 끄기를 끝낸다: 손을 뗐거나(pointerup), 브라우저가 끄기를 취소했거나(pointercancel), 붙잡기가 풀렸을 때(lostpointercapture)
+    function finish() {
+        if (!start) {
+            return;
+        }
+        const changed = start.changed;
+        start = null;
+        handle.classList.remove("dragging");
+        document.body.classList.remove("resizing-x", "resizing-y");
+        if (changed) {
+            saveSettings();
+        }
+    }
+    handle.addEventListener("pointerup", finish);
+    handle.addEventListener("pointercancel", finish);
+    handle.addEventListener("lostpointercapture", finish);
+}
+
+// getBoundingClientRect() = 화면에 실제로 그려진 상자의 위치와 크기
+setupResizeHandle(document.getElementById("timeline-resize-handle"), "timelineWidth", "x", 1, function () {
+    return document.getElementById("timeline-column").getBoundingClientRect().width;
+});
+setupResizeHandle(document.getElementById("inbox-resize-handle"), "todayRightWidth", "x", -1, function () {
+    return document.getElementById("inbox-column").getBoundingClientRect().width;
+});
+setupResizeHandle(document.getElementById("day-memo-resize-handle"), "dayMemoHeight", "y", -1, function () {
+    return dayMemoInput.getBoundingClientRect().height;
 });
 
 // 일정 추가 창에서 미리 선택해둘 캘린더를 정한다.

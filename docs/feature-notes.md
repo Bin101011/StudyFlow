@@ -76,3 +76,14 @@ StudyFlow 창을 닫고 1초쯤 안에 다시 켜면 "StudyFlow가 이미 켜져
 - **끌 때 저장 요청은 5초까지만 기다린다**(`single_instance.REQUEST_WAIT_SECONDS`). 넘으면 `[종료] 끝나지 않은 요청을 두고 끝냅니다`가 로그에 남는다.
 - **창을 닫는 순서는 `close_guard.py`가 정한다(N30, 2026-11-06).** 닫기를 한 번 막고 → 화면에 남은 글을 저장시키고(`prepareToClose`) → 쓰기 수(`pendingWrites`)가 0으로 0.1초 머물면 닫는다. 쓰기가 안 끝나도 2.4초 뒤에는 닫기 명령을 내리고, 그래도 안 닫히면 0.5초 뒤 프로그램을 끝낸다. `evaluate_js`에는 제한 시간이 없어서 돌아오지 않을 수 있으므로, 시간을 재는 일은 저장 단계와 다른 스레드에서 한다. 새 자동 저장을 만들 때 칸을 벗어날 때 저장하는 방식이면 저절로 처리되고, 타이머로만 저장하면 `prepareToClose`에 단계를 더해야 한다.
 - **다시 재야 할 때**: 이번 `[시간]` 로그는 지웠다. 다시 넣으려면 켜기 시작·라이브러리 불러오기 끝·창 보임(`window.events.shown`)·화면 불러옴(`loaded`)·창 닫힘(`closed`)·창 정리 끝(`webview.start` 다음 줄)·프로그램 끝(`exit_now` 직전)에 시각을 print하면 된다. 파이썬 프로세스가 만들어진 시각은 ctypes의 `GetProcessTimes`로 잴 수 있는데, 64비트에서는 `GetCurrentProcess.restype`과 `GetProcessTimes.argtypes`를 정해 줘야 맞는 값이 나온다(안 정하면 0이 나온다).
+
+## 오늘 탭 크기 끌기 (2026-11-19, 사용자 요청)
+
+칸 사이의 빈 곳을 좌우로 끌어 시간표 칸·오른쪽 칸 너비를, 메모 위의 선을 위아래로 끌어 메모 칸 높이를 바꾼다. 화면 동작은 `docs/screens.md`의 시간표·하루 메모 항목에 있다.
+
+- **설정 탭 슬라이더와 같은 값을 쓴다.** 새 저장 방법을 만들지 않고 `timelineWidth`, `todayRightWidth`(원래 있던 것)와 새 `dayMemoHeight`(설정 탭 "오늘 탭" 칸의 세 번째 슬라이더)를 바꾼다. 그래서 범위 검사, 합계 900px 한계(`limitSliderValue`, 서버 `clean_settings`), [기본값으로]를 그대로 쓴다.
+- **손잡이는 칸 바깥(칸 사이 빈 곳 32px의 가운데, 폭 12px)에 둔다.** 칸 안에 두면 시간표 스크롤바나 블록 끌기와 겹친다. 메모 손잡이는 메모 위쪽 선에 걸친 높이 11px 띠다.
+- **Pointer Events + `setPointerCapture`** 로 끈다(`setupResizeHandle`, app.js "오늘 탭 크기 끌기"). 끄는 동안은 CSS 변수만 바꾸고, 놓을 때 한 번 `saveSettings`. 끄기 시작 크기는 설정값이 아니라 화면에 실제로 보이는 크기로 잡는다(창이 좁아 설정값보다 작게 보일 때 처음에 튀지 않게).
+- **메모가 할 일 목록을 다 가리지 않게 CSS로 막는다.** `.day-memo`를 줄어들 수 있게(flex-shrink 1) 하고 할 일 목록 상자에 `min-height: 80px`를 걸었다. 창이 낮으면 메모가 먼저 줄어든다. 끌 때는 값을 바꾼 뒤 실제 높이를 다시 재서, CSS가 줄였으면 보이는 높이를 저장한다(보이지 않는 여분이 저장되면 반대로 끌 때 손잡이가 한동안 안 따라온다).
+- 기본값 110px은 예전 모양(`rows="4"`, 글자 16px에서 112px, `min-height: 110px`)과 거의 같다. 예전처럼 글자 크기에 따라 높이가 바뀌지는 않는다.
+- 시험: `tests/browser/resize_test.mjs`(41개), `tests/test_settings_api.py`에 메모 칸 높이 4개.

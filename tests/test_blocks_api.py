@@ -111,7 +111,7 @@ check("지운 블록은 목록에 없다", b["id"] not in [x["id"] for x in c.ge
 check("없는 블록 삭제 404", c.delete("/api/time-blocks/%d" % b["id"]).status_code == 404)
 check("GET 잘못된 날짜 400", c.get("/api/time-blocks?date=abc").status_code == 400)
 # [할 일로 만들기]: 할 일과 연결되지 않은 계획 → 그날의 할 일(번호 없음)을 만들고 연결한다
-M = "2026-11-20"
+M = "2031-03-20"  # 시험 날짜를 오늘과 겹치지 않게 먼 날로 둔다 (예전 값 2026-11-20은 그날 이 검사가 실패했다)
 free = post("/api/time-blocks", {"date": M, "start": 720, "end": 780, "title": "점심"}).get_json()
 r = c.post("/api/time-blocks/%d/make-task" % free["id"])
 made = r.get_json()
@@ -132,7 +132,7 @@ c.delete("/api/time-blocks/%d" % free["id"])
 check("계획을 지워도 할 일은 남는다", database.get_task(made["taskId"]) is not None)
 free2 = post("/api/time-blocks", {"date": M, "start": 900, "end": 960, "title": "산책"}).get_json()
 t2 = c.post("/api/time-blocks/%d/make-task" % free2["id"]).get_json()["taskId"]
-patch("/api/tasks/%d" % t2, {"date": "2026-11-21"})
+patch("/api/tasks/%d" % t2, {"date": "2031-03-21"})
 check("할 일을 다른 날로 옮기면 계획이 사라진다", all(b["id"] != free2["id"] for b in c.get("/api/time-blocks?date=" + M).get_json()))
 # 거래(트랜잭션): 연결 단계에서 실패하면 할 일도 만들어지지 않는다. UPDATE time_blocks를 막는 임시 장치(트리거)로 실패를 만든다
 free3 = post("/api/time-blocks", {"date": M, "start": 1000, "end": 1030, "title": "실패 확인"}).get_json()

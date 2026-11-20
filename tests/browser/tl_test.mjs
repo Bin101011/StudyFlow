@@ -657,39 +657,39 @@ const dragSliderTo = async (k, side) => { await openTab("settings"); const e = a
 let w = await layoutWidths();
 check("기본: 시간표 400px, 오른쪽 칸과 달력 300px", Math.abs(w.timeline - 400) < 1 && Math.abs(w.right - 300) < 1 && Math.abs(w.mini - 300) < 1, w);
 await dragSliderTo("todayRightWidth", "right");
-check("시간표가 400이면 오른쪽 칸 슬라이더는 끝까지 끌어도 450에서 막힌다(합 850)",(await sliderState("todayRightWidth")).value === 450 && (await sliderState("todayRightWidth")).text === "450px", await sliderState("todayRightWidth"));
+check("시간표가 400이면 오른쪽 칸 슬라이더는 끝값 500까지 간다(합 900)", (await sliderState("todayRightWidth")).value === 500 && (await sliderState("todayRightWidth")).text === "500px", await sliderState("todayRightWidth"));
 w = await layoutWidths();
-check("오른쪽 칸과 작은 달력이 450px로 넓어진다", Math.abs(w.right - 450) < 1 && Math.abs(w.mini - 450) < 1, w);
+check("오른쪽 칸과 작은 달력이 500px로 넓어진다", Math.abs(w.right - 500) < 1 && Math.abs(w.mini - 500) < 1, w);
 
-// 오른쪽이 450이면 시간표는 400에서 막힌다. 누른 채로 왔다 갔다 해도 손잡이가 한계에서 멈췄다가 다시 따라와야 한다
+// 오른쪽이 500이면 시간표는 400에서 막힌다(합 900). 누른 채로 왔다 갔다 해도 손잡이가 한계에서 멈췄다가 다시 따라와야 한다
 await openTab("settings");
 let e = await sliderEnds("timelineWidth");
 await mouse("mouseMoved", e.x, e.y, 0); await mouse("mousePressed", e.x, e.y);
 for (let i = 1; i <= 6; i++) await mouse("mouseMoved", e.x + (e.right - e.x) * i / 6, e.y, 1);
 const blocked = await sliderState("timelineWidth");
-check("오른쪽이 450이면 시간표는 끄는 도중에도 400에서 막힌다", blocked.value === 400 && blocked.setting === 400 && blocked.text === "400px", blocked);
+check("오른쪽이 500이면 시간표는 끄는 도중에도 400에서 막힌다", blocked.value === 400 && blocked.setting === 400 && blocked.text === "400px", blocked);
 await mouse("mouseMoved", e.left, e.y, 1);
 check("막힌 뒤 왼쪽으로 끌면 손잡이가 따라온다(300)", (await sliderState("timelineWidth")).value === 300, await sliderState("timelineWidth"));
 await mouse("mouseMoved", e.right, e.y, 1);
 check("다시 오른쪽 끝으로 끌면 또 400에서 막힌다", (await sliderState("timelineWidth")).value === 400, await sliderState("timelineWidth"));
 await mouse("mouseReleased", e.right, e.y); await sleep(300);
-check("놓으면 400/450으로 저장된다", JSON.stringify(await savedWidths()) === "[400,450]", await savedWidths());
+check("놓으면 400/500으로 저장된다", JSON.stringify(await savedWidths()) === "[400,500]", await savedWidths());
 
-// 반대 방향: 시간표가 500이면 오른쪽은 350에서 막힌다
+// 반대 방향: 시간표가 500이면 오른쪽은 400에서 막힌다
 await dragSliderTo("todayRightWidth", "left");
 await dragSliderTo("timelineWidth", "right");
 check("오른쪽이 300이면 시간표는 500까지 간다", (await sliderState("timelineWidth")).value === 500, await sliderState("timelineWidth"));
 await dragSliderTo("todayRightWidth", "right");
-check("시간표가 500이면 오른쪽 칸은 350에서 막히고 저장된다", (await sliderState("todayRightWidth")).value === 350 && JSON.stringify(await savedWidths()) === "[500,350]", [await sliderState("todayRightWidth"), await savedWidths()]);
+check("시간표가 500이면 오른쪽 칸은 400에서 막히고 저장된다", (await sliderState("todayRightWidth")).value === 400 && JSON.stringify(await savedWidths()) === "[500,400]", [await sliderState("todayRightWidth"), await savedWidths()]);
 w = await layoutWidths();
-check("시간표 500px, 오른쪽 칸 350px이 실제로 적용된다", Math.abs(w.timeline - 500) < 1 && Math.abs(w.right - 350) < 1 && w.overflow <= 0, w);
+check("시간표 500px, 오른쪽 칸 400px이 실제로 적용된다", Math.abs(w.timeline - 500) < 1 && Math.abs(w.right - 400) < 1 && w.overflow <= 0, w);
 
 // 가장 작은 값(예전 CSS 최솟값 330px 아래)도 실제로 적용되는지
 await dragSliderTo("timelineWidth", "left");
 w = await layoutWidths();
 check("시간표 300px이 실제로 적용된다(330px에 걸리지 않는다)", Math.abs(w.timeline - 300) < 1, w);
 
-// 시간표가 300이면 오른쪽 칸은 끝값 500까지 간다(합 800, 한계 850 안)
+// 시간표가 300이면 오른쪽 칸은 끝값 500까지 간다(합 800, 한계 900 안)
 await dragSliderTo("todayRightWidth", "right");
 check("시간표가 300이면 오른쪽 칸은 500까지 가고 저장된다", (await sliderState("todayRightWidth")).value === 500 && JSON.stringify(await savedWidths()) === "[300,500]", [await sliderState("todayRightWidth"), await savedWidths()]);
 w = await layoutWidths();
