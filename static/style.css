@@ -715,6 +715,35 @@ input.color-dot::-webkit-color-swatch {
     overflow-wrap: anywhere;  /* 띄어쓰기 없이 너무 긴 제목만 칸 끝에서 끊는다 */
 }
 
+/* 시간 있는 일정(색 점 + 시간 + 제목)도 같은 스위치로 줄바꿈한다 (2026-11-20, 사용자 요청).
+   FullCalendar는 세 조각을 가로로 나란히 놓인 상자(flex)로 그린다. 그대로 제목만 줄바꿈하면 둘째 줄이 제목이 시작한 자리(오른쪽)에서
+   시작해서 어색했다(사용자 의견). 그래서 줄바꿈이 켜져 있으면 세 조각을 한 문단처럼 이어진 글(display: block + inline)로 바꾼다.
+   그러면 둘째 줄은 색 점의 왼쪽 끝 아래에서 시작한다.
+   첫 줄 모양(점·시간·제목 위치)은 줄바꿈을 끈 모양과 같게 맞췄다: 점의 왼쪽 여백 4px를 상자 안쪽 여백으로 옮겨서 둘째 줄도 4px에서 시작한다 */
+.wrap-all-day .fc-daygrid-dot-event {
+    display: block;
+    padding-left: 4px;
+    white-space: normal;
+    word-break: keep-all;     /* 한글은 단어 중간이 아니라 띄어쓰기에서 줄바꿈 */
+    overflow-wrap: anywhere;  /* 띄어쓰기 없이 너무 긴 제목만 칸 끝에서 끊는다 */
+}
+
+.wrap-all-day .fc-daygrid-dot-event .fc-event-time,
+.wrap-all-day .fc-daygrid-dot-event .fc-event-title {
+    display: inline;
+}
+
+/* inline-block: 글 사이에 놓이지만 크기(8×8 동그라미)를 가질 수 있는 모양. vertical-align: middle로 글자 가운데쯤에 놓고,
+   position: relative + top으로 조금 올린다. 재 보니 middle만으로는 줄바꿈을 끈 모양보다 한글 제목에서 2.5px, 영어 제목에서 1px 낮아서
+   그 사이(글자 크기의 0.13배, 13.6px에서 약 1.8px)만큼 올렸다. em이라 글자 크기를 바꿔도 같은 비율로 맞는다 */
+.wrap-all-day .fc-daygrid-dot-event .fc-daygrid-event-dot {
+    display: inline-block;
+    margin-left: 0;
+    vertical-align: middle;
+    position: relative;
+    top: -0.13em;
+}
+
 /* 저장을 기다리지 않고 먼저 그린 새 일정: Google 저장이 끝날 때까지 흐리게 보인다 (app.js의 createEventDrawnFirst) */
 .fc .event-saving {
     opacity: 0.55;

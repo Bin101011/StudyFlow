@@ -91,7 +91,7 @@
                     </div>
                 </aside>
                 <!-- 오른쪽: 달력이 그려질 빈 칸. FullCalendar가 이 안에 달력을 만든다 -->
-                <!-- wrap-all-day: 종일 일정의 긴 제목을 줄바꿈한다. 설정 탭의 스위치에 따라 app.js가 붙였다 뗀다 -->
+                <!-- wrap-all-day: 일정(종일, 시간 있는 일정 모두)의 긴 제목을 줄바꿈한다. 이름은 종일 일정만 하던 때의 것이다. 설정 탭의 스위치에 따라 app.js가 붙였다 뗀다 -->
                 <div id="calendar-view" class="wrap-all-day"></div>
             </div>
         </div>
@@ -297,9 +297,9 @@
                 <h2>일정 표시</h2>
                 <label class="settings-row">
                     <input type="checkbox" id="wrap-all-day-checkbox">
-                    <span>종일 일정의 긴 제목은 줄바꿈해서 다 보기</span>
+                    <span>일정의 긴 제목은 줄바꿈해서 다 보기 (종일 일정, 시간 있는 일정 모두)</span>
                 </label>
-                <p class="settings-hint">끄면 제목을 한 줄로 두고 길면 "…"로 줄입니다. 어느 쪽이든 일정 위에 마우스를 올리면 전체 제목과 시간이 보입니다.</p>
+                <p class="settings-hint">끄면 제목을 한 줄로 두고 길면 잘립니다. 어느 쪽이든 일정 위에 마우스를 올리면 전체 제목과 시간이 보입니다.</p>
                 <div class="settings-row">
                     <span class="settings-label">월간 캘린더 줄 수</span>
                     <label class="settings-choice"><input type="radio" name="month-rows" value="6"> 6줄</label>

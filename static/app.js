@@ -7486,7 +7486,7 @@ function applySettings() {
             document.documentElement.style.setProperty(SETTING_CSS_VARS[key], settings[key] + (settingUnits[key] || "px"));
         }
     }
-    // 종일 일정 제목 줄바꿈: 값이 없으면(false가 아니면) 켜진 상태가 기본이다
+    // 일정 제목 줄바꿈(종일·시간 있는 일정 모두. 설정 이름 wrapAllDay는 종일 일정만 하던 때의 것): 값이 없으면(false가 아니면) 켜진 상태가 기본이다
     calendarElement.classList.toggle("wrap-all-day", settings.wrapAllDay !== false);
     // 월간 캘린더의 줄 수(6 또는 7). 바뀌었고 지금 월간 보기를 보고 있다면 같은 달을 새 줄 수로 다시 그린다
     const monthRows = settings.monthRows === 7 ? 7 : 6;
@@ -7747,7 +7747,7 @@ function updateDefaultCalendar() {
     defaultCalendarSelect.value = chosen ? chosen.id : "";
 }
 
-// 설정 탭에서 종일 일정 줄바꿈 스위치를 눌렀을 때: 바로 반영하고 저장한다
+// 설정 탭에서 일정 제목 줄바꿈 스위치를 눌렀을 때: 바로 반영하고 저장한다
 wrapAllDayCheckbox.addEventListener("change", function () {
     settings.wrapAllDay = wrapAllDayCheckbox.checked;
     applySettings();

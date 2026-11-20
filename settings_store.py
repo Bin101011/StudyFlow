@@ -57,7 +57,8 @@ DEFAULT_CALENDAR_KEY = "defaultCalendarId"
 # 2) "내 캘린더" 목록에서 체크를 꺼서 숨기기로 한 캘린더들의 id 리스트
 HIDDEN_CALENDARS_KEY = "hiddenCalendarIds"
 
-# 3) 종일 일정의 긴 제목을 줄바꿈해서 다 보여줄지 (True/False). 끄면 한 줄로 두고 길면 "…"로 줄인다
+# 3) 일정의 긴 제목을 줄바꿈해서 다 보여줄지 (True/False). 끄면 한 줄로 두고 길면 줄인다.
+#    처음에는 종일 일정만이었고 2026-11-20부터 시간 있는 일정에도 쓴다(이름은 저장 파일과 맞추려고 그대로 둔다)
 WRAP_ALL_DAY_KEY = "wrapAllDay"
 
 # 4) Pomodoro 타이머가 끝났을 때 알림 소리를 낼지 (True/False)
