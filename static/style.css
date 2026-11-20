@@ -1657,9 +1657,9 @@ body.resizing-y * {
     width: 84px;
 }
 
-/* 메모 입력 칸들(일정 줄, 하루 메모, 일정 창)이 같이 쓰는 모양 */
+/* 메모 입력 칸들(일정 줄, 하루 메모, 일정 창)이 같이 쓰는 모양. 하루 메모(#day-memo)는 textarea가 아니라 서식 칸(contenteditable)이다 */
 .tl-popover textarea,
-.day-memo textarea,
+#day-memo,
 .project-memo-input,
 .task-memo-input,
 #project-memo,
@@ -1682,7 +1682,7 @@ body.resizing-y * {
 }
 
 .tl-popover textarea:focus,
-.day-memo textarea:focus,
+#day-memo:focus,
 .project-memo-input:focus,
 .task-memo-input:focus,
 #project-memo:focus,
@@ -1693,7 +1693,6 @@ body.resizing-y * {
 }
 
 .tl-popover textarea::placeholder,
-.day-memo textarea::placeholder,
 .project-memo-input::placeholder,
 .task-memo-input::placeholder,
 #project-memo::placeholder,
@@ -1724,12 +1723,48 @@ body.resizing-y * {
     margin-bottom: 8px;
 }
 
-/* resize: none — 입력 칸 오른쪽 아래의 브라우저 기본 손잡이는 없앤다(높이는 위쪽 선을 끌어서 바꾸고, 그래야 저장된다) */
-.day-memo textarea {
+/* 하루 메모 서식 칸(contenteditable, 2026-11-20). textarea가 아니라서 textarea가 저절로 하던 일을 여기서 직접 정한다.
+   - resize: none — 오른쪽 아래의 크기 손잡이를 없앤다(높이는 위쪽 선을 끌어서 바꾸고, 그래야 저장된다)
+   - overflow-y: auto — 글이 칸보다 길면 칸 안에서 스크롤된다
+   - white-space: pre-wrap — 띄어쓰기를 여러 번 해도 그대로 두고, 칸 끝에서는 줄을 바꾼다. overflow-wrap: anywhere — 띄어쓰기 없는 긴 글자도 칸 끝에서 끊는다
+   - user-select: text, cursor: text — 프로그램 창(pywebview)은 body 전체에 "글자 선택 금지 + 화살표 커서"를 걸어 두는데,
+     textarea는 그 영향을 안 받지만 이 칸은 받는다. 그래서 이 칸과 안쪽의 굵은 글자 등에서 다시 켠다(안 그러면 진짜 앱에서만 글자를 고르지 못한다)
+   - position: relative — 비어 있을 때 보이는 예시 글자(::before)가 이 칸을 기준으로 자리를 잡는다 */
+#day-memo {
     flex: 0 1 auto;
     height: var(--day-memo-height, 110px);
     min-height: 60px;
     resize: none;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    position: relative;
+    cursor: text;
+}
+
+#day-memo,
+#day-memo * {
+    -webkit-user-select: text;
+    user-select: text;
+}
+
+/* 예시 글자: 칸이 비어 있으면(app.js가 empty를 붙인다) 안쪽 여백 자리에 흐린 글자로 보인다. 글자가 아니라 그림처럼 놓여서 커서나 저장 내용에 끼어들지 않는다 */
+#day-memo.empty::before {
+    content: attr(data-placeholder);
+    position: absolute;
+    top: 7px;
+    left: 10px;
+    right: 10px;
+    color: var(--text-faint);
+    pointer-events: none;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+/* 서식: 굵게(<b>), 기울임(<i>), 취소선(<strike>, <s>). 굵기는 브라우저 기본(bolder) 대신 700으로 정해 둔다 */
+#day-memo b,
+#day-memo strong {
+    font-weight: 700;
 }
 
 /* 메모 위쪽 선(border-top)을 잡는 손잡이: 선 위아래로 5px씩 넉넉하게 잡히고, 마우스를 올리면 선이 파랗게 굵어진다 */
@@ -1760,8 +1795,10 @@ body.resizing-y * {
     background-color: var(--accent);
 }
 
-.day-memo textarea:disabled {
+/* 불러오는 중이거나 못 불러와서 잠긴 칸 (app.js가 disabled를 붙인다. textarea의 :disabled 대신) */
+#day-memo.disabled {
     background-color: var(--surface);
+    cursor: default;
 }
 
 /* 제목 오른쪽의 저장 상태 글자 ("수정 중…", "저장됨") */

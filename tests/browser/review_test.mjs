@@ -165,11 +165,11 @@ check("새 날짜를 설정에 적는다", (await api("/api/settings")).data.val
 
 console.log("--- 글을 쓰는 중에는 기다렸다가 띄운다 ---");
 await js(`document.querySelector('[data-tab="today"]').click()`); await sleep(1200);
-await waitFor(async () => await js(`!dayMemoInput.disabled`), 5000);
+await waitFor(async () => await js(`dayMemoInput.isContentEditable`), 5000);
 await js(`dayMemoInput.focus()`); await type("메모 쓰는 중"); await sleep(200);
 await shiftDays(1); await wake(); await sleep(1500);
 check("메모 칸에 쓰는 중에는 창이 뜨지 않는다", !(await isOpen()));
-check("쓰던 글자가 그대로", (await js(`dayMemoInput.value`)).includes("메모 쓰는 중"));
+check("쓰던 글자가 그대로", (await js(`dayMemoInput.innerText`)).includes("메모 쓰는 중"));
 await js(`document.activeElement.blur()`); await sleep(300); await wake();
 check("메모 칸에서 나온 뒤 다음 확인 때 뜬다", await waitFor(isOpen, 5000));
 await pressEscape();

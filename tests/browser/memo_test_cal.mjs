@@ -92,19 +92,22 @@ await api("/api/events/" + id1, "PATCH", { calendarId: "me@test", description: "
 console.log("--- G. 하루 메모 ---");
 await js(`document.querySelector('[data-tab="today"]').click()`); await sleep(2000);
 const today = await js(`viewedDate`);
+// 하루 메모 칸은 서식 칸(contenteditable)이다(2026-11-20). 글자는 innerText, 쓸 수 있는지는 isContentEditable로 본다. 서버에는 html로 저장된다
 const DM = `document.getElementById("day-memo")`;
-check("하루 메모 칸이 열려 있다(불러온 뒤 활성)", (await js(`${DM}.disabled`)) === false && (await js(`${DM}.value`)) === "");
+const textOf = (h) => js(`(() => { const d = document.createElement("div"); d.style.whiteSpace = "pre-wrap"; d.innerHTML = DOMPurify.sanitize(${JSON.stringify(h)}); document.body.appendChild(d); const t = d.innerText; d.remove(); return t; })()`);
+const memoText = async (date) => textOf((await api("/api/day-memo?date=" + date)).data.content);
+check("하루 메모 칸이 열려 있다(불러온 뒤 활성)", (await js(`${DM}.isContentEditable`)) === true && (await js(`${DM}.innerText`)) === "");
 await js(`${DM}.focus()`);
 await type("오늘 장볼 것: 우유\n계란");
 check("입력 중 상태 글자", (await js(`document.getElementById("day-memo-status").textContent`)) === "수정 중…");
 await sleep(1900);
-check("입력을 멈추고 1초 뒤 저장 + '저장됨'", (await api("/api/day-memo?date=" + today)).data.content === "오늘 장볼 것: 우유\n계란" && (await js(`document.getElementById("day-memo-status").textContent`)) === "저장됨");
+check("입력을 멈추고 1초 뒤 저장 + '저장됨'", (await memoText(today)) === "오늘 장볼 것: 우유\n계란" && (await js(`document.getElementById("day-memo-status").textContent`)) === "저장됨");
 await shot("g_daymemo.png");
 
 // 새로 불러와도 남아 있다 (DB에 저장됨)
 await send("Page.navigate", { url: BASE + "/" }); await sleep(3000);
 await js(`document.querySelector('[data-tab="today"]').click()`); await sleep(2000);
-check("새로고침해도 하루 메모가 남아 있다", (await js(`${DM}.value`)) === "오늘 장볼 것: 우유\n계란");
+check("새로고침해도 하루 메모가 남아 있다", (await js(`${DM}.innerText`)) === "오늘 장볼 것: 우유\n계란");
 
 // 쓰자마자 날짜를 넘겨도 저장된다
 await js(`${DM}.focus()`);
@@ -112,21 +115,21 @@ await type("\n추가한 줄");
 await js(`document.getElementById("day-next").click()`);   // 1초를 기다리지 않고 바로 다음 날로
 await sleep(1200);
 const tomorrowText = await js(`viewedDate`);
-check("쓰자마자 날짜를 넘겨도 원래 날짜에 저장된다", (await api("/api/day-memo?date=" + today)).data.content === "오늘 장볼 것: 우유\n계란\n추가한 줄", (await api("/api/day-memo?date=" + today)).data);
-check("다음 날의 메모 칸은 비어 있다", (await js(`${DM}.value`)) === "" && (await js(`${DM}.disabled`)) === false);
+check("쓰자마자 날짜를 넘겨도 원래 날짜에 저장된다", (await memoText(today)) === "오늘 장볼 것: 우유\n계란\n추가한 줄", (await api("/api/day-memo?date=" + today)).data);
+check("다음 날의 메모 칸은 비어 있다", (await js(`${DM}.innerText`)) === "" && (await js(`${DM}.isContentEditable`)) === true);
 // 다음 날에 쓰고 빠르게 앞뒤로 넘기기
 await js(`${DM}.focus()`);
 await type("내일 메모");
 await js(`document.getElementById("day-prev").click(); document.getElementById("day-next").click();`);
 await sleep(1500);
-check("빠르게 앞뒤로 넘겨도 내일 메모가 저장되고 다시 보인다", (await api("/api/day-memo?date=" + tomorrowText)).data.content === "내일 메모" && (await js(`${DM}.value`)) === "내일 메모", { api: (await api("/api/day-memo?date=" + tomorrowText)).data, ui: await js(`${DM}.value`) });
+check("빠르게 앞뒤로 넘겨도 내일 메모가 저장되고 다시 보인다", (await memoText(tomorrowText)) === "내일 메모" && (await js(`${DM}.innerText`)) === "내일 메모", { api: (await api("/api/day-memo?date=" + tomorrowText)).data, ui: await js(`${DM}.innerText`) });
 // 방향키는 글자 이동에만 쓰이고 날짜를 넘기지 않는다
 await js(`${DM}.focus()`);
 await js(`${DM}.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }))`);
 await sleep(300);
 check("메모 칸에서 ←/→ 키는 날짜를 넘기지 않는다", (await js(`viewedDate`)) === tomorrowText);
 // 비우면 지워진다
-await js(`${DM}.value = ""; ${DM}.dispatchEvent(new Event("input", { bubbles: true })); ${DM}.blur();`);
+await js(`${DM}.textContent = ""; ${DM}.dispatchEvent(new Event("input", { bubbles: true })); ${DM}.blur();`);
 await sleep(800);
 check("모두 지우면 메모가 삭제된다", (await api("/api/day-memo?date=" + tomorrowText)).data.content === "");
 

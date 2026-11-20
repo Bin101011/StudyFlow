@@ -961,6 +961,18 @@ def valid_date(text):
 
 # 하루 메모(오늘 탭): 날짜마다 하나씩 적는 자유 메모. 일정에 붙이는 메모와 달리 Google에는 보내지 않고 내 컴퓨터에만 저장한다
 DAY_MEMO_MAX = 20000
+# 형식(2026-11-20): "text"는 글자 그대로, "html"은 굵게·기울임·취소선이 들어간 서식 메모(화면이 <b>, <i>, <strike>, <br> 같은 태그로 보낸다).
+# html은 태그만큼 길어지므로 한계를 넉넉히 둔다. 글자 수 한계(20000자)는 화면이 지킨다
+DAY_MEMO_FORMATS = ("text", "html")
+DAY_MEMO_HTML_MAX = 100000
+
+
+def html_has_text(content):
+    """html 메모에 태그를 빼고 보이는 글자가 있는지. <br>만 남은 메모(다 지운 칸)를 빈 메모로 보기 위해 쓴다.
+    &nbsp;(띄어쓰기 기호)도 빈칸으로 본다"""
+    text = re.sub(r"<[^>]*>", "", content)
+    text = re.sub(r"&nbsp;|&#160;", " ", text)
+    return text.strip() != ""
 
 
 @app.route("/api/day-memo")
@@ -968,10 +980,12 @@ def api_get_day_memo():
     date = request.args.get("date", "")
     if not valid_date(date):
         return jsonify({"error": "'date'는 2026-10-19 같은 날짜여야 합니다."}), 400
-    return jsonify({"date": date, "content": database.get_day_memo(date)})
+    content, memo_format = database.get_day_memo(date)
+    return jsonify({"date": date, "content": content, "format": memo_format})
 
 
-# PUT: 그날의 메모를 통째로 바꾼다. 내용이 비어 있으면 메모를 지운다 (화면이 입력을 멈출 때마다 전체 내용을 보낸다)
+# PUT: 그날의 메모를 통째로 바꾼다. 내용이 비어 있으면 메모를 지운다 (화면이 입력을 멈출 때마다 전체 내용을 보낸다).
+# format을 안 보내면 "text"다 (서식 기능 전의 요청과 같다)
 @app.route("/api/day-memo", methods=["PUT"])
 def api_save_day_memo():
     data = request.get_json()
@@ -982,9 +996,16 @@ def api_save_day_memo():
         return jsonify({"error": "'date'는 2026-10-19 같은 날짜여야 합니다."}), 400
     if not isinstance(data["content"], str):
         return jsonify({"error": "'content'는 글자여야 합니다."}), 400
-    if len(data["content"]) > DAY_MEMO_MAX:
+    memo_format = data.get("format", "text")
+    if memo_format not in DAY_MEMO_FORMATS:
+        return jsonify({"error": "'format'은 \"text\" 또는 \"html\"이어야 합니다."}), 400
+    limit = DAY_MEMO_HTML_MAX if memo_format == "html" else DAY_MEMO_MAX
+    if len(data["content"]) > limit:
         return jsonify({"error": f"메모는 {DAY_MEMO_MAX}자까지 쓸 수 있습니다."}), 400
-    database.set_day_memo(data["date"], data["content"])
+    content = data["content"]
+    if memo_format == "html" and not html_has_text(content):
+        content = ""  # 보이는 글자가 없으면 지운다 (database.set_day_memo가 빈 내용을 지운다)
+    database.set_day_memo(data["date"], content, memo_format)
     return jsonify({"ok": True})
 
 

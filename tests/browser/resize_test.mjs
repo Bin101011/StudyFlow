@@ -55,7 +55,7 @@ await send("Emulation.setDeviceMetricsOverride", { width: 1500, height: 900, dev
 await send("Page.addScriptToEvaluateOnNewDocument", { source: `Object.defineProperty(document, "hidden", { get: () => false });` });
 await send("Page.navigate", { url: BASE + "/" }); await sleep(3500);
 await js(`document.querySelector('[data-tab="today"]').click()`);
-await waitFor(async () => (await js(`settingsLoaded && !document.getElementById("day-memo").disabled`)), 15000);
+await waitFor(async () => (await js(`settingsLoaded && document.getElementById("day-memo").isContentEditable`)), 15000);
 await sleep(500);
 
 // ===== A. 처음 모양 =====
@@ -143,7 +143,7 @@ check("다시 위로 120 끌면 180px", near((await state()).memo, 180) && (awai
 const memoBox = JSON.parse(await js(`JSON.stringify(document.getElementById("day-memo").getBoundingClientRect())`));
 await click(memoBox.x + 40, memoBox.y + 30);
 await send("Input.insertText", { text: "크기 시험" });
-check("메모 칸을 눌러 글을 쓸 수 있다", (await js(`document.getElementById("day-memo").value`)).endsWith("크기 시험"));
+check("메모 칸을 눌러 글을 쓸 수 있다", (await js(`document.getElementById("day-memo").innerText`)).endsWith("크기 시험"));
 
 // ===== E. 창이 낮아지면 메모가 줄어든다 =====
 console.log("--- E. 창 높이 ---");

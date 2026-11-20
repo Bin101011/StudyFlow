@@ -185,6 +185,12 @@ def init_db():
     if "memo" not in [column["name"] for column in columns]:
         run("ALTER TABLE projects ADD COLUMN memo TEXT NOT NULL DEFAULT ''")
 
+    # 하루 메모의 형식(2026-11-20): "text"는 글자 그대로(줄바꿈은 \n), "html"은 굵게·기울임·취소선이 들어간 서식 메모(<b>, <i>, <strike>, 줄은 <br>/<div>).
+    # 서식을 넣기 전에 쓴 메모는 모두 "text"로 남는다(DEFAULT 'text'). 옛 메모의 내용은 여기서 바꾸지 않고, 사용자가 그 메모를 고칠 때 화면이 "html"로 저장한다
+    columns, _ = run("PRAGMA table_info(day_memos)")
+    if "format" not in [column["name"] for column in columns]:
+        run("ALTER TABLE day_memos ADD COLUMN format TEXT NOT NULL DEFAULT 'text'")
+
     # 인덱스(색인): 책 뒤의 "찾아보기"처럼, 표 전체를 처음부터 끝까지 훑지 않고 원하는 줄을 바로 찾게 해 주는 장치다.
     # 특히 parent_id가 중요하다. NO_CHILDREN("하위 단계가 있는가?")이 할 일 한 줄마다 "나를 부모로 삼는 줄이 있나?"를 묻는데,
     # 인덱스가 없으면 그때마다 표 전체를 훑어서 할 일이 늘수록 제곱으로 느려진다 (3,000개에서 우선순위 탭이 0.8초, 9,000개에서 10초).
@@ -696,19 +702,20 @@ def delete_time_block(block_id):
 # ---------- 하루 메모 ----------
 
 def get_day_memo(date):
-    """그날의 메모 내용을 돌려준다. 메모가 없으면 빈 글자."""
-    rows, _ = run("SELECT content FROM day_memos WHERE date = ?", (date,))
-    return rows[0]["content"] if rows else ""
+    """그날의 메모를 (내용, 형식)으로 돌려준다. 형식은 "text" 또는 "html"(init_db의 설명). 메모가 없으면 ("", "text")."""
+    rows, _ = run("SELECT content, format FROM day_memos WHERE date = ?", (date,))
+    return (rows[0]["content"], rows[0]["format"]) if rows else ("", "text")
 
 
-def set_day_memo(date, content):
-    """그날의 메모를 저장한다. 내용이 비어 있으면(공백뿐인 경우도) 메모를 지운다."""
+def set_day_memo(date, content, memo_format="text"):
+    """그날의 메모를 저장한다. 내용이 비어 있으면(공백뿐인 경우도) 메모를 지운다.
+    memo_format은 "text" 또는 "html"이다. 고르는 일과 html이 비었는지 보는 일은 app.py가 미리 한다."""
     if content.strip() == "":
         run("DELETE FROM day_memos WHERE date = ?", (date,))
         return
-    # ON CONFLICT ... DO UPDATE: 그 날짜의 메모가 이미 있으면 새로 만들지 않고 내용만 바꾼다 (없으면 새로 만든다)
+    # ON CONFLICT ... DO UPDATE: 그 날짜의 메모가 이미 있으면 새로 만들지 않고 내용과 형식만 바꾼다 (없으면 새로 만든다)
     run(
-        "INSERT INTO day_memos (date, content) VALUES (?, ?) "
-        "ON CONFLICT(date) DO UPDATE SET content = excluded.content",
-        (date, content),
+        "INSERT INTO day_memos (date, content, format) VALUES (?, ?, ?) "
+        "ON CONFLICT(date) DO UPDATE SET content = excluded.content, format = excluded.format",
+        (date, content, memo_format),
     )

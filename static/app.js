@@ -1601,7 +1601,8 @@ async function pasteCopiedEvent() {
 document.addEventListener("keydown", function (e) {
     // 창이 하나라도 열려 있거나 글자 입력 칸에 커서가 있으면, 그 칸의 평소 복사/붙여넣기가 우선이다.
     // (예전에는 일정 창만 봤다. 아침 정리 창은 마우스가 일정 위에 있을 때 저절로 뜰 수 있어서, 창 뒤의 일정이 복사·붙여넣기되지 않게 모든 창을 본다)
-    if (document.querySelector("dialog[open]") || ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)) {
+    // (서식 칸(isContentEditable, 하루 메모)도 글자 입력 칸으로 본다. 하루 메모는 오늘 탭에 있어서 지금은 겹칠 일이 없지만, 칸이 늘어도 안전하게)
+    if (document.querySelector("dialog[open]") || ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName) || document.activeElement.isContentEditable) {
         return;
     }
     // 캘린더 탭이 아닌 곳에서는 동작하지 않는다
@@ -2253,12 +2254,12 @@ function checkDayRollover() {
     if (toDateText(new Date()) === todayText) {
         return;
     }
-    // 글자를 쓰는 중이거나 시간표를 끄는 중이면 건드리지 않고 다음 확인 때 다시 본다.
+    // 글자를 쓰는 중이거나 시간표를 끄는 중이면 건드리지 않고 다음 확인 때 다시 본다. (하루 메모는 textarea가 아니라 서식 칸(isContentEditable)이다)
     // 메모를 쓰다가 갑자기 다음 날의 빈 메모 칸으로 바뀌면 안 되기 때문이다. (할 일 입력 칸은 화면을 다시 그려도 지워지지 않으므로 제외한다)
     const active = document.activeElement;
     const typing = active && document.getElementById("today").contains(active) &&
         active.id !== "task-input" && active.id !== "inbox-input" &&
-        (active.tagName === "TEXTAREA" || (active.tagName === "INPUT" && active.type === "text"));
+        (active.tagName === "TEXTAREA" || active.isContentEditable || (active.tagName === "INPUT" && active.type === "text"));
     if (typing || isTimelineBusy()) {
         return;
     }
@@ -4584,14 +4585,62 @@ function showDay(dateText) {
 // ----- 하루 메모 -----
 // 날짜마다 하나씩 적는 자유 메모. 일정과 상관없는 그날의 생각, 챙길 것 등을 적는다. 내 컴퓨터(studyflow.db)에만 저장하고 Google에는 보내지 않는다.
 // 입력을 멈추고 1초 뒤, 또는 다른 곳을 누르거나 다른 날로 넘길 때 저절로 저장된다. 내용을 모두 지우면 메모가 사라진다.
+//
+// 서식(2026-11-20): Ctrl+B 굵게, Ctrl+I 기울임, Ctrl+5 취소선. 그래서 칸이 textarea가 아니라 서식 칸(contenteditable인 <div>)이다.
+//  - 저장 모양: 칸 안의 HTML(<b>, <i>, <strike>, 줄바꿈 등)을 DOMPurify로 거른 글자를 format "html"로 보낸다.
+//  - 서식 기능 전에 쓴 메모는 서버에 format "text"(글자 그대로)로 남아 있다. 글자 그대로 칸에 넣어 보여 주고(white-space: pre-wrap이라 줄바꿈이 보인다),
+//    사용자가 고칠 때만 "html"로 저장한다. 그냥 보기만 하면 옛 메모를 다시 저장하지 않는다.
+//  - textarea가 저절로 해 주던 일(value, disabled, 예시 글자, 글자 수 한계, 붙여넣기는 글자만)을 아래 함수들이 대신한다.
 const dayMemoInput = document.getElementById("day-memo");
 const dayMemoStatus = document.getElementById("day-memo-status");
 const DAY_MEMO_SAVE_DELAY_MS = 1000;
-const DAY_MEMO_MAX = 20000;  // 서버(app.py의 DAY_MEMO_MAX)와 같은 값
-dayMemoInput.maxLength = DAY_MEMO_MAX;
+const DAY_MEMO_MAX = 20000;  // 보이는 글자 수 한계. 서버(app.py의 DAY_MEMO_MAX)와 같은 값
+
+// 서식 메모에 남겨 두는 태그. 굵게(b, strong), 기울임(i, em), 취소선(s, strike), 줄(br, div, p).
+// 그 밖의 태그(span, img, script 등)와 모든 속성(style, onclick 등)은 지운다. 태그를 지워도 안의 글자는 남는다(script 같은 위험한 것은 글자도 지운다)
+const DAY_MEMO_TAGS = ["b", "strong", "i", "em", "s", "strike", "br", "div", "p"];
+
+function cleanDayMemoHtml(html) {
+    return DOMPurify.sanitize(html, { ALLOWED_TAGS: DAY_MEMO_TAGS, ALLOWED_ATTR: [] });
+}
+
+// 칸의 지금 내용을 저장할 모양(HTML 글자)으로 돌려준다. 보이는 글자가 없으면(띄어쓰기·줄바꿈뿐이어도) ""(= 메모 지우기).
+// textContent = 태그를 빼고 글자만 이어 붙인 것
+function dayMemoContent() {
+    if (dayMemoInput.textContent.trim() === "") {
+        return "";
+    }
+    return cleanDayMemoHtml(dayMemoInput.innerHTML);
+}
+
+// 칸이 비어 있으면 예시 글자를 보이게 한다 (style.css의 #day-memo.empty::before)
+function updateDayMemoEmpty() {
+    dayMemoInput.classList.toggle("empty", dayMemoInput.textContent === "");
+}
+
+// 서버에서 받은 메모를 칸에 채운다. format이 "html"이 아니면(서식 기능 전의 메모) 글자 그대로 넣는다
+function fillDayMemo(content, format) {
+    dayMemoCaret = null;  // 새 글을 채우면 기억한 커서 자리는 버린다(다음에 들어오면 글의 끝에서 시작. textarea와 같다)
+    if (format === "html") {
+        dayMemoInput.innerHTML = cleanDayMemoHtml(content);
+    } else {
+        dayMemoInput.textContent = content;
+    }
+    updateDayMemoEmpty();
+}
+
+// 칸을 쓸 수 있게 하거나 잠근다 (textarea의 disabled 대신). 잠글 때 커서가 칸에 있으면 빼낸다
+function setDayMemoEnabled(enabled) {
+    dayMemoInput.contentEditable = enabled ? "true" : "false";
+    dayMemoInput.classList.toggle("disabled", !enabled);
+    dayMemoInput.setAttribute("aria-disabled", String(!enabled));
+    if (!enabled && document.activeElement === dayMemoInput) {
+        dayMemoInput.blur();
+    }
+}
 
 let dayMemoDate = null;     // 입력 칸의 글이 어느 날짜의 것인지. null이면 불러오는 중이라 칸을 쓸 수 없다
-let dayMemoSaved = "";      // 서버에 저장된 것으로 아는 내용
+let dayMemoSaved = "";      // 서버에 저장된 것으로 아는 내용 (dayMemoContent()와 같은 모양)
 let dayMemoTimer = null;    // "입력을 멈추고 1초 뒤 저장"을 기다리는 타이머
 // 저장 요청들을 한 줄로 세워 하나씩 보낸다. 날짜를 빠르게 넘길 때 요청이 뒤섞여 옛 내용이 새 내용을 덮어쓰는 일을 막으려는 것이다.
 // Promise는 "나중에 끝나는 일"을 담는 자바스크립트 상자이고, .then(...)으로 "이 일이 끝나면 다음 일"을 이어 붙인다
@@ -4606,12 +4655,15 @@ function setDayMemoStatus(text, isError) {
 // keepalive가 true면(창이 닫히는 중) 줄을 서지 않고 바로 보내고, 창이 닫혀도 요청이 끝까지 가도록 한다
 function saveDayMemo(keepalive) {
     clearTimeout(dayMemoTimer);
-    if (dayMemoDate === null || dayMemoInput.value === dayMemoSaved) {
+    if (dayMemoDate === null) {
         return dayMemoQueue;
     }
     // 보내는 순간의 날짜와 내용을 지금 붙잡아 둔다. 줄을 서서 기다리는 사이에 날짜가 바뀌어도 이 날짜에 저장되어야 한다
     const date = dayMemoDate;
-    const content = dayMemoInput.value;
+    const content = dayMemoContent();
+    if (content === dayMemoSaved) {
+        return dayMemoQueue;
+    }
     setDayMemoStatus("저장 중…");
 
     async function send() {
@@ -4619,7 +4671,7 @@ function saveDayMemo(keepalive) {
             const response = await fetch("/api/day-memo", {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ date: date, content: content }),
+                body: JSON.stringify({ date: date, content: content, format: "html" }),
                 keepalive: Boolean(keepalive),
             });
             if (!response.ok) {
@@ -4628,7 +4680,7 @@ function saveDayMemo(keepalive) {
             if (dayMemoDate === date) {
                 dayMemoSaved = content;
                 // 보내는 사이에 더 썼다면 아직 "수정 중"이다 (곧 다음 저장이 일어난다)
-                setDayMemoStatus(dayMemoInput.value === content ? "저장됨" : "수정 중…");
+                setDayMemoStatus(dayMemoContent() === content ? "저장됨" : "수정 중…");
             }
         } catch (error) {
             showToast("메모를 저장하지 못했습니다: " + error.message);
@@ -4652,10 +4704,14 @@ async function loadDayMemo(dateText) {
     saveDayMemo();
     dayMemoDate = null;
     dayMemoSaved = "";
-    dayMemoInput.value = "";
-    dayMemoInput.disabled = true;
+    fillDayMemo("", "text");
+    setDayMemoEnabled(false);
     setDayMemoStatus("");
     try {
+        // 거르는 도구(DOMPurify, static/lib/purify.min.js)를 못 읽었으면 서식 메모를 안전하게 보이거나 저장할 수 없다. 칸을 잠가 둔다(아래 catch)
+        if (typeof DOMPurify === "undefined") {
+            throw new Error("DOMPurify를 불러오지 못했습니다");
+        }
         await dayMemoQueue;  // 방금 세운 저장이 끝난 뒤에 읽어야 같은 날로 돌아왔을 때 옛 내용이 보이지 않는다
         const response = await fetch("/api/day-memo?date=" + dateText);
         if (!response.ok) {
@@ -4666,9 +4722,11 @@ async function loadDayMemo(dateText) {
             return;  // 그 사이 다른 날로 넘어갔다
         }
         dayMemoDate = dateText;
-        dayMemoSaved = data.content;
-        dayMemoInput.value = data.content;
-        dayMemoInput.disabled = false;
+        fillDayMemo(data.content, data.format);
+        // 서버의 글자 그대로가 아니라 "칸에 채운 뒤의 모양"을 저장된 내용으로 기억한다.
+        // 그래야 옛 메모(text)를 보기만 했을 때나 브라우저가 HTML을 조금 다르게 적었을 때 바뀐 것으로 잘못 알고 저장하지 않는다
+        dayMemoSaved = dayMemoContent();
+        setDayMemoEnabled(true);
     } catch (error) {
         console.error("하루 메모를 불러오지 못했습니다:", error);
         if (dateText === viewedDate) {
@@ -4679,13 +4737,49 @@ async function loadDayMemo(dateText) {
 }
 
 dayMemoInput.addEventListener("input", function () {
+    updateDayMemoEmpty();
     setDayMemoStatus("수정 중…");
     clearTimeout(dayMemoTimer);
     dayMemoTimer = setTimeout(saveDayMemo, DAY_MEMO_SAVE_DELAY_MS);
 });
-// 다른 곳을 누르면 기다리지 않고 바로 저장한다
+// 커서 자리 되살리기: textarea는 칸마다 커서 자리를 기억해서, 다시 들어오면(Tab 키 등) 그 자리에서 이어 쓰고, 새 글을 채우면 끝에서 시작했다.
+// 서식 칸은 그냥 두면 들어올 때마다 글의 맨 앞에 커서가 가서 이어 쓴 글이 앞에 붙는다. 그래서 칸에서 나갈 때의 커서 자리를 기억해 두고,
+// 마우스가 아닌 방법으로 들어오면 되살린다(기억이 없으면 글의 끝). 마우스로 누른 경우에는 브라우저가 누른 자리에 커서를 두므로 건드리지 않는다.
+// Range = 글 안의 한 구간(또는 한 자리). cloneRange로 복사해 둔다
+let dayMemoCaret = null;
+let dayMemoPointerDown = false;
+dayMemoInput.addEventListener("pointerdown", function () {
+    dayMemoPointerDown = true;
+});
+// 칸 밖에서 손을 떼도 풀리게 문서 전체에서 듣는다 (true = 다른 코드보다 먼저 듣기. 아무것도 막지 않는다)
+document.addEventListener("pointerup", function () {
+    dayMemoPointerDown = false;
+}, true);
+document.addEventListener("pointercancel", function () {
+    dayMemoPointerDown = false;
+}, true);
+
+// 다른 곳을 누르면 기다리지 않고 바로 저장한다. 나가기 전의 커서 자리도 기억해 둔다
 dayMemoInput.addEventListener("blur", function () {
+    const selection = window.getSelection();
+    dayMemoCaret = selection.rangeCount && selection.anchorNode !== dayMemoInput && dayMemoInput.contains(selection.anchorNode)
+        ? selection.getRangeAt(0).cloneRange() : null;
     saveDayMemo();
+});
+dayMemoInput.addEventListener("focus", function () {
+    if (dayMemoPointerDown) {
+        return;
+    }
+    let range = dayMemoCaret;
+    // 기억한 자리의 글이 그 사이 사라졌으면(다른 날의 메모를 채움 등) 쓰지 않는다
+    if (!range || !dayMemoInput.contains(range.startContainer) || !dayMemoInput.contains(range.endContainer)) {
+        range = document.createRange();
+        range.selectNodeContents(dayMemoInput);
+        range.collapse(false);  // false = 끝으로 모은다
+    }
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
 });
 // 창이 가려지거나 닫히기 직전에 저장 안 한 글이 있으면 서둘러 저장한다
 document.addEventListener("visibilitychange", function () {
@@ -4695,6 +4789,94 @@ document.addEventListener("visibilitychange", function () {
 });
 window.addEventListener("pagehide", function () {
     saveDayMemo(true);
+});
+
+// 서식 단축키. 키의 자리(e.code)로 봐서 한글 입력 상태에서도 된다. Ctrl과 함께, Shift·Alt·Win 없이 누를 때만.
+// Ctrl+U(밑줄)는 브라우저가 저절로 밑줄을 넣지만, 남기는 태그가 아니라서 저장하면 사라지므로 아무 일도 안 하게 막는다(null)
+const DAY_MEMO_SHORTCUTS = { KeyB: "bold", KeyI: "italic", Digit5: "strikeThrough", Numpad5: "strikeThrough", KeyU: null };
+dayMemoInput.addEventListener("keydown", function (e) {
+    if (!e.ctrlKey || e.altKey || e.shiftKey || e.metaKey || !(e.code in DAY_MEMO_SHORTCUTS)) {
+        return;
+    }
+    e.preventDefault();  // 브라우저가 스스로 하는 서식(Ctrl+B 등)과 두 번 겹치지 않게
+    const command = DAY_MEMO_SHORTCUTS[e.code];
+    // 꾹 눌러서 저절로 반복된 입력(e.repeat)은 무시한다 (굵게가 켜졌다 꺼졌다 깜빡이지 않게)
+    if (command && !e.repeat && dayMemoInput.isContentEditable) {
+        // execCommand: 고른 글자에(고른 게 없으면 이제부터 쓸 글자에) 서식을 켜거나 끈다. 브라우저의 되돌리기(Ctrl+Z)에도 들어간다.
+        // 오래된 방법이라 "앞으로 바뀔 수 있음"으로 표시되어 있지만, 서식 칸에서 되돌리기와 함께 쓸 수 있는 방법은 아직 이것뿐이다
+        document.execCommand(command);
+    }
+});
+
+// 칸 안에서 고른 글자의 수 (글자 수 한계를 잴 때 바뀔 부분을 빼려고)
+function dayMemoSelectedLength() {
+    const selection = window.getSelection();
+    if (!selection.rangeCount || !dayMemoInput.contains(selection.anchorNode)) {
+        return 0;
+    }
+    return selection.toString().length;
+}
+
+// 글자 text를 커서 자리에 넣는다(고른 글자가 있으면 바꾼다). 서식 없이 글자만 들어가고, 되돌리기(Ctrl+Z)에도 들어간다.
+// 넣으면 한계를 넘으면 넣지 않고 알린다
+function insertDayMemoText(text) {
+    text = text.replace(/\r\n?/g, "\n");  // 윈도우의 줄바꿈(\r\n)을 \n 하나로
+    if (text === "") {
+        return;
+    }
+    if (dayMemoInput.textContent.length - dayMemoSelectedLength() + text.length > DAY_MEMO_MAX) {
+        showToast("메모는 " + DAY_MEMO_MAX + "자까지 쓸 수 있습니다.");
+        return;
+    }
+    document.execCommand("insertText", false, text);
+}
+
+// 붙여넣기: 웹 페이지나 워드에서 복사한 글의 색·크기·링크 같은 서식은 빼고 글자만 넣는다
+dayMemoInput.addEventListener("paste", function (e) {
+    e.preventDefault();
+    insertDayMemoText((e.clipboardData && e.clipboardData.getData("text/plain")) || "");
+});
+
+// 끌어다 놓기: 칸 안에서 고른 글을 끌어 옮기는 것은 브라우저에 맡긴다(서식도 같이 옮겨진다).
+// 밖에서 끌어온 것은 글자만 놓은 자리에 넣고, 파일처럼 글자가 없는 것은 받지 않는다
+let dayMemoDragInside = false;
+dayMemoInput.addEventListener("dragstart", function () {
+    dayMemoDragInside = true;
+});
+dayMemoInput.addEventListener("dragend", function () {
+    dayMemoDragInside = false;
+});
+dayMemoInput.addEventListener("drop", function (e) {
+    if (dayMemoDragInside) {
+        return;
+    }
+    e.preventDefault();
+    const text = e.dataTransfer ? e.dataTransfer.getData("text/plain") : "";
+    if (!text || !dayMemoInput.isContentEditable) {
+        return;
+    }
+    dayMemoInput.focus();
+    // caretRangeFromPoint: 화면의 한 점에 해당하는 글자 사이 자리. 놓은 자리에 커서를 옮긴 뒤 넣는다
+    const range = document.caretRangeFromPoint(e.clientX, e.clientY);
+    if (range && dayMemoInput.contains(range.startContainer)) {
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+    }
+    insertDayMemoText(text);
+});
+
+// 글자 수 한계: 쓰는 글자가 한계를 넘게 하면 들어가지 않게 막는다(textarea의 maxLength 대신).
+// 한글을 조합하는 중의 입력(insertCompositionText)은 브라우저가 막을 수 없게 되어 있어서 그대로 둔다(그만큼 조금 넘을 수 있다)
+dayMemoInput.addEventListener("beforeinput", function (e) {
+    if (!e.inputType.startsWith("insert") || e.inputType === "insertCompositionText") {
+        return;
+    }
+    const added = typeof e.data === "string" ? e.data.length : 1;
+    if (dayMemoInput.textContent.length - dayMemoSelectedLength() + added > DAY_MEMO_MAX) {
+        e.preventDefault();
+        showToast("메모는 " + DAY_MEMO_MAX + "자까지 쓸 수 있습니다.");
+    }
 });
 
 // 오늘 탭을 처음 열 때 실행된다 (탭을 누를 때마다). 항상 "진짜 오늘"로 시작한다

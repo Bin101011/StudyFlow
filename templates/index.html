@@ -171,8 +171,12 @@
                     <div class="day-memo">
                         <!-- 메모 위의 선을 잡는 손잡이: 위로 끌면 메모 칸이 높아지고, 아래로 끌면 낮아진다 -->
                         <div class="memo-resize-handle" id="day-memo-resize-handle" title="위아래로 끌어서 메모 칸 높이 바꾸기"></div>
-                        <h2>메모 <span id="day-memo-status" class="day-memo-status"></span></h2>
-                        <textarea id="day-memo" rows="4" placeholder="이 날의 메모를 자유롭게 적으세요" disabled></textarea>
+                        <h2 title="Ctrl+B 굵게, Ctrl+I 기울임, Ctrl+5 취소선">메모 <span id="day-memo-status" class="day-memo-status"></span></h2>
+                        <!-- 서식 메모 칸: contenteditable은 상자 안의 글을 직접 고칠 수 있게 하는 속성이다(textarea와 달리 굵게·기울임 같은 서식이 보인다).
+                             Ctrl+B 굵게, Ctrl+I 기울임, Ctrl+5 취소선. 처음에는 불러오는 중이라 잠겨 있다(contenteditable="false").
+                             role/aria-*: 화면 읽기 프로그램에 "여러 줄 입력 칸"이라고 알려 준다. 예시 글자(data-placeholder)는 비어 있을 때 CSS가 보여 준다 -->
+                        <div id="day-memo" class="day-memo-editor empty disabled" contenteditable="false" role="textbox" aria-multiline="true"
+                             aria-label="하루 메모" aria-disabled="true" data-placeholder="이 날의 메모를 자유롭게 적으세요"></div>
                     </div>
                 </section>
 

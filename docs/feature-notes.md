@@ -96,3 +96,21 @@ StudyFlow 창을 닫고 1초쯤 안에 다시 켜면 "StudyFlow가 이미 켜져
 - 지금 방법: 줄바꿈이 켜져 있으면 일정 상자를 `display: block`, 시간·제목을 `inline`, 점을 `inline-block`으로 바꿔 세 조각을 한 문단처럼 잇는다. 점의 왼쪽 여백 4px를 상자의 안쪽 여백으로 옮겨서 둘째 줄도 4px(점의 왼쪽 끝)에서 시작한다. 첫 줄의 점·시간·제목 가로 위치는 끈 모양과 같다(실제로 잼).
 - **점의 높이:** `vertical-align: middle`만으로는 끈 모양(flex 가운데 맞춤)보다 한글 제목에서 2.5px, 영어 제목에서 1px 낮았다. 끈 모양은 줄 상자의 가운데에 맞추는데, 한글이 든 줄은 한글 글꼴 때문에 줄 상자가 더 높아서(글자 13.6px에서 20px 대 17px) 한글·영어의 기준이 다르다. 그래서 그 사이만큼(`top: -0.13em`) 올려 두 경우 모두 0.8px 안으로 맞췄다.
 - 시험: `month_test`의 "시간 있는 일정 제목 줄바꿈" 구간(여러 줄, 둘째 줄이 점의 왼쪽에서 시작, 첫 줄 가로 위치가 끈 모양과 같음, 시간 한 줄, 점 높이 1px 안, 스위치 끄기·켜기와 저장).
+
+## 하루 메모 서식: Ctrl+B 굵게, Ctrl+I 기울임, Ctrl+5 취소선 (2026-11-20, 사용자 요청)
+
+사용자가 고른 방법은 "쓰는 동안 바로 서식이 보이는 칸"(방법 C)이다. 다른 후보였던 "마크다운 기호를 넣고 다 쓰면 서식으로 보기"보다 할 일이 많고 다른 곳에 버그가 날 위험이 커서, 사용자가 "엉뚱한 곳에서 새 버그가 날 가능성을 낮추는 데 최대한 노력"을 요청했다. 취소선은 Alt+Shift+5 대신 Ctrl+5(엑셀과 같음)로 정했다(Alt+Shift는 Windows 입력 언어 바꾸기와 겹칠 수 있다).
+
+- **칸:** `<textarea>` → `<div id="day-memo" contenteditable>`. 서식은 `document.execCommand("bold" | "italic" | "strikeThrough")`로 켜고 끈다. 오래된 방법이라 "바뀔 수 있음" 표시가 있지만, 서식 칸에서 브라우저의 되돌리기(Ctrl+Z)와 함께 쓸 수 있는 방법이 아직 이것뿐이다. 단축키는 키의 자리(`e.code`)로 봐서 한글 입력 상태에서도 된다. Ctrl+U는 브라우저가 저절로 밑줄을 넣지만 남기지 않는 태그라 막았다.
+- **저장 형식:** `day_memos`에 `format` 칸(`"text"`/`"html"`, 기본 `"text"`)을 덧붙였다(`database.init_db`의 마이그레이션). **옛 메모의 내용은 바꾸지 않는다.** 화면은 `text` 메모를 글자 그대로 칸에 넣고(`white-space: pre-wrap`이라 줄바꿈이 보인다), 사용자가 고칠 때만 `html`로 저장한다. 불러온 뒤 "저장된 내용"을 서버 글자가 아니라 "칸에 채운 뒤의 모양"으로 기억해서, 보기만 하면 다시 저장하지 않는다.
+- **거르기:** 칸에 넣을 때와 저장할 때 모두 DOMPurify로 거른다. 남기는 태그는 `b strong i em s strike br div p`뿐이고 속성은 하나도 남기지 않는다(`style`, `onclick` 등). 노트 탭도 DOMPurify를 쓰지만 훅이나 공용 설정을 쓰지 않아서 서로 섞이지 않는다(시험으로 확인). DOMPurify를 못 읽으면 메모 칸을 잠근다(잘못 저장해 메모를 망가뜨리지 않게).
+- **서버:** `PUT /api/day-memo`가 `format`을 받는다(없으면 `"text"`, 다른 값은 400). html은 태그만큼 길어서 한계를 100000자로 두고, 보이는 글자 20000자 한계는 화면이 지킨다(`beforeinput`, 붙여넣기). html에 보이는 글자가 없으면(`<br>`, `&nbsp;`뿐) 지운다.
+- **textarea가 저절로 하던 일을 직접:** 값(`dayMemoContent`/`fillDayMemo`), 잠금(`setDayMemoEnabled`: contenteditable false + 회색), 예시 글자(비면 `empty` 클래스 + CSS `::before`), 글자 수 한계, 붙여넣기·끌어다 놓기는 글자만, **커서 자리 기억**(서식 칸은 Tab 등으로 들어오면 브라우저가 커서를 글 맨 앞에 두어서, 나갈 때의 자리를 기억했다가 되살린다. 처음이면 글 끝. 마우스로 누르면 누른 자리).
+- **엉뚱한 곳을 막으려고 고친 것:**
+  - 자정 넘김 검사(`checkDayRollover`)가 "쓰는 중"을 `TEXTAREA`로만 알아봐서, 그대로 두면 자정에 메모를 쓰는 중 칸이 다음 날로 바뀔 뻔했다 → `isContentEditable`도 본다.
+  - **진짜 앱(pywebview)은 body에 `user-select: none; cursor: default`를 넣는다**(`webview/js/customize.js`). textarea는 영향이 없지만 서식 칸은 글자를 고를 수 없게 된다 → `#day-memo`와 안쪽에 `user-select: text`, `cursor: text`. 화면 시험에도 같은 CSS를 넣어 확인한다.
+  - 캘린더 탭의 Ctrl+C/V 검사에도 서식 칸을 입력 칸으로 더했다(지금은 겹칠 일이 없지만 안전하게).
+  - 이미 서식 칸을 알아보던 곳: 방향키·Ctrl+Z(`arrowKeysBelongToElement`), 아침 정리 창(`isUserBusyForReview`). 창을 닫기 직전 저장(`prepareToClose`)은 칸에서 벗어나게 한 뒤 `saveDayMemo`를 불러서 그대로 된다.
+  - pywebview는 디버그가 아니면 브라우저 단축키를 꺼 둔다(`AreBrowserAcceleratorKeysEnabled`). 그래서 Ctrl+B/I/5가 브라우저에 가로채이지 않는다.
+- **알려진 한계:** 한글을 조합하는 중에는 글자 수 한계를 막을 수 없어서 조금 넘을 수 있다. 서식 칸 안에서 굵게를 일부만 풀 때 브라우저가 `<span style>`을 만들면, 그 서식은 저장할 때 빠진다(글자는 남는다). 옛 버전 StudyFlow로 같은 DB를 열면 html 메모가 태그 글자 그대로 보인다.
+- 시험: `tests/test_day_memo_api.py`(마이그레이션, 형식, 한계, 비우기), `tests/browser/richmemo_test.mjs`(위 동작 전부). `memo_test_cal`, `close_test`, `resize_test`, `review_test`, `rollover_test`는 칸의 글자를 `.value` 대신 `innerText`로 읽게 고쳤다.
