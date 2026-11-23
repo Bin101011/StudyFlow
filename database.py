@@ -359,8 +359,34 @@ def add_task(content, date, project_id=None, parent_id=None):
                 (content, date, project_id, parent_id),
             )
             # lastrowid: 방금 추가한 줄에 자동으로 붙은 번호
-            row = connection.execute("SELECT * FROM tasks WHERE id = ?", (cursor.lastrowid,)).fetchone()
+            new_id = cursor.lastrowid
+            if date is not None and parent_id is None:
+                place_after_last_ranked(connection, date, new_id)
+            row = connection.execute("SELECT * FROM tasks WHERE id = ?", (new_id,)).fetchone()
             return dict(row)
+
+
+def place_after_last_ranked(connection, date, new_id):
+    """오늘 탭에 새로 만든 할 일(new_id)을 그날 "번호 있는 마지막 할 일" 바로 뒤에 놓는다.
+    그냥 두면 목록 맨 끝에 붙어서, 번호 없는 할 일(예: "• 점심") 아래에 "5"가 생긴다. 그러면 1~4와 5 사이가 떨어져 보인다.
+    번호 있는 할 일이 하나도 없으면 맨 위(1번 자리)에 놓는다.
+    그날 안 끝낸 할 일 전체에 1, 2, 3… 순서를 새로 적는다(끌어서 순서를 바꿀 때와 같은 방식). add_task와 같은 거래 안에서 실행된다."""
+    # 화면(list_tasks)과 같은 조건, 같은 순서로 그날 안 끝낸 할 일을 가져온다. 방금 만든 할 일은 빼고 따로 끼워 넣는다
+    rows = connection.execute(
+        "SELECT t.id, t.no_rank FROM tasks t "
+        f"WHERE t.date = ? AND t.done = 0 AND t.id != ? AND {NO_CHILDREN} "
+        "ORDER BY t.sort_order IS NULL, t.sort_order, t.id",
+        (date, new_id),
+    ).fetchall()
+    ids = [row["id"] for row in rows]
+    # 번호 있는(no_rank 0) 할 일 중 가장 아래에 있는 것의 자리. 없으면 -1이라서 아래 insert가 0번 자리(맨 위)에 넣는다
+    last_ranked = -1
+    for index, row in enumerate(rows):
+        if row["no_rank"] == 0:
+            last_ranked = index
+    ids.insert(last_ranked + 1, new_id)
+    for position, task_id in enumerate(ids, start=1):
+        connection.execute("UPDATE tasks SET sort_order = ? WHERE id = ?", (position, task_id))
 
 
 # 수정할 수 있는 칸의 이름들. 아래 update_row가 SQL 문장에 칸 이름을 직접 넣는데,

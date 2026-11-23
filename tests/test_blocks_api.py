@@ -120,7 +120,7 @@ check("블록의 시간과 날짜는 그대로", made["block"]["start"] == 720 a
 new_task = database.get_task(made["taskId"])
 check("새 할 일: 계획의 이름·날짜, 프로젝트 없음, 번호 없음, 안 끝냄", new_task["content"] == "점심" and new_task["date"] == M and new_task["project_id"] is None and new_task["no_rank"] == 1 and new_task["done"] == 0, new_task)
 database.add_task("먼저 있던 할 일", M)
-check("그날 할 일 목록에 나온다(정한 순서 없음 → 만든 순서)", [t["content"] for t in c.get("/api/tasks?date=" + M).get_json()["tasks"]] == ["점심", "먼저 있던 할 일"])
+check("그날 할 일 목록에 나온다(나중에 추가한 번호 있는 할 일은 번호 없는 '점심' 위로)", [t["content"] for t in c.get("/api/tasks?date=" + M).get_json()["tasks"]] == ["먼저 있던 할 일", "점심"])
 count = database.run("SELECT COUNT(*) AS n FROM tasks")[0][0]["n"]
 r = c.post("/api/time-blocks/%d/make-task" % free["id"])
 check("이미 연결된 계획은 409, 할 일이 또 생기지 않는다", r.status_code == 409 and database.run("SELECT COUNT(*) AS n FROM tasks")[0][0]["n"] == count, r.get_json())
