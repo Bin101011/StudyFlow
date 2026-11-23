@@ -1676,6 +1676,7 @@ const taskInput = document.getElementById("task-input");
 const taskAddButton = document.getElementById("task-add-button");
 const taskProjectSelect = document.getElementById("task-project");
 const tasksHeading = document.getElementById("tasks-heading");
+const tasksTotal = document.getElementById("tasks-total");  // 제목 옆 "남은 1시간 30분" (loadTodayTasks가 채운다)
 const dayPrevButton = document.getElementById("day-prev");
 const dayNextButton = document.getElementById("day-next");
 const dayTodayButton = document.getElementById("day-today");
@@ -1729,7 +1730,7 @@ const TL_QUARTER_LINES_PX = 120; // 이만큼 확대하면 15분 줄도 보여�
 const TL_SCROLL_PAD = 10;        // .tl-scroll의 위쪽 안쪽 여백(px). style.css와 같은 값
 let tlHourPx = TL_HOUR_DEFAULT;  // 지금 한 시간의 세로 길이(px). 두 손가락 동작은 조금씩 변하므로 소수일 수 있다
 
-const TL_DEFAULT_LENGTH = 60;    // 할 일을 끌어다 놓았을 때 만들어지는 길이(분)
+const TL_DEFAULT_LENGTH = 60;    // 걸리는 시간을 안 정한 할 일을 끌어다 놓거나 "+ 시간"으로 넣을 때 만들어지는 길이(분). 정해 두었으면 그 길이를 쓴다(taskPlanLength)
 const TL_CLICK_LENGTH = 30;      // 빈 곳을 한 번 눌렀을 때 만들어지는 길이(분)
 const TL_CREATE_START_STEP = 5;  // 새 계획을 누르거나 끌기 시작한 자리를 맞추는 단위(분). 확대 정도와 관계없이 같다
 const TL_DAY_MIN = 24 * 60;      // 하루의 분
@@ -2287,6 +2288,10 @@ function refreshTaskSlots() {
                 old.remove();
             });
             const plans = plansByTask[row.dataset.taskId];
+            // 시간표에 이미 들어간 할 일: 길이가 계획 블록으로 정해져 있으므로 "+ 길이"를 숨긴다(style.css의 .has-plan).
+            // 이런 줄은 시간 글자("10:00–11:00")까지 붙어서 가장 붐비는 줄이라, "+ 길이"까지 있으면 마우스를 올렸을 때 이름이 두 줄로 접힌다.
+            // 이미 정해 둔 "15분" 글자는 그대로 보인다
+            row.classList.toggle("has-plan", !!plans);
             const anchor = row.querySelector(".task-content, .task-edit-input");
             if (!anchor) {
                 return;
@@ -2299,7 +2304,8 @@ function refreshTaskSlots() {
                     empty.className = "task-slot task-slot-empty";
                     empty.textContent = "+ 시간";
                     empty.title = "시각을 써서 시간표에 넣습니다 (끌어다 놓지 않아도 됩니다)";
-                    const task = { id: Number(row.dataset.taskId), content: anchor.textContent };
+                    // duration_min: 줄에 적어 둔 걸리는 시간(data-duration). 정해 두었으면 창의 처음 길이가 그 길이가 된다
+                    const task = { id: Number(row.dataset.taskId), content: anchor.textContent, duration_min: Number(row.dataset.duration) || null };
                     empty.addEventListener("click", function () {
                         openNewPlanPopover(task, empty);
                     });
@@ -2681,8 +2687,9 @@ function showTimelinePopover(key, anchor, build) {
 
 // 작은 창 밖을 누르면 닫는다 (다른 블록을 누르면 그 블록의 클릭이 새 창을 연다)
 document.addEventListener("pointerdown", function (e) {
-    // 가운데 할 일 옆의 시간 글자(.task-slot)도 블록처럼 그 자리의 클릭이 창을 열고 닫으므로 여기서 닫지 않는다
-    if (timelinePopover && !timelinePopover.el.contains(e.target) && !e.target.closest(".tl-block, .task-slot")) {
+    // 가운데 할 일 옆의 시간 글자(.task-slot)와 걸리는 시간 글자·"+ 길이"(.task-duration)도
+    // 블록처럼 그 자리의 클릭이 창을 열고 닫으므로 여기서 닫지 않는다
+    if (timelinePopover && !timelinePopover.el.contains(e.target) && !e.target.closest(".tl-block, .task-slot, .task-duration")) {
         closeTimelinePopover();
     }
 }, true);
@@ -3239,14 +3246,14 @@ function markTimeError(time) {
 }
 
 // 시간 정하기 창의 처음 시작 시각: 오늘을 보고 있으면 지금 시각을 5분 단위로 올린 값(14:23 → 14:25), 다른 날이면 09:00.
-// 기본 길이(1시간)가 하루 안에 들어가도록 23:00보다 늦게는 잡지 않는다
-function defaultNewPlanStart() {
+// 계획 길이(length분, 할 일의 걸리는 시간이나 기본 1시간)가 하루 안에 들어가도록 그보다 늦게는 잡지 않는다(1시간이면 23:00까지)
+function defaultNewPlanStart(length) {
     let start = 9 * 60;
     if (viewedDate === todayText) {
         const now = new Date();
         start = Math.ceil((now.getHours() * 60 + now.getMinutes()) / 5) * 5;
     }
-    return Math.min(start, TL_DAY_MIN - TL_DEFAULT_LENGTH);
+    return Math.min(start, TL_DAY_MIN - length);
 }
 
 // 시간표에서 그 시각이 보이지 않으면 보이도록 스크롤한다(칸 위쪽 1/3쯤에 오게). 이미 보이면 움직이지 않는다
@@ -3262,15 +3269,16 @@ function revealTimelineMinute(min) {
 //  - 시작·끝·길이 칸은 계획 창과 같다(makePlanTimeRow). 처음에는 시작 칸이 선택되어 있어서 바로 "1430"처럼 쓰면 된다.
 //  - Enter나 [넣기]를 눌러야 만든다. 다른 곳을 누르거나 Esc로 닫으면 아무것도 만들지 않는다(실수로 계획이 생기지 않게).
 //    계획 창은 닫힐 때 저장하지만, 그건 이미 있는 계획을 고치는 것이라 다르다.
-// task: { id, content }, anchor: 창을 붙일 곳("+ 시간" 글자)
+// task: { id, content, duration_min }, anchor: 창을 붙일 곳("+ 시간" 글자). 걸리는 시간을 정해 둔 할 일이면 처음 길이가 그 길이다
 function openNewPlanPopover(task, anchor) {
     showTimelinePopover("n:" + task.id, anchor, function (el) {
         const title = document.createElement("h3");
         title.textContent = task.content;
         el.appendChild(title);
 
-        const start = defaultNewPlanStart();
-        const time = makePlanTimeRow(start, Math.min(start + TL_DEFAULT_LENGTH, TL_DAY_MIN));
+        const length = taskPlanLength(task);
+        const start = defaultNewPlanStart(length);
+        const time = makePlanTimeRow(start, start + length);
         el.appendChild(time.row);
 
         const tip = document.createElement("p");
@@ -3332,14 +3340,15 @@ function openNewPlanPopover(task, anchor) {
 
 let timelineDropPreview = null;
 
-function showTimelineDropPreview(start, text) {
+// length: 만들어질 계획의 길이(분). 끄는 할 일의 걸리는 시간이거나 기본 1시간이다(taskPlanLength)
+function showTimelineDropPreview(start, text, length) {
     if (!timelineDropPreview) {
         timelineDropPreview = document.createElement("div");
         timelineDropPreview.className = "tl-drop-preview";
         timelineGrid.appendChild(timelineDropPreview);
     }
     timelineDropPreview.style.top = minToY(start) + "px";
-    timelineDropPreview.style.height = minToY(TL_DEFAULT_LENGTH) + "px";
+    timelineDropPreview.style.height = minToY(length) + "px";
     timelineDropPreview.textContent = minToText(start) + "  " + text;
 }
 
@@ -3350,9 +3359,9 @@ function hideTimelineDropPreview() {
     }
 }
 
-// 포인터 위치에 놓을 때의 시작 시각 (15분 단위, 1시간짜리 블록이 하루 안에 들어오도록 맞춘다)
-function dropStartMinutes(clientY) {
-    return clampNumber(floorSnap(yToMin(clientY)), 0, TL_DAY_MIN - TL_DEFAULT_LENGTH);
+// 포인터 위치에 놓을 때의 시작 시각 (15분 단위, length분짜리 블록이 하루 안에 들어오도록 맞춘다)
+function dropStartMinutes(clientY, length) {
+    return clampNumber(floorSnap(yToMin(clientY)), 0, TL_DAY_MIN - length);
 }
 
 async function dropTaskOnTimeline(task, start) {
@@ -3361,13 +3370,14 @@ async function dropTaskOnTimeline(task, start) {
         if (!sameDate) {
             await sendRequest("/api/tasks/" + task.id, "PATCH", { date: viewedDate });
         }
-        const plan = await createPlan(start, start + TL_DEFAULT_LENGTH, null, task.id);
+        const end = start + taskPlanLength(task);  // 걸리는 시간을 정해 둔 할 일은 그 길이, 아니면 1시간
+        const plan = await createPlan(start, end, null, task.id);
         // 그날의 할 일을 놓은 것만 Ctrl+Z로 되돌린다. 다른 날(밀린 할 일, 할 일 목록)에서 온 할 일은 날짜까지 바뀌어서
         // 계획만 지우면 반쪽만 되돌아가므로 기록하지 않는다
         if (sameDate) {
             rememberPlanCreated(plan, task.content);
         }
-        showToast("'" + task.content + "'을(를) " + minToText(start) + "–" + minToText(start + TL_DEFAULT_LENGTH) + "에 배치했습니다");
+        showToast("'" + task.content + "'을(를) " + minToText(start) + "–" + minToText(end) + "에 배치했습니다");
     } catch (error) {
         showToast("시간표에 놓지 못했습니다: " + error.message);
     }
@@ -3513,6 +3523,37 @@ function makeTaskRow(task, options) {
         item.appendChild(count);
     }
 
+    // 걸리는 시간("15분"): 오늘 탭의 목록(그날 할 일, 밀린 할 일, 할 일 목록)에서만 다룬다(options.editDuration).
+    // 정해 두었으면 줄에 늘 보이는 작은 회색 글자이고, 누르면 길이를 고르는 작은 창이 열린다.
+    // 아직 안 정했으면 같은 자리에 "+ 길이"가 있다. "+ 시간"처럼 마우스를 올린 줄에서만 보이고, 안 보일 때도 자리는 차지한다(style.css).
+    // 처음에는 마우스를 올리면 뜨는 버튼 묶음에 "길이" 버튼을 넣었는데, 시간과 프로젝트 이름표가 있는 줄에서는 버튼이 하나 늘어난 만큼
+    // 줄이 넘쳐서 마우스를 올릴 때마다 이름이 두 줄로 접히며 줄이 들썩였다(tl_test가 잡음). 그래서 자리를 미리 잡아 두는 방식으로 바꿨다.
+    // 끝낸 할 일에는 두지 않는다. data-duration은 "+ 시간" 창(refreshTaskSlots)이 이 줄의 길이를 읽어 가는 이름표다
+    if (options.editDuration) {
+        item.dataset.duration = task.duration_min || "";
+        if (task.duration_min) {
+            const chip = document.createElement("button");
+            chip.type = "button";
+            chip.className = "task-duration";
+            chip.textContent = durationText(task.duration_min);
+            chip.title = "걸릴 시간 (누르면 바꿉니다)";
+            chip.addEventListener("click", function () {
+                openTaskDurationPopover(task, chip, options);
+            });
+            item.appendChild(chip);
+        } else if (task.done !== 1) {
+            const add = document.createElement("button");
+            add.type = "button";
+            add.className = "task-duration task-duration-empty";
+            add.textContent = "+ 길이";
+            add.title = "몇 분 걸릴지 정하기 (시각은 정하지 않습니다)";
+            add.addEventListener("click", function () {
+                openTaskDurationPopover(task, add, options);
+            });
+            item.appendChild(add);
+        }
+    }
+
     // 프로젝트에 연결된 할 일이면 프로젝트 색 동그라미와 이름을 붙인다. 하위 단계면 상위 단계 이름도 같이 붙는다
     if (options.showProject && task.project_name) {
         item.appendChild(makeProjectChip(task.project_name, task.project_color, task.parent_content));
@@ -3639,6 +3680,129 @@ function makeTaskRow(task, options) {
     return item;
 }
 
+// ----- 할 일의 걸리는 시간 -----
+// "몇 시부터 몇 시까지"는 정하지 않고 "15분 걸릴 것"만 적어 두는 값(tasks.duration_min, 2026-11-23 사용자 요청).
+// 할 일 줄의 "15분" 글자나 "+ 길이"를 누르면 작은 창이 열린다. 자주 쓰는 길이 버튼을 누르면 바로 저장되고,
+// 그 밖의 길이는 칸에 "40", "1:30", "1시간 20분"처럼 쓰고 Enter(또는 [정하기])로 저장한다. 읽는 방법은 계획 창의 길이 칸과 같다(parseDurationText).
+// 시간표 계획 창과 같은 작은 창(showTimelinePopover)을 써서, 창 밖을 누르거나 Esc를 누르면 닫히는 방식도 같다.
+const TASK_DURATION_PRESETS = [15, 30, 45, 60, 90, 120];  // 창에 버튼으로 늘어놓는 길이(분)
+const TASK_DURATION_MIN = 5;         // 가장 짧은 길이(분). 서버(app.py의 TASK_DURATION_MIN)와 같은 값
+const TASK_DURATION_MAX = 12 * 60;   // 가장 긴 길이(분). 서버와 같은 값
+
+// task: 할 일 한 줄의 내용(서버에서 받은 것), anchor: 창을 붙일 곳, options: makeTaskRow의 options(reload, undoable를 쓴다)
+function openTaskDurationPopover(task, anchor, options) {
+    const current = task.duration_min || null;  // 지금 정해 둔 길이. 안 정했으면 null
+
+    // min이 null이면 길이를 지운다. 오늘 탭에서 바꾼 것이면 Ctrl+Z로 원래 길이로 되돌릴 수 있게 기록한다
+    async function save(min) {
+        closeTimelinePopover();
+        if (min === current) {
+            return;  // 같은 값을 다시 고른 것은 바뀐 게 없으므로 저장도 기록도 하지 않는다
+        }
+        const undo = options.undoable ? {
+            requests: [{ url: "/api/tasks/" + task.id, method: "PATCH", body: { duration_min: current } }],
+            message: "'" + task.content + "'의 걸리는 시간을 " + (current ? durationText(current) + "(으)로" : "정하기 전으로") + " 되돌렸습니다",
+        } : null;
+        await updateTask(task.id, { duration_min: min }, options.reload, undo);
+    }
+
+    showTimelinePopover("d:" + task.id, anchor, function (el) {
+        const title = document.createElement("h3");
+        title.textContent = task.content;
+        const sub = document.createElement("p");
+        sub.className = "tl-pop-sub";
+        sub.textContent = "얼마나 걸릴까요? 시간표로 끌어다 놓으면 이 길이로 들어갑니다";
+        el.append(title, sub);
+
+        // 자주 쓰는 길이 버튼들. 일정 창의 길이 버튼과 같은 모양이고, 지금 길이와 같은 버튼은 파랗게 강조한다(active)
+        const chips = document.createElement("div");
+        chips.className = "duration-chips";
+        TASK_DURATION_PRESETS.forEach(function (min) {
+            const chip = makePopoverButton(durationText(min), function () {
+                save(min);
+            }, "duration-chip" + (min === current ? " active" : ""));
+            chips.appendChild(chip);
+        });
+        el.appendChild(chips);
+
+        // 직접 쓰는 칸. 버튼에 없는 길이(예: 40분)가 정해져 있으면 그 값을 미리 넣어 둔다
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "task-duration-input";
+        input.placeholder = "직접 쓰기: 40, 1:30, 1시간 20분";
+        input.value = current && !TASK_DURATION_PRESETS.includes(current) ? durationText(current) : "";
+        el.appendChild(input);
+
+        function saveTyped() {
+            const min = parseDurationText(input.value);
+            if (min === null || min < TASK_DURATION_MIN || min > TASK_DURATION_MAX) {
+                input.classList.add("invalid");
+                showToast("길이는 " + TASK_DURATION_MIN + "분에서 " + (TASK_DURATION_MAX / 60) + "시간 사이로, 40이나 1시간 20분처럼 써 주세요.");
+                return;
+            }
+            save(min);
+        }
+
+        input.addEventListener("input", function () {
+            input.classList.remove("invalid");
+        });
+        input.addEventListener("keydown", function (e) {
+            if (e.isComposing) {
+                return;  // 한글을 조합하는 중의 Enter는 글자를 확정하는 키다
+            }
+            if (e.key === "Enter") {
+                e.preventDefault();
+                saveTyped();
+            } else if (e.key === "Escape") {
+                e.preventDefault();
+                closeTimelinePopover();
+            }
+        });
+
+        const buttons = document.createElement("div");
+        buttons.className = "tl-pop-buttons";
+        if (current) {
+            buttons.appendChild(makePopoverButton("길이 지우기", function () {
+                save(null);
+            }));
+        }
+        const spacer = document.createElement("span");
+        spacer.className = "spacer";
+        buttons.append(spacer, makePopoverButton("닫기", closeTimelinePopover), makePopoverButton("정하기", saveTyped, "primary"));
+        el.appendChild(buttons);
+
+        input.focus();  // 창이 열리면 바로 "40"처럼 쓸 수 있게 한다
+    });
+}
+
+// 끝내지 않은 할 일들의 걸리는 시간을 더해 제목 옆에 "남은 1시간 30분"으로 보여 준다.
+// 길이를 안 정한 할 일은 더할 수 없으므로 빼고 더하고, 그런 할 일이 있으면 마우스를 올렸을 때 몇 개가 빠졌는지 알려 준다.
+// 길이를 정한 할 일이 하나도 없으면 비워 둔다(길이를 안 쓰는 날에는 아무것도 보이지 않게)
+function showTasksTotal(openTasks) {
+    let total = 0;
+    let missing = 0;
+    openTasks.forEach(function (task) {
+        if (task.duration_min) {
+            total += task.duration_min;
+        } else {
+            missing++;
+        }
+    });
+    if (total === 0) {
+        tasksTotal.textContent = "";
+        tasksTotal.title = "";
+        return;
+    }
+    tasksTotal.textContent = "· 남은 " + durationText(total);
+    tasksTotal.title = "끝내지 않은 할 일의 걸리는 시간 합계" + (missing ? " (길이를 안 정한 " + missing + "개는 빼고 더했습니다)" : "");
+}
+
+// 할 일을 시간표에 넣을 때의 계획 길이(분): 걸리는 시간을 정해 두었으면 그 길이, 아니면 기본 1시간(TL_DEFAULT_LENGTH).
+// 하루(24시간)보다 길 수는 없다
+function taskPlanLength(task) {
+    return task.duration_min ? Math.min(task.duration_min, TL_DAY_MIN) : TL_DEFAULT_LENGTH;
+}
+
 // 서버에서 할 일 목록을 받아와서 오른쪽에 그린다
 async function loadTodayTasks() {
     const date = viewedDate;  // loadTimeline과 같은 이유로, 요청 시점의 날짜를 기억해둔다
@@ -3698,8 +3862,10 @@ async function loadTodayTasks() {
             // 끌 수 있는 할 일: 프로젝트 없는 할 일("loose")은 시간표나 "할 일 목록"으로, 프로젝트 할 일("project")은 시간표로(또는 작은 달력 날짜로)
             dragFrom: task.done === 1 ? null : (task.project_id ? "project" : "loose"),
             undoable: true,
+            editDuration: true,
         }));
     });
+    showTasksTotal(openTasks);  // 제목 옆 "남은 1시간 30분"
 
     loadMiniTaskDays();  // 할 일이 바뀌었을 수 있으니 작은 달력의 점도 새로 받는다
 
@@ -3718,6 +3884,7 @@ async function loadTodayTasks() {
                 toInbox: true,
                 dragFrom: task.project_id ? "project" : "loose",
                 undoable: true,
+                editDuration: true,
             }));
         });
     }
@@ -3975,6 +4142,7 @@ async function loadInbox() {
         inboxList.appendChild(makeTaskRow(task, {
             reload: reloadTodayAndInbox,
             dragFrom: "inbox",
+            editDuration: true,
             extraButtons: [
                 makeAssignButton("오늘", function () { return todayText; }, task),
                 makeAssignButton("내일", function () { return addDaysToText(todayText, 1); }, task),
@@ -4428,8 +4596,8 @@ function moveTaskDrag(e) {
 
     // 시간표 위에서는 놓일 자리(15분 단위)를 점선 상자로 미리 보여 준다
     if (drag.hover && drag.hover.classList.contains("tl-grid")) {
-        drag.dropMin = dropStartMinutes(e.clientY);
-        showTimelineDropPreview(drag.dropMin, drag.task.content);
+        drag.dropMin = dropStartMinutes(e.clientY, taskPlanLength(drag.task));
+        showTimelineDropPreview(drag.dropMin, drag.task.content, taskPlanLength(drag.task));
     } else {
         hideTimelineDropPreview();
     }

@@ -177,6 +177,11 @@ def init_db():
     # 우선순위 탭과는 관계없다. 이미 있던 할 일은 모두 번호가 있는 채(0)로 시작한다. 다른 날로 옮겨도 그대로 남는다
     if "no_rank" not in existing:
         run("ALTER TABLE tasks ADD COLUMN no_rank INTEGER NOT NULL DEFAULT 0")
+    # duration_min: 이 할 일이 얼마나 걸릴지(분). "몇 시부터"는 정하지 않고 "15분 걸릴 것"만 적어 둔다(2026-11-23 사용자 요청).
+    # 정하지 않은 할 일은 NULL이다. 오늘 탭의 남은 시간 합계와, 시간표로 끌어다 놓을 때 만들어지는 계획의 길이에 쓴다.
+    # 이미 있던 할 일은 모두 NULL(안 정함)로 시작한다. 다른 날로 옮겨도 그대로 남는다
+    if "duration_min" not in existing:
+        run("ALTER TABLE tasks ADD COLUMN duration_min INTEGER")
 
     # projects 표에도 folder_id(들어 있는 폴더, 없으면 NULL)를 덧붙인다
     columns, _ = run("PRAGMA table_info(projects)")
@@ -392,7 +397,7 @@ def place_after_last_ranked(connection, date, new_id):
 
 # 수정할 수 있는 칸의 이름들. 아래 update_row가 SQL 문장에 칸 이름을 직접 넣는데,
 # 칸 이름은 ?로 안전하게 넘길 수 없다. 그래서 화면이 보낸 이름을 그대로 쓰지 않고, 이 목록에 있는 것만 쓴다
-EDITABLE_COLUMNS = ("content", "date", "done", "done_at", "deadline", "importance", "urgency", "memo", "no_rank")
+EDITABLE_COLUMNS = ("content", "date", "done", "done_at", "deadline", "importance", "urgency", "memo", "no_rank", "duration_min")
 
 
 def update_task(task_id, changes):

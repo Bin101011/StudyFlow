@@ -1017,7 +1017,7 @@ await key("Escape"); await sleep(300);
 
 // ⑧ 오늘을 볼 때의 처음 시작: 지금 시각을 5분 단위로 올린 값(23:00보다 늦지 않게)
 await js(`showDay(todayText)`); await sleep(1500);
-const startToday = await js(`(() => { const n = new Date(); return [defaultNewPlanStart(), Math.min(Math.ceil((n.getHours() * 60 + n.getMinutes()) / 5) * 5, 1380)]; })()`);
+const startToday = await js(`(() => { const n = new Date(); return [defaultNewPlanStart(TL_DEFAULT_LENGTH), Math.min(Math.ceil((n.getHours() * 60 + n.getMinutes()) / 5) * 5, 1380)]; })()`);
 check("오늘의 처음 시작은 지금 시각을 5분 단위로 올린 값", startToday[0] === startToday[1], startToday);
 
 check("자바스크립트 오류 없음", jsErrors.length === 0, jsErrors.join(" | "));

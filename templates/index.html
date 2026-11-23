@@ -139,7 +139,9 @@
                 </section>
 
                 <section class="today-column" id="tasks-column">
-                    <h2 id="tasks-heading">오늘 할 일</h2>
+                    <!-- 제목 글자("오늘 할 일"/"할 일")는 app.js가 날짜를 바꿀 때마다 새로 쓰므로 안쪽 <span>에 따로 둔다.
+                         옆의 tasks-total은 끝내지 않은 할 일의 걸리는 시간 합계("남은 1시간 30분"). 길이를 정한 할 일이 없으면 비어 있다 -->
+                    <h2><span id="tasks-heading">오늘 할 일</span> <span id="tasks-total" class="tasks-total"></span></h2>
                     <!-- 할 일 입력 줄: 글자를 쓰고 Enter를 누르거나 추가 버튼을 누른다 -->
                     <div class="task-add">
                         <input type="text" id="task-input" placeholder="할 일을 입력하고 Enter">

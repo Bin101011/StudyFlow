@@ -1203,6 +1203,10 @@ def api_task_days():
 
 
 TASK_MEMO_MAX = 2000  # 할 일 메모의 최대 글자 수 (프로젝트 메모 5000자보다 짧게: 할 일 줄 아래에 보이는 짧은 메모라서)
+# 할 일의 걸리는 시간(분)으로 받는 범위. 가장 짧은 값은 시간표 계획의 최소 길이(TIME_BLOCK_MIN_LENGTH)와 같게 해서,
+# 길이를 정한 할 일을 시간표로 끌어다 놓으면 언제나 그 길이 그대로 계획을 만들 수 있다. 가장 긴 값은 12시간이다
+TASK_DURATION_MIN = 5
+TASK_DURATION_MAX = 12 * 60
 
 
 # 오늘 탭의 할 일 순서 정하기 (PUT): 그 날짜의 할 일들을 ids에 적힌 순서대로 1, 2, 3…번으로 정한다.
@@ -1327,6 +1331,14 @@ def api_update_task(task_id):
         if not isinstance(data["no_rank"], bool):
             return jsonify({"error": "'no_rank'는 true 또는 false여야 합니다."}), 400
         changes["no_rank"] = 1 if data["no_rank"] else 0
+    if "duration_min" in data:
+        # 걸리는 시간(분). null이면 "안 정함"으로 지운다.
+        # isinstance(..., bool)을 따로 막는 이유: 파이썬에서는 True/False도 정수(1/0)로 취급되어 int 검사를 통과하기 때문이다
+        duration = data["duration_min"]
+        if duration is not None and (isinstance(duration, bool) or not isinstance(duration, int)
+                                     or not TASK_DURATION_MIN <= duration <= TASK_DURATION_MAX):
+            return jsonify({"error": f"걸리는 시간은 {TASK_DURATION_MIN}분에서 {TASK_DURATION_MAX // 60}시간 사이로 정해 주세요."}), 400
+        changes["duration_min"] = duration
 
     if not changes:
         return jsonify({"error": "바꿀 값이 없습니다."}), 400
