@@ -3415,7 +3415,7 @@ function makeTaskRow(task, options) {
     content.textContent = task.content;
 
     // 오늘 탭 목록에서만: 끝내지 않은 할 일에 "1, 2, 3…" 번호를 붙인다. 끌어서 순서를 바꾸면 번호가 따라 바뀐다.
-    // 1번이 "첫 번째로 할 것"이라 파랗게 강조한다. 끝낸 할 일과 오늘 탭 밖(밀린 할 일, 프로젝트 카드)에는 loadTodayTasks 등이 rank를 주지 않는다.
+    // 번호는 모두 같은 모양(파란색)이다. 1번에 붙는 "first" 이름표는 모양에 쓰지 않고 화면 시험(order_test)이 1번을 알아보는 데만 쓴다. 끝낸 할 일과 오늘 탭 밖(밀린 할 일, 프로젝트 카드)에는 loadTodayTasks 등이 rank를 주지 않는다.
     // rank가 "none"이면 번호에서 뺀 할 일이다("점심"처럼 순서를 매길 필요 없는 일). 번호 자리에 점을 두어 체크박스 줄을 맞춘다(글자는 "·"이고, 보이는 모양은 style.css가 그리는 회색 동그라미).
     // 번호나 점을 누르면 번호에서 빼거나 다시 넣는다. <button>이라서 누르기가 줄 끌기로 이어지지 않는다(beginTaskDrag가 버튼을 건너뛴다)
     if (options.rank) {
@@ -4515,6 +4515,7 @@ function cancelTaskDragOnEscape(e) {
 }
 
 // 입력 칸의 글자를 지금 보고 있는 날의 할 일로 추가한다 (▶로 내일을 열고 적으면 내일 계획이 된다)
+// 들어갈 자리(번호 있는 마지막 할 일 바로 뒤)는 서버가 정한다(database.place_after_last_ranked)
 async function addTask() {
     const content = taskInput.value.trim();
     if (!content) {

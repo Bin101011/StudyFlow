@@ -162,7 +162,8 @@ def init_db():
             run(f"ALTER TABLE tasks ADD COLUMN {name} {column_type}")
 
     # sort_order: 오늘 탭의 할 일 목록에서 사용자가 끌어서 정한 순서(1, 2, 3…). 정한 적 없으면 NULL이고, NULL인 것은 정한 것들 뒤에 만든 순서로 온다.
-    # 할 일의 날짜가 바뀌면 NULL로 되돌린다(그 날짜의 맨 뒤로 가도록). 새로 만든 할 일도 NULL이라 맨 뒤에 붙는다
+    # 할 일의 날짜가 바뀌면 NULL로 되돌린다(그 날짜의 맨 뒤로 가도록).
+    # 오늘 탭에서 새로 만든 할 일은 add_task가 "번호 있는 마지막 할 일 바로 뒤"에 순서를 정해 준다(place_after_last_ranked)
     if "sort_order" not in existing:
         run("ALTER TABLE tasks ADD COLUMN sort_order INTEGER")
     # step_order: 프로젝트 탭에서 사용자가 끌어서 정한 단계 순서(같은 상위 단계 아래, 또는 맨 위 단계들끼리 1, 2, 3…).
