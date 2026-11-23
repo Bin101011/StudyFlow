@@ -357,6 +357,19 @@
                     <span class="settings-unit">이 시각이 가운데에 옵니다</span>
                 </div>
                 <p class="settings-hint">오늘 탭을 열거나 날짜를 넘길 때 시간표가 이 시각을 가운데에 놓고 시작합니다.</p>
+                <!-- 할 일을 시간표에 넣을 때의 기본 길이. 고른 값은 app.js가 settings.planDefaultMinutes로 저장한다 -->
+                <label class="settings-row">
+                    <span class="settings-label">시간표에 넣을 때 기본 길이</span>
+                    <select id="plan-default-minutes">
+                        <option value="15">15분</option>
+                        <option value="30">30분</option>
+                        <option value="45">45분</option>
+                        <option value="60">1시간</option>
+                        <option value="90">1시간 30분</option>
+                        <option value="120">2시간</option>
+                    </select>
+                </label>
+                <p class="settings-hint">할 일을 시간표로 끌어다 놓거나 "+ 시간"으로 넣을 때 만들어지는 계획의 길이입니다. 할 일에 걸리는 시간("15분")을 정해 두었으면 그 길이가 먼저입니다.</p>
                 <label class="settings-row">
                     <input type="checkbox" id="overdue-review-checkbox">
                     <span>그날 처음 열 때 밀린 할 일 정리 창 띄우기</span>

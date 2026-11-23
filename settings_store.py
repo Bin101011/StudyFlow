@@ -118,6 +118,12 @@ EVENT_DEFAULT_MINUTES_KEY = "eventDefaultMinutes"
 EVENT_DEFAULT_MINUTES_ALLOWED = (15, 30, 60, 90, 120, 180)
 EVENT_DEFAULT_MINUTES_DEFAULT = 60
 
+# 9-1) 할 일을 오늘 탭 시간표에 넣을 때(끌어다 놓기, "+ 시간")의 기본 길이(분). 할 일에 걸리는 시간을 정해 두었으면 그 길이를 쓰고,
+#      안 정한 할 일에만 이 값을 쓴다(2026-11-23 사용자 요청). 할 일의 길이 창에 있는 길이 버튼과 같은 값만 고를 수 있다
+PLAN_DEFAULT_MINUTES_KEY = "planDefaultMinutes"
+PLAN_DEFAULT_MINUTES_ALLOWED = (15, 30, 45, 60, 90, 120)
+PLAN_DEFAULT_MINUTES_DEFAULT = 60
+
 # 10) 아침 정리 창(밀린 할 일 정리): 그날 앱을 처음 열 때 밀린 할 일이 있으면 띄울지(True/False)와,
 #     마지막으로 창을 닫은 날("2026-11-10" 모양, 아직 없으면 빈 글자). 창을 닫은 날에는 다시 저절로 띄우지 않는다
 OVERDUE_REVIEW_ENABLED_KEY = "overdueReviewEnabled"
@@ -162,6 +168,7 @@ def default_settings():
     settings[EVENT_DEFAULT_START_KEY] = EVENT_DEFAULT_START_DEFAULT
     settings[EVENT_DEFAULT_ALL_DAY_KEY] = False
     settings[EVENT_DEFAULT_MINUTES_KEY] = EVENT_DEFAULT_MINUTES_DEFAULT
+    settings[PLAN_DEFAULT_MINUTES_KEY] = PLAN_DEFAULT_MINUTES_DEFAULT
     settings[OVERDUE_REVIEW_ENABLED_KEY] = OVERDUE_REVIEW_ENABLED_DEFAULT
     settings[OVERDUE_REVIEW_DATE_KEY] = ""
     return settings
@@ -237,6 +244,11 @@ def clean_settings(raw, base=None):
     event_minutes = raw.get(EVENT_DEFAULT_MINUTES_KEY)
     if isinstance(event_minutes, int) and not isinstance(event_minutes, bool) and event_minutes in EVENT_DEFAULT_MINUTES_ALLOWED:
         settings[EVENT_DEFAULT_MINUTES_KEY] = event_minutes
+
+    # 정수만 인정한다. True/False는 파이썬에서 1/0으로 취급되어 int 검사를 통과하므로 따로 막는다
+    plan_minutes = raw.get(PLAN_DEFAULT_MINUTES_KEY)
+    if isinstance(plan_minutes, int) and not isinstance(plan_minutes, bool) and plan_minutes in PLAN_DEFAULT_MINUTES_ALLOWED:
+        settings[PLAN_DEFAULT_MINUTES_KEY] = plan_minutes
 
     review_enabled = raw.get(OVERDUE_REVIEW_ENABLED_KEY)
     if isinstance(review_enabled, bool):  # 켜기/끄기 값은 true/false만 인정한다

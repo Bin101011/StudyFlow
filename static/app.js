@@ -1676,7 +1676,7 @@ const taskInput = document.getElementById("task-input");
 const taskAddButton = document.getElementById("task-add-button");
 const taskProjectSelect = document.getElementById("task-project");
 const tasksHeading = document.getElementById("tasks-heading");
-const tasksTotal = document.getElementById("tasks-total");  // 제목 옆 "남은 1시간 30분" (loadTodayTasks가 채운다)
+const tasksTotal = document.getElementById("tasks-total");  // 제목 옆 "· 총 1시간 30분 남음" (loadTodayTasks가 채운다)
 const dayPrevButton = document.getElementById("day-prev");
 const dayNextButton = document.getElementById("day-next");
 const dayTodayButton = document.getElementById("day-today");
@@ -1730,7 +1730,7 @@ const TL_QUARTER_LINES_PX = 120; // 이만큼 확대하면 15분 줄도 보여�
 const TL_SCROLL_PAD = 10;        // .tl-scroll의 위쪽 안쪽 여백(px). style.css와 같은 값
 let tlHourPx = TL_HOUR_DEFAULT;  // 지금 한 시간의 세로 길이(px). 두 손가락 동작은 조금씩 변하므로 소수일 수 있다
 
-const TL_DEFAULT_LENGTH = 60;    // 걸리는 시간을 안 정한 할 일을 끌어다 놓거나 "+ 시간"으로 넣을 때 만들어지는 길이(분). 정해 두었으면 그 길이를 쓴다(taskPlanLength)
+const TL_DEFAULT_LENGTH = 60;    // 걸리는 시간을 안 정한 할 일을 시간표에 넣을 때의 길이(분)의 처음 값. 설정 탭에서 바꾼 값(settings.planDefaultMinutes)이 있으면 그걸 쓴다(taskPlanLength). 서버 settings_store와 같은 값
 const TL_CLICK_LENGTH = 30;      // 빈 곳을 한 번 눌렀을 때 만들어지는 길이(분)
 const TL_CREATE_START_STEP = 5;  // 새 계획을 누르거나 끌기 시작한 자리를 맞추는 단위(분). 확대 정도와 관계없이 같다
 const TL_DAY_MIN = 24 * 60;      // 하루의 분
@@ -3775,7 +3775,7 @@ function openTaskDurationPopover(task, anchor, options) {
     });
 }
 
-// 끝내지 않은 할 일들의 걸리는 시간을 더해 제목 옆에 "남은 1시간 30분"으로 보여 준다.
+// 끝내지 않은 할 일들의 걸리는 시간을 더해 제목 옆에 "· 총 1시간 30분 남음"으로 보여 준다(2026-11-23 사용자가 고른 문구. 처음의 "남은 1시간 30분"은 뜻이 안 와닿는다고 함).
 // 길이를 안 정한 할 일은 더할 수 없으므로 빼고 더하고, 그런 할 일이 있으면 마우스를 올렸을 때 몇 개가 빠졌는지 알려 준다.
 // 길이를 정한 할 일이 하나도 없으면 비워 둔다(길이를 안 쓰는 날에는 아무것도 보이지 않게)
 function showTasksTotal(openTasks) {
@@ -3793,14 +3793,14 @@ function showTasksTotal(openTasks) {
         tasksTotal.title = "";
         return;
     }
-    tasksTotal.textContent = "· 남은 " + durationText(total);
+    tasksTotal.textContent = "· 총 " + durationText(total) + " 남음";
     tasksTotal.title = "끝내지 않은 할 일의 걸리는 시간 합계" + (missing ? " (길이를 안 정한 " + missing + "개는 빼고 더했습니다)" : "");
 }
 
-// 할 일을 시간표에 넣을 때의 계획 길이(분): 걸리는 시간을 정해 두었으면 그 길이, 아니면 기본 1시간(TL_DEFAULT_LENGTH).
-// 하루(24시간)보다 길 수는 없다
+// 할 일을 시간표에 넣을 때의 계획 길이(분): 걸리는 시간을 정해 두었으면 그 길이, 아니면 설정 탭의 "시간표에 넣을 때 기본 길이"
+// (settings.planDefaultMinutes, 설정을 아직 못 받았으면 1시간). 하루(24시간)보다 길 수는 없다
 function taskPlanLength(task) {
-    return task.duration_min ? Math.min(task.duration_min, TL_DAY_MIN) : TL_DEFAULT_LENGTH;
+    return task.duration_min ? Math.min(task.duration_min, TL_DAY_MIN) : (settings.planDefaultMinutes || TL_DEFAULT_LENGTH);
 }
 
 // 서버에서 할 일 목록을 받아와서 오른쪽에 그린다
@@ -3865,7 +3865,7 @@ async function loadTodayTasks() {
             editDuration: true,
         }));
     });
-    showTasksTotal(openTasks);  // 제목 옆 "남은 1시간 30분"
+    showTasksTotal(openTasks);  // 제목 옆 "· 총 1시간 30분 남음"
 
     loadMiniTaskDays();  // 할 일이 바뀌었을 수 있으니 작은 달력의 점도 새로 받는다
 
@@ -7942,6 +7942,7 @@ async function loadSettings() {
         vaultPathInput.value = settings.vaultPath || "";
         timelineCenterInput.value = settings.timelineCenterTime || TIMELINE_CENTER_DEFAULT;
         timelineCenterInput.classList.remove("invalid");
+        planDefaultMinutesSelect.value = String(settings.planDefaultMinutes || TL_DEFAULT_LENGTH);
         showEventDefaultControls();
 
         // 혹시 이미 있던 슬라이더를 비우고, 화면 크기 슬라이더와 Pomodoro 슬라이더를 각자의 칸에 만든다
@@ -7984,10 +7985,12 @@ document.getElementById("settings-reset").addEventListener("click", function () 
     resetSliders(sliderListElement);
 });
 document.getElementById("today-settings-reset").addEventListener("click", function () {
-    // 같은 칸의 "시간표 첫 위치"도 기본값으로 돌린다 (저장은 resetSliders가 한 번에 한다)
+    // 같은 칸의 "시간표 첫 위치"와 "시간표에 넣을 때 기본 길이"도 기본값으로 돌린다 (저장은 resetSliders가 한 번에 한다)
     settings.timelineCenterTime = TIMELINE_CENTER_DEFAULT;
     timelineCenterInput.value = TIMELINE_CENTER_DEFAULT;
     timelineCenterInput.classList.remove("invalid");
+    settings.planDefaultMinutes = TL_DEFAULT_LENGTH;
+    planDefaultMinutesSelect.value = String(TL_DEFAULT_LENGTH);
     resetSliders(todaySliderListElement);
 });
 
@@ -8168,6 +8171,7 @@ const eventDefaultAllDayCheckbox = document.getElementById("event-default-allday
 const eventDefaultStartInput = document.getElementById("event-default-start");
 const eventDefaultStartHint = document.getElementById("event-default-start-hint");
 const eventDefaultMinutesSelect = document.getElementById("event-default-minutes");
+const planDefaultMinutesSelect = document.getElementById("plan-default-minutes");  // 오늘 탭 칸의 "시간표에 넣을 때 기본 길이"
 
 // 시각 칸 하나를 연결한다. 칸을 떠나거나 Enter를 누르면 "16:45" 모양으로 정리하고, 읽을 수 있으면 onValid(정리된 값)를 부른다.
 // 읽을 수 없으면 칸을 빨갛게 하고 저장하지 않는다 (일정 창의 시간 칸과 같은 규칙: normalizeTimeInput)
@@ -8215,6 +8219,12 @@ eventDefaultAllDayCheckbox.addEventListener("change", function () {
 
 eventDefaultMinutesSelect.addEventListener("change", function () {
     settings.eventDefaultMinutes = Number(eventDefaultMinutesSelect.value);
+    saveSettings();
+});
+
+// 시간표에 넣을 때 기본 길이: 고르면 바로 저장한다. 다음에 할 일을 끌어다 놓을 때부터 쓰인다(taskPlanLength가 그때마다 읽는다)
+planDefaultMinutesSelect.addEventListener("change", function () {
+    settings.planDefaultMinutes = Number(planDefaultMinutesSelect.value);
     saveSettings();
 });
 

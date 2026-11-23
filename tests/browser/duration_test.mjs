@@ -98,7 +98,7 @@ let b = await presetButton("15분"); await click(b.x, b.y);
 check("15분을 누르면 창이 닫히고 저장된다", await waitFor(async () => (await durOf("LC 파트 풀기")) === 15) && !(await popOpen()), await durOf("LC 파트 풀기"));
 check("줄에 '15분' 글자가 보인다", await waitFor(async () => (await chipText("LC 파트 풀기")) === "15분"), await chipText("LC 파트 풀기"));
 check("길이를 정한 줄에는 '+ 길이'가 없다", !(await js(`!!${rowSel("LC 파트 풀기")}.querySelector(".task-duration-empty")`)));
-check("제목 옆 합계가 '· 남은 15분'", (await totalText()) === "· 남은 15분", await totalText());
+check("제목 옆 합계가 '· 총 15분 남음'", (await totalText()) === "· 총 15분 남음", await totalText());
 let tip = await js(`document.getElementById("tasks-total").title`);
 check("합계 설명에 길이를 안 정한 할 일 2개가 빠졌다고 나온다", /안 정한 2개/.test(tip), tip);
 await mouse("mouseMoved", 5, 5, 0); await sleep(200);
@@ -136,7 +136,7 @@ await type("40");
 check("다시 쓰기 시작하면 빨간 표시가 사라진다", !(await js(`!!document.querySelector(".tl-popover .task-duration-input.invalid")`)));
 b = await popButton("정하기"); await click(b.x, b.y);
 check("'40'을 쓰고 [정하기]를 누르면 40분으로 저장된다", await waitFor(async () => (await durOf("장보기")) === 40), await durOf("장보기"));
-check("합계가 80 + 40 = '· 남은 2시간'", await waitFor(async () => (await totalText()) === "· 남은 2시간"), await totalText());
+check("합계가 80 + 40 = '· 총 2시간 남음'", await waitFor(async () => (await totalText()) === "· 총 2시간 남음"), await totalText());
 tip = await js(`document.getElementById("tasks-total").title`);
 check("합계 설명: 안 정한 할 일 1개", /안 정한 1개/.test(tip), tip);
 
@@ -156,7 +156,7 @@ await openPopover("장보기");
 b = await popButton("길이 지우기"); await click(b.x, b.y);
 check("[길이 지우기]를 누르면 안 정함으로 돌아간다", await waitFor(async () => (await durOf("장보기")) === null), await durOf("장보기"));
 check("줄의 길이 글자가 사라진다", await waitFor(async () => (await chipText("장보기")) === null));
-check("합계가 '· 남은 1시간 20분'", (await totalText()) === "· 남은 1시간 20분", await totalText());
+check("합계가 '· 총 1시간 20분 남음'", (await totalText()) === "· 총 1시간 20분 남음", await totalText());
 await mouse("mouseMoved", 5, 5, 0); await js(`document.activeElement && document.activeElement.blur()`);
 await ctrlZ();
 check("Ctrl+Z로 지우기 전 길이(40분)로 돌아간다", await waitFor(async () => (await durOf("장보기")) === 40), await durOf("장보기"));
@@ -179,14 +179,14 @@ check("수집함 줄에 '30분' 글자", await waitFor(async () => (await chipTe
 await openPopover("지난 일 마무리", "#overdue-tasks");
 b = await presetButton("45분"); await click(b.x, b.y);
 check("밀린 할 일 줄에서도 정할 수 있다", await waitFor(async () => (await api("/api/tasks?date=" + today)).data.overdue.some((t) => t.content === "지난 일 마무리" && t.duration_min === 45)));
-check("밀린 할 일·수집함의 길이는 오늘 합계에 더하지 않는다(15 + 40)", (await totalText()) === "· 남은 55분", await totalText());
+check("밀린 할 일·수집함의 길이는 오늘 합계에 더하지 않는다(15 + 40)", (await totalText()) === "· 총 55분 남음", await totalText());
 
 console.log("--- 끝낸 할 일 ---");
 await js(`${rowSel("LC 파트 풀기")}.querySelector('input[type="checkbox"]').click()`);
-check("끝낸 할 일은 합계에서 빠진다(40분만)", await waitFor(async () => (await totalText()) === "· 남은 40분"), await totalText());
+check("끝낸 할 일은 합계에서 빠진다(40분만)", await waitFor(async () => (await totalText()) === "· 총 40분 남음"), await totalText());
 check("끝낸 줄에도 길이 글자는 남아 있다", (await chipText("LC 파트 풀기")) === "15분");
 await js(`${rowSel("LC 파트 풀기")}.querySelector('input[type="checkbox"]').click()`);
-await waitFor(async () => (await totalText()) === "· 남은 55분");
+await waitFor(async () => (await totalText()) === "· 총 55분 남음");
 
 console.log("--- 시간표와 연결 ---");
 // 장보기(40분)를 시간표 10:00에 끌어다 놓는다
@@ -236,6 +236,29 @@ const lcPlan = (await api("/api/time-blocks?date=" + today)).data.find((p) => p.
 check("Enter를 누르면 15분짜리 계획이 생긴다", lcPlan && lcPlan.end - lcPlan.start === 15, lcPlan);
 await sleep(500);
 await shot("d_timeline.png");
+
+console.log("--- 설정 탭: 시간표에 넣을 때 기본 길이 ---");
+check("설정 탭의 처음 값은 1시간", (await js(`planDefaultMinutesSelect.value`)) === "60", await js(`planDefaultMinutesSelect.value`));
+await js(`(() => { const s = planDefaultMinutesSelect; s.value = "30"; s.dispatchEvent(new Event("change")); })()`);
+check("30분을 고르면 서버에 저장된다", await waitFor(async () => (await api("/api/settings")).data.values.planDefaultMinutes === 30), (await api("/api/settings")).data.values.planDefaultMinutes);
+// 길이를 안 정하고 시간표에도 없는 새 할 일을 만들어 "+ 시간"을 연다
+await api("/api/tasks", "POST", { content: "새 할 일", date: today, projectId: null });
+await reloadList();
+await hoverRow("새 할 일");
+b = await center(`${rowSel("새 할 일")}.querySelector(".task-slot-empty")`);
+await click(b.x, b.y); await sleep(300);
+const plen2 = await js(`(() => { const i = document.querySelector(".tl-popover .tl-pop-length-input"); return i ? i.value : null; })()`);
+check("길이를 안 정한 할 일의 '+ 시간' 처음 길이가 설정한 30분", plen2 === "30분", plen2);
+await key("Enter");
+const newTask = await taskOf("새 할 일");
+await waitFor(async () => (await api("/api/time-blocks?date=" + today)).data.some((p) => p.taskId === newTask.id));
+const newPlan = (await api("/api/time-blocks?date=" + today)).data.find((p) => p.taskId === newTask.id);
+check("Enter를 누르면 30분짜리 계획이 생긴다", newPlan && newPlan.end - newPlan.start === 30, newPlan);
+check("길이를 정한 할 일은 설정과 관계없이 자기 길이(LC 15분 계획 그대로)", lcPlan.end - lcPlan.start === 15);
+// 기본값으로
+await js(`document.getElementById("today-settings-reset").click()`);
+check("오늘 탭 칸의 [기본값으로]를 누르면 1시간으로 돌아가고 저장된다", await waitFor(async () => (await api("/api/settings")).data.values.planDefaultMinutes === 60) && (await js(`planDefaultMinutesSelect.value`)) === "60");
+check("다시 불러와도 설정 칸에 저장된 값이 보인다", await (async () => { await api("/api/settings", "PUT", { planDefaultMinutes: 90 }); await js(`loadSettings()`); await sleep(500); return (await js(`planDefaultMinutesSelect.value`)) === "90"; })(), await js(`planDefaultMinutesSelect.value`));
 
 check("자바스크립트 오류 없음", jsErrors.length === 0, jsErrors.join(" | "));
 console.log(failed ? `\n실패 ${failed}개` : "\n모두 통과");

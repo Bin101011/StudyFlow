@@ -246,6 +246,18 @@ bad = client.put("/api/settings", json={"timelineCenterTime": " 20:30x", "eventD
 check("앞뒤에 글자가 붙은 시각, null, true도 원래 값을 지킨다", (bad["timelineCenterTime"], bad["eventDefaultStart"], bad["eventDefaultAllDay"], bad["eventDefaultMinutes"]) == ("20:30", "13:15", True, 30), bad)
 saved = client.put("/api/settings", json={"eventDefaultAllDay": False}).get_json()
 check("종일을 끄면 시각(13:15)으로 돌아간다", (saved["eventDefaultAllDay"], saved["eventDefaultStart"]) == (False, "13:15"), saved)
+
+# ----- 시간표에 넣을 때 기본 길이 (할 일에 걸리는 시간을 안 정했을 때, 2026-11-23) -----
+check("기본값: 시간표에 넣을 때 60분", values["planDefaultMinutes"] == 60, values)
+saved = client.put("/api/settings", json={"planDefaultMinutes": 45}).get_json()
+check("45분(길이 버튼에 있는 값)은 저장된다", saved["planDefaultMinutes"] == 45, saved)
+check("시간표 기본 길이만 바꿔도 일정 기본 길이(30분)는 그대로", saved["eventDefaultMinutes"] == 30, saved)
+for wrong in (20, 0, 180, -15, "30", True, None, 30.0, [30]):
+    bad = client.put("/api/settings", json={"planDefaultMinutes": wrong}).get_json()
+    check("틀린 값 %r은 원래 값(45분)을 지킨다" % (wrong,), bad["planDefaultMinutes"] == 45, bad)
+saved = client.put("/api/settings", json={"eventDefaultMinutes": 120}).get_json()
+check("일정 기본 길이를 바꿔도 시간표 기본 길이(45분)는 그대로", saved["planDefaultMinutes"] == 45 and saved["eventDefaultMinutes"] == 120, saved)
+client.put("/api/settings", json={"eventDefaultMinutes": 30})
 # 예전 방식("allDay"를 시각 자리에 저장)의 파일도 종일 켜기로 읽고, 시각은 기본값 09:00
 with open(SETTINGS, "w", encoding="utf-8") as f:
     json.dump({"eventDefaultStart": "allDay"}, f)
