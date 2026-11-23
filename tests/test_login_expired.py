@@ -19,10 +19,12 @@ import google_calendar  # noqa: E402
 
 real_get_credentials = google_calendar.get_credentials
 real_build_service = google_calendar.build_service
+real_is_connected = google_calendar.is_connected
 fake = fake_google.install()  # 일정·캘린더 내용은 가짜 Google이 맡는다
 # 로그인 부분만 진짜로 되돌린다
 google_calendar.get_credentials = real_get_credentials
 google_calendar.build_service = real_build_service
+google_calendar.is_connected = real_is_connected
 
 import app  # noqa: E402
 import event_cache  # noqa: E402

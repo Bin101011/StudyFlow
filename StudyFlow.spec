@@ -17,6 +17,14 @@ datas = [
 # Google API 라이브러리가 쓰는 API 설명 파일(.json). 코드가 아니라서 따로 넣어 줘야 한다
 datas += collect_data_files("googleapiclient")
 
+# 앱 신분증(credentials.json)이 프로젝트 폴더에 있으면 exe 안에 같이 묶는다.
+# 그러면 exe를 쓸 때 파일을 고를 필요 없이 설정 탭의 [연결하기]만 누르면 된다 (google_calendar.BUNDLED_CREDENTIALS_PATH).
+# 이 파일은 .gitignore에 있어서 Git에는 올라가지 않는다. 대신 만든 exe 폴더를 남에게 주면 이 신분증도 같이 가므로 내 컴퓨터에서만 쓴다.
+# token.json(로그인 결과)은 절대 묶지 않는다
+import os
+if os.path.exists("credentials.json"):
+    datas.append(("credentials.json", "."))
+
 a = Analysis(
     ["main.py"],
     pathex=[],

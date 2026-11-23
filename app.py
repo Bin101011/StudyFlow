@@ -244,6 +244,9 @@ def get_calendar_list():
             try:
                 service = google_calendar.build_service(get_creds())
                 calendars = google_calendar.get_calendars(service)
+            except google_calendar.NotConnected:
+                # Google을 연결하지 않았다. 지난번 목록(다른 계정일 수도 있다)을 대신 쓰지 않는다
+                raise
             except Exception as error:
                 # 대신 쓸 지난번 목록이 있으면 그걸 쓰고, 1분 뒤에 다시 시도한다. 아무것도 없으면 오류를 그대로 올린다
                 saved = _calendar_cache["data"] or event_store.saved_calendars()
@@ -355,6 +358,8 @@ def warm_up():
 
         # list(...): map은 결과를 꺼내야 실제로 끝까지 실행되므로 리스트로 만들어 기다린다
         list(_pool.map(prepare, range(8)))
+    except google_calendar.NotConnected:
+        pass  # Google을 연결하지 않고 쓰는 중이다. 준비할 것이 없다
     except Exception as error:
         # 준비에 실패해도 프로그램은 계속 돈다. 그냥 첫 로딩이 느려질 뿐이다
         print(f"[준비 실패] 미리 연결하지 못했습니다: {error}")
@@ -410,6 +415,8 @@ def run_sync_cycle():
         calendars = get_calendar_list()
         # 작업자 2명이 캘린더들을 나눠서 확인한다
         outcomes = list(_background_pool.map(check_one, calendars))
+    except google_calendar.NotConnected:
+        return  # Google을 연결하지 않았다. 확인할 것이 없고, "오프라인"으로 표시하지도 않는다
     except Exception as error:
         print(f"[동기화 실패] {error}")
         event_store.mark_offline()
@@ -432,6 +439,8 @@ def prefetch_around_today():
     try:
         for calendar in get_calendar_list():
             _background_pool.submit(prefetch_one, calendar["id"], months)
+    except google_calendar.NotConnected:
+        pass
     except Exception as error:
         print(f"[미리 받기 실패] {error}")
 
@@ -473,6 +482,8 @@ def index():
 def api_calendars():
     try:
         calendars = get_calendar_list()
+    except google_calendar.NotConnected:
+        return jsonify([])  # Google 없이 쓰는 중. 캘린더가 없는 것으로 보여준다 (화면이 "연결하기" 안내를 띄운다)
     except Exception as error:
         print(f"[캘린더 목록 실패] {error}")
         return jsonify({"error": google_failure_message(error, "캘린더 목록을 불러오지 못했습니다. 인터넷 연결을 확인하세요.")}), 502
@@ -606,6 +617,8 @@ def api_events():
             lambda calendar: fetch_calendar_events(calendar, start, end),
             calendars,
         ))
+    except google_calendar.NotConnected:
+        return jsonify([])  # Google 없이 쓰는 중. 일정이 없는 달력(할 일만 보이는 달력)이 된다
     except Exception as error:
         # 인터넷이 끊겼고 기억해둔 일정도 없는 경우 등. 화면이 이유를 보여줄 수 있게 알려준다
         print(f"[일정 불러오기 실패] {error}")
@@ -649,6 +662,115 @@ def api_refresh():
         except Exception as error:
             print(f"[새로고침 실패] {error}")
     return jsonify(sync_status())
+
+
+# ---------- Google 계정 연결 (설정 탭의 "Google Calendar" 칸) ----------
+# Google 없이도 StudyFlow를 모두 쓸 수 있다. 연결은 사용자가 [연결하기]를 누를 때만 하고, 켤 때 로그인 창을 저절로 열지 않는다.
+# 연결에 필요한 것 두 가지:
+#   1) 앱 신분증(credentials.json): Google Cloud Console에서 한 번 만든다. 화면에서 파일을 고르면 데이터 폴더에 저장한다.
+#      exe를 만들 때 프로젝트 폴더에 있으면 exe 안에 묶여서(StudyFlow.spec) 고를 필요가 없다
+#   2) 로그인(token.json): [연결하기]를 누르면 브라우저가 열리고, 허용하면 저장된다
+CLIENT_FILE_MAX_BYTES = 20000  # credentials.json은 1KB 정도다. 엉뚱한 큰 파일을 고른 경우를 막는다
+
+
+def google_status():
+    """설정 탭에 보여줄 Google 연결 상태.
+    state: "disconnected"(연결 안 함), "waiting"(브라우저 로그인을 기다리는 중), "needed"(다시 로그인해야 함), "connected"(연결됨)
+    clientSource: 앱 신분증이 어디 있는지 ("file" 내가 고른 파일 / "bundled" exe에 묶인 것 / None 없음)
+    account: 연결된 계정(기본 캘린더의 id가 곧 Gmail 주소다). 아직 캘린더 목록을 못 받았으면 None"""
+    state, message = google_calendar.login_status()
+    account = None
+    with _calendar_lock:
+        for calendar in _calendar_cache["data"] or event_store.saved_calendars() or []:
+            if calendar.get("primary"):
+                account = calendar["id"]
+    if state == "disconnected" and _connect_error["message"]:
+        message = _connect_error["message"]  # 연결하려다 로그인 전에 실패했다 (예: 깨진 credentials.json)
+    return {
+        "state": state or "connected",
+        "message": message,
+        "clientSource": google_calendar.client_source(),
+        "account": account if google_calendar.is_connected() else None,
+    }
+
+
+@app.route("/api/google/status")
+def api_google_status():
+    return jsonify(google_status())
+
+
+# 앱 신분증 파일 저장: 화면이 고른 파일의 내용을 글자로 보낸다 {"content": "..."}
+@app.route("/api/google/client-file", methods=["POST"])
+def api_google_client_file():
+    data = request.get_json(silent=True)
+    content = data.get("content") if isinstance(data, dict) else None
+    if not isinstance(content, str) or not content.strip():
+        return jsonify({"error": "파일 내용이 비어 있습니다."}), 400
+    if len(content.encode("utf-8")) > CLIENT_FILE_MAX_BYTES:
+        return jsonify({"error": "credentials.json이 아닌 것 같습니다 (파일이 너무 큽니다)."}), 400
+    try:
+        google_calendar.save_client_file(content)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    except OSError as error:
+        return jsonify({"error": f"파일을 저장하지 못했습니다: {error}"}), 500
+    return jsonify(google_status())
+
+
+# 마지막 [연결하기]가 로그인 전에 실패한 이유 (예: 깨진 credentials.json). 설정 탭에 보여 준다. 다시 누르면 지운다
+_connect_error = {"message": ""}
+
+
+def connect_in_background():
+    """[연결하기]를 누른 뒤 뒤에서 하는 일: 브라우저 로그인 → 캘린더 목록 받기 → 작업자들의 연결 준비.
+    로그인은 사용자가 브라우저에서 끝낼 때까지(최대 3분) 기다리므로 화면 요청 안에서 하지 않는다.
+    화면은 2초마다 상태를 물어서 로그인이 끝난 것을 보고 캘린더와 일정을 다시 불러온다"""
+    try:
+        get_creds()  # 브라우저 로그인. 실패하면 이유를 남긴다 (warm_up은 오류를 삼키므로 로그인만 먼저 따로 한다)
+    except google_calendar.CredentialsProblem as error:
+        _connect_error["message"] = str(error)
+        return
+    except Exception as error:
+        _connect_error["message"] = f"로그인하지 못했습니다: {error}"
+        report_unexpected("Google 연결", error)
+        return
+    try:
+        warm_up()
+        prefetch_around_today()
+    except Exception as error:
+        report_unexpected("Google 연결", error)
+
+
+@app.route("/api/google/connect", methods=["POST"])
+def api_google_connect():
+    status = google_status()
+    if status["state"] == "waiting":
+        return jsonify({"error": "이미 브라우저에서 로그인을 기다리는 중입니다. 열린 브라우저 창을 확인하세요."}), 409
+    if status["clientSource"] is None:
+        return jsonify({"error": google_calendar.CREDENTIALS_MISSING_MESSAGE}), 400
+    google_calendar.request_login()
+    _connect_error["message"] = ""
+    with _calendar_lock:
+        _calendar_cache["time"] = 0  # 새로 로그인한 계정의 캘린더 목록을 받게 한다
+    threading.Thread(target=connect_in_background, daemon=True).start()
+    # 뒤에서 로그인 창을 막 여는 중이라 아직 "기다리는 중"으로 바뀌기 전일 수 있다. 화면이 곧바로 자주 묻기 시작하도록 "waiting"으로 알린다
+    return jsonify({**google_status(), "state": "waiting", "message": ""})
+
+
+# 연결 끊기: Google에 로그인 취소를 알리고 token.json을 지운다. 기억해 둔 일정(events_cache.json)도 지운다.
+# 할 일, 프로젝트, 시간표, 노트는 내 컴퓨터에 있으므로 그대로다. Google에 있는 일정도 그대로다(지우는 것이 아니라 연결만 끊는다)
+@app.route("/api/google/disconnect", methods=["POST"])
+def api_google_disconnect():
+    if google_status()["state"] == "waiting":
+        return jsonify({"error": "로그인을 기다리는 중에는 끊을 수 없습니다. 브라우저 창을 닫고 잠시 뒤 다시 시도하세요."}), 409
+    with _creds_lock:  # 로그인 정보를 쓰는 중인 요청이 끝난 뒤에 지운다
+        revoked = google_calendar.disconnect()
+    _connect_error["message"] = ""
+    with _calendar_lock:
+        _calendar_cache["data"] = None
+        _calendar_cache["time"] = 0
+    event_store.forget_everything()
+    return jsonify({**google_status(), "revoked": revoked})
 
 
 def missing_key(data, keys):

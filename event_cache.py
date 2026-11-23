@@ -191,6 +191,31 @@ class EventCache:
         with self._lock:
             return self._calendars
 
+    def forget_everything(self):
+        """Google 연결을 끊을 때: 기억해 둔 일정, 캘린더 목록, 책갈피를 모두 버리고 파일도 지운다.
+        내 일정 내용이 컴퓨터에 남지 않게 하고, 다른 계정으로 다시 연결했을 때 옛 계정의 일정이 섞여 보이지 않게 하려는 것이다."""
+        with self._file_lock:
+            with self._lock:
+                self._months = {}
+                self._tokens = {}
+                self._valid_since = {}
+                self._checked_at = {}
+                self._calendars = None
+                self._unsyncable = set()
+                self._own_writes = {}
+                self._token_started = {}
+                self._last_sync = None
+                self._online = True
+                self._version += 1  # 화면이 일정을 다시 불러오게 한다 (이제 빈 목록이 온다)
+                self._dirty = False
+            for path in (self.path, self.path + ".tmp"):
+                try:
+                    os.remove(path)
+                except FileNotFoundError:
+                    pass
+                except OSError as error:
+                    print(f"[일정 기억 지우기 실패] {error}")
+
     # ----- 믿어도 되는지 -----
 
     def _is_fresh(self, calendar_id, entry):

@@ -113,6 +113,11 @@ tabButtons.forEach(function (button) {
         } else {
             flushNote();
         }
+
+        // 9. 설정 탭을 열 때마다 Google 연결 상태를 새로 확인한다
+        if (tabName === "settings") {
+            loadGoogleStatus();
+        }
     });
 });
 
@@ -7795,7 +7800,7 @@ async function loadCalendarList() {
     // index.html에서 만들어둔 빈 칸(<aside id="calendar-list">)
     const listElement = document.getElementById("calendar-list");
 
-    listElement.querySelectorAll("label, .calendar-list-error").forEach(function (element) {
+    listElement.querySelectorAll("label, .calendar-list-error, .calendar-connect-hint").forEach(function (element) {
         element.remove();
     });
     eventCalendarSelect.innerHTML = "";
@@ -7815,6 +7820,12 @@ async function loadCalendarList() {
             throw new Error("서버 오류: " + response.status);
         }
         const calendars = await response.json();
+
+        // 캘린더가 하나도 없다 = Google을 연결하지 않았다 (연결한 계정에는 기본 캘린더가 늘 있다). 연결하는 곳을 알려 준다
+        if (calendars.length === 0) {
+            listElement.appendChild(makeCalendarConnectHint());
+            return;
+        }
 
         // 저장된 기본 캘린더 설정을 쓰려면 설정을 먼저 불러온 상태여야 한다
         await settingsReady;
@@ -8396,6 +8407,9 @@ function describeSync(status) {
     if (status.login === "needed") {
         return "Google 로그인 필요 · 새로고침을 누르세요";
     }
+    if (status.login === "disconnected") {
+        return "Google 연결 안 됨";
+    }
     let when = "아직 동기화 안 됨";
     if (status.lastSync) {
         const date = new Date(status.lastSync * 1000);  // 서버는 초 단위, 자바스크립트는 밀리초 단위
@@ -8412,6 +8426,10 @@ function showSyncStatus(status) {
     // 로그인이 필요하거나 (로그인 문제 없이) 연결이 끊겼으면 빨간색(offline), 로그인을 기다리는 중이면 주황색(login-waiting)
     syncStatusElement.classList.toggle("offline", status.login === "needed" || (!status.online && !status.login));
     syncStatusElement.classList.toggle("login-waiting", status.login === "waiting");
+    // Google 없이 쓰는 중: 회색 동그라미. 글자를 누르면 설정 탭의 연결 칸으로 간다. 새로고침은 할 것이 없어서 숨긴다
+    syncStatusElement.classList.toggle("disconnected", status.login === "disconnected");
+    syncRefreshButton.hidden = status.login === "disconnected";
+    syncTextElement.title = status.login === "disconnected" ? "누르면 설정 탭에서 Google을 연결할 수 있습니다" : "";
     const loggedInNow = lastLoginState !== null && !status.login;
     lastLoginState = status.login || null;
     return loggedInNow;
@@ -8433,6 +8451,194 @@ function reloadVisibleEvents() {
         });
     }
 }
+
+// ---------- 설정 탭: Google Calendar 연결 ----------
+// Google 없이도 StudyFlow를 모두 쓸 수 있다. 연결은 여기의 [연결하기]로만 하고, 켤 때 로그인 창이 저절로 뜨지 않는다.
+// 연결 순서: (1) 앱 신분증 credentials.json이 없으면 [고르기]로 파일을 고른다 → (2) [연결하기] → 브라우저에서 허용 → 연결됨.
+// 서버가 알려 주는 상태(state): "disconnected" 연결 안 함, "waiting" 브라우저 로그인 기다리는 중, "needed" 다시 로그인 필요, "connected" 연결됨
+
+const googleStatusText = document.getElementById("google-status-text");
+const googleClientSetup = document.getElementById("google-client-setup");
+const googleClientPick = document.getElementById("google-client-pick");
+const googleClientInput = document.getElementById("google-client-input");
+const googleConnectButton = document.getElementById("google-connect");
+const googleDisconnectButton = document.getElementById("google-disconnect");
+const googleNote = document.getElementById("google-note");
+// 데이터 액세스에 붙여 넣을 권한(범위) 3개. 서버의 google_calendar.SCOPES와 같아야 한다
+const GOOGLE_SCOPES = [
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.calendarlist",
+    "https://www.googleapis.com/auth/calendar.app.created",
+];
+let googleState = null;        // 마지막으로 받은 상태
+let googleWaitTimer = null;    // 로그인을 기다리는 동안 2초마다 상태를 묻는 타이머
+
+function renderGoogleStatus(status) {
+    const previous = googleState;
+    googleState = status.state;
+    const texts = {
+        disconnected: "연결 안 됨 · Google 없이 쓰는 중",
+        waiting: "브라우저에서 Google 로그인을 끝내 주세요 (3분 안에)",
+        needed: "다시 로그인이 필요합니다",
+        connected: "연결됨" + (status.account ? " · " + status.account : ""),
+    };
+    googleStatusText.textContent = texts[status.state] || status.state;
+    googleStatusText.className = "google-status " + status.state;
+
+    const hasClient = status.clientSource !== null;
+    // 신분증 준비 안내는 "아직 연결 안 했고 신분증도 없을 때"만 보인다
+    googleClientSetup.hidden = hasClient || status.state === "connected";
+    // [고르기]는 연결하기 전에만. 신분증이 이미 있으면 "다른 파일 고르기"가 된다(잘못 고른 경우)
+    googleClientPick.hidden = status.state === "connected" || status.state === "waiting" || status.clientSource === "bundled";
+    googleClientPick.textContent = hasClient ? "다른 credentials.json 고르기…" : "credentials.json 고르기…";
+    googleClientPick.classList.toggle("primary", !hasClient);
+    googleConnectButton.hidden = !(status.state === "disconnected" || status.state === "needed");
+    googleConnectButton.disabled = !hasClient;
+    googleConnectButton.textContent = status.state === "needed" ? "다시 로그인" : "연결하기";
+    googleDisconnectButton.hidden = !(status.state === "connected" || status.state === "needed");
+
+    let note = "";
+    if (status.state === "needed" || (status.state === "disconnected" && status.message)) {
+        note = status.message;  // 다시 로그인해야 하는 이유, 또는 방금 연결하려다 실패한 이유
+    } else if (status.state === "waiting") {
+        note = "브라우저 창이 안 보이면 작업 표시줄을 확인하세요. \"확인되지 않은 앱\"이 뜨면 본인이 만든 앱이므로 [고급] → [StudyFlow(으)로 이동]을 누르면 됩니다.";
+    } else if (status.state === "connected") {
+        note = "캘린더 탭에 Google 일정이 보이고, StudyFlow에서 바꾼 일정은 폰과 웹의 Google Calendar에도 반영됩니다. " +
+            "연결을 끊어도 Google에 있는 일정은 그대로이고, 이 컴퓨터에 기억해 둔 일정만 지워집니다.";
+    } else if (hasClient) {
+        note = (status.clientSource === "bundled" ? "앱 신분증이 StudyFlow 안에 들어 있습니다. " : "앱 신분증이 준비되었습니다. ") +
+            "[연결하기]를 누르면 브라우저에서 Google 로그인 창이 열립니다.";
+    }
+    googleNote.textContent = note;
+
+    // 로그인을 기다리는 동안은 자주(2초마다) 물어서, 끝나자마자 화면을 바꾼다
+    if (status.state === "waiting" && googleWaitTimer === null) {
+        googleWaitTimer = setInterval(loadGoogleStatus, 2000);
+    } else if (status.state !== "waiting" && googleWaitTimer !== null) {
+        clearInterval(googleWaitTimer);
+        googleWaitTimer = null;
+    }
+    // 방금 연결됐다: 캘린더 목록과 일정을 새로 받는다 (동기화 표시의 15초 확인을 기다리지 않는다)
+    if (previous !== null && previous !== "connected" && status.state === "connected") {
+        showToast("Google Calendar에 연결했습니다.");
+        reloadAfterLogin();
+        pollSyncStatus();
+    }
+}
+
+async function loadGoogleStatus() {
+    try {
+        const response = await fetch("/api/google/status");
+        if (!response.ok) {
+            throw new Error(await errorMessageFrom(response));
+        }
+        renderGoogleStatus(await response.json());
+    } catch (error) {
+        googleStatusText.textContent = "연결 상태를 확인하지 못했습니다: " + error.message;
+    }
+}
+
+// [고르기]: 숨겨 둔 파일 선택 칸을 대신 눌러서 윈도우의 파일 선택 창을 연다
+googleClientPick.addEventListener("click", function () {
+    googleClientInput.value = "";  // 같은 파일을 다시 골라도 change가 일어나게 비운다
+    googleClientInput.click();
+});
+
+// 파일을 고르면: 내용을 글자로 읽어서 서버에 보낸다. 서버가 모양(데스크톱 앱 유형인지 등)을 확인하고 데이터 폴더에 저장한다
+googleClientInput.addEventListener("change", async function () {
+    const file = googleClientInput.files[0];
+    if (!file) {
+        return;
+    }
+    try {
+        // file.text(): 고른 파일의 내용을 글자로 읽는다 (파일은 내 컴퓨터 안에서만 오간다)
+        const content = await file.text();
+        const status = await sendRequest("/api/google/client-file", "POST", { content: content });
+        renderGoogleStatus(status);
+        showToast("앱 신분증을 저장했습니다. 이제 [연결하기]를 누르세요.");
+    } catch (error) {
+        showToast(error.message, 8000);
+    }
+});
+
+googleConnectButton.addEventListener("click", async function () {
+    googleConnectButton.disabled = true;
+    try {
+        renderGoogleStatus(await sendRequest("/api/google/connect", "POST", {}));
+    } catch (error) {
+        showToast(error.message, 8000);
+        loadGoogleStatus();
+    }
+});
+
+// [연결 끊기]: 확인 창을 먼저 띄운다 (<dialog>의 showModal: 뒤 화면을 누를 수 없게 막고 가운데에 띄운다)
+const googleDisconnectDialog = document.getElementById("google-disconnect-dialog");
+googleDisconnectButton.addEventListener("click", function () {
+    googleDisconnectDialog.showModal();
+});
+document.getElementById("google-disconnect-cancel").addEventListener("click", function () {
+    googleDisconnectDialog.close();
+});
+
+document.getElementById("google-disconnect-confirm").addEventListener("click", async function () {
+    googleDisconnectDialog.close();
+    try {
+        const status = await sendRequest("/api/google/disconnect", "POST", {});
+        renderGoogleStatus(status);
+        showToast(status.revoked ? "Google 연결을 끊었습니다." :
+            "이 컴퓨터의 연결은 끊었습니다. (인터넷 문제로 Google에 알리지는 못했습니다. Google 계정 설정의 '타사 앱'에서도 지울 수 있습니다)", 8000);
+        loadCalendarList();
+        calendar.refetchEvents();
+        pollSyncStatus();
+    } catch (error) {
+        showToast(error.message, 8000);
+    }
+});
+
+// [열기]: Console의 해당 화면을 컴퓨터의 기본 브라우저로 연다 (이 창 안에서 열면 StudyFlow 화면이 사라진다)
+document.querySelectorAll("[data-google-link]").forEach(function (button) {
+    button.addEventListener("click", function () {
+        sendRequest("/api/open-external", "POST", { url: button.dataset.googleLink }).catch(function (error) {
+            showToast("브라우저를 열지 못했습니다: " + error.message);
+        });
+    });
+});
+
+// [범위 복사]: 붙여 넣을 범위 3개를 한 줄씩 클립보드에 복사한다
+document.getElementById("google-copy-scopes").addEventListener("click", async function () {
+    try {
+        await navigator.clipboard.writeText(GOOGLE_SCOPES.join("\n"));
+        showToast("범위 3개를 복사했습니다. Console의 직접 입력 칸에 붙여 넣으세요(Ctrl+V).");
+    } catch (error) {
+        showToast("복사하지 못했습니다. 범위: " + GOOGLE_SCOPES.join(" , "), 10000);
+    }
+});
+
+// 캘린더 탭의 "내 캘린더" 칸에 넣는 안내: Google을 연결하지 않았을 때
+function makeCalendarConnectHint() {
+    const box = document.createElement("div");
+    box.className = "calendar-connect-hint";
+    box.textContent = "Google Calendar가 연결되지 않았습니다. 지금은 할 일만 보입니다.";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "설정에서 연결하기";
+    button.addEventListener("click", openGoogleSettings);
+    box.appendChild(document.createElement("br"));
+    box.appendChild(button);
+    return box;
+}
+
+function openGoogleSettings() {
+    document.querySelector("[data-tab=settings]").click();
+    document.getElementById("google-section").scrollIntoView({ block: "start" });
+}
+
+// 위쪽 "Google 연결 안 됨" 글자를 누르면 설정 탭의 연결 칸으로 간다
+syncTextElement.addEventListener("click", function () {
+    if (syncStatusElement.classList.contains("disconnected")) {
+        openGoogleSettings();
+    }
+});
 
 // Claude(옵시디언의 MCP)가 할 일을 바꿨을 때: 지금 보이는 탭의 할 일을 다시 불러온다.
 // 내가 오늘 탭에서 글을 쓰거나 블록을 끄는 중이면 다시 그리면 쓰던 것이 사라지므로, 다음 확인(15초 뒤)으로 미룬다

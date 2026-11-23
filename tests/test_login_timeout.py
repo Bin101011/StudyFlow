@@ -91,6 +91,8 @@ def give_up(name):
 check("시험 전제: token.json이 없다 (처음 실행처럼 로그인이 필요하다)", not os.path.exists(google_calendar.TOKEN_PATH))
 
 # ===== 1) 로그인 창을 열고 아무도 로그인하지 않는다 =====
+# 설정 탭의 [연결하기]가 하는 일. 이걸 하지 않으면 로그인 창을 저절로 열지 않는다(test_google_connect.py에서 확인)
+google_calendar.request_login()
 box = {}
 first = threading.Thread(target=lambda: box.update(response=client.get("/api/calendars"), done=time.monotonic()), daemon=True)
 started = time.monotonic()
@@ -194,7 +196,7 @@ class CancelBrowser:
 
 os.remove(google_calendar.TOKEN_PATH)  # 다시 처음 실행처럼
 app._calendar_cache["data"] = None
-google_calendar.allow_login_again()
+google_calendar.request_login()  # [연결하기]를 누른 것
 webbrowser.get = lambda using=None: CancelBrowser()
 opened.clear()
 # 제한 시간을 넉넉히 둔다. 그보다 훨씬 빨리 끝나야 "제한 시간"이 아니라 "취소"를 알아챈 것이다

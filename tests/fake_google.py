@@ -199,6 +199,9 @@ class FakeGoogle:
 def install():
     fake = FakeGoogle()
     google_calendar.get_credentials = lambda: object()
+    # 가짜 Google은 "연결된 상태"다. token.json이 없어도 동기화 표시가 "Google 연결 안 됨"으로 보이지 않게 한다
+    # (로그인 부분을 진짜로 되돌리는 시험은 이것도 google_calendar.is_connected를 다시 쓰거나 TOKEN_PATH로 정한다)
+    google_calendar.is_connected = lambda: True
     google_calendar.build_service = lambda creds: object()
     google_calendar.get_calendars = fake.get_calendars
     google_calendar.get_events = fake.get_events

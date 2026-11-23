@@ -1,5 +1,6 @@
 # 로그인 안내 화면 시험(login_test)용 서버 (docs/review-2026-11.md의 H1c).
-# 사용자의 진짜 앱 확인과 같은 상황: 지난번 실행이 캘린더 목록과 일정을 저장해 두었고, token.json이 없어서 켜자마자 로그인 창이 열린다.
+# 지난번 실행이 캘린더 목록과 일정을 저장해 두었고 token.json은 없다. 예전에는 켜자마자 로그인 창이 열렸지만, 지금은 "연결 안 됨"으로 켜지고
+# 설정 탭의 [연결하기]를 눌러야 로그인 창이 열린다.
 # 로그인 부분(get_credentials, 로그인 대기)은 진짜 코드를 쓰고, 일정·캘린더 내용은 가짜 Google이 맡는다. 브라우저는 여는 척만 한다.
 # 시험이 /__test/cancel-login(로그인 화면에서 "취소"), /__test/login-succeed(다음 로그인은 성공)로 로그인 결과를 정한다.
 import datetime
@@ -16,8 +17,10 @@ import fake_google  # noqa: E402  (불러오기만 해도 DB와 설정 파일이
 import google_calendar  # noqa: E402
 
 real_get_credentials = google_calendar.get_credentials
+real_is_connected = google_calendar.is_connected
 fake = fake_google.install()
 google_calendar.get_credentials = real_get_credentials  # 로그인 부분만 진짜로 되돌린다
+google_calendar.is_connected = real_is_connected  # "연결했는가"도 진짜 token.json으로 판단한다
 
 import event_cache, app, database  # noqa: E402, E401
 import google.oauth2.credentials  # noqa: E402
@@ -114,6 +117,6 @@ def __login_succeed():
     return jsonify({"ok": True})
 
 
-# main.py처럼 뒤쪽 일(미리 연결 = 켜자마자 로그인 시작, 자동 동기화)도 시작한다
+# main.py처럼 뒤쪽 일(미리 연결, 자동 동기화)도 시작한다. token.json이 없으니 로그인 창을 열지 않아야 한다
 app.start_background_tasks()
 app.app.run(port=5057, threaded=True)
