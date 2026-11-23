@@ -112,6 +112,26 @@ powershell -ExecutionPolicy Bypass -File .\build_exe.ps1
 
 Obsidian을 쓴다면 **설정 탭 → 노트 (Obsidian)** 에 vault 폴더 경로(예: `C:\Users\이름\문서\Obsidian Vault`)를 적으세요. 쓰지 않으면 비워 두면 됩니다.
 
+### 옵시디언의 Claude(Claudian)와 연결하기 (선택)
+
+Obsidian 플러그인 **Claudian**(안에 Claude Code가 들어 있다)의 Claude가 StudyFlow의 오늘 할 일, 시간표, 일정, 프로젝트를 보고, 할 일을 체크하거나 추가할 수 있습니다. 연결 방법은 **MCP**(Claude가 다른 프로그램의 기능을 "도구"로 쓰게 하는 규칙)입니다.
+
+1. 쓰려는 vault 폴더 맨 위에 `.mcp.json` 파일을 만들고 아래처럼 적습니다(경로는 내 컴퓨터에 맞게).
+   ```json
+   {
+     "mcpServers": {
+       "studyflow": {
+         "command": "C:\\Users\\aaa\\StudyFlow\\.venv\\Scripts\\python.exe",
+         "args": ["C:\\Users\\aaa\\StudyFlow\\mcp_server.py"]
+       }
+     }
+   }
+   ```
+2. **StudyFlow를 켜 둡니다.** StudyFlow는 켤 때 자기 주소를 `%LOCALAPPDATA%\StudyFlow\connection.json`에 적고, MCP 서버(`mcp_server.py`)는 그 주소로 찾아갑니다. 꺼져 있으면 Claude가 "StudyFlow를 켜 주세요"라고 알려 줍니다.
+3. Claudian에서 새 대화를 열고 "오늘 뭐 남았어?"처럼 물어봅니다. 처음에는 `studyflow` 서버를 써도 되는지 묻는 창이 뜰 수 있습니다.
+
+Claude가 쓸 수 있는 도구: `today_status`(하루 현황), `schedule`(기간의 할 일과 일정), `inbox`(수집함), `projects`(프로젝트와 진행률), `set_task_done`(체크/체크 풀기), `add_task`(할 일 추가). Claude가 바꾼 내용은 StudyFlow 화면에 15초 안에 나타납니다. 할 일 삭제, 일정(Google) 추가/수정은 도구로 만들지 않았습니다.
+
 ## 내 데이터는 어디에 있나요?
 
 모두 **내 컴퓨터의 프로젝트 폴더 안**에만 저장되고, 외부 서버로 보내지 않습니다. (Google Calendar와 주고받는 일정은 Google에 있는 본인 계정의 데이터입니다.)

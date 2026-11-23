@@ -8378,6 +8378,10 @@ const syncRefreshButton = document.getElementById("sync-refresh");
 
 // 서버가 마지막으로 알려준 변경 번호. 이 번호가 달라지면 다른 곳에서 일정이 바뀐 것이다. null이면 아직 한 번도 못 받았다
 let lastSeenVersion = null;
+// 서버가 마지막으로 알려준 "Claude(MCP)가 바꾼 횟수". 달라지면 할 일을 다시 불러온다. null이면 아직 한 번도 못 받았다
+let lastSeenLocalVersion = null;
+// Claude가 바꿨는데 그때 내가 무언가 쓰는 중이라 다시 불러오기를 미뤄 둔 상태인지
+let localReloadPending = false;
 // 새로고침 요청이 진행 중인지
 let refreshing = false;
 // 서버가 마지막으로 알려준 로그인 상태. null이면 문제 없음, "waiting"은 브라우저 로그인을 기다리는 중, "needed"는 다시 로그인해야 함
@@ -8430,6 +8434,33 @@ function reloadVisibleEvents() {
     }
 }
 
+// Claude(옵시디언의 MCP)가 할 일을 바꿨을 때: 지금 보이는 탭의 할 일을 다시 불러온다.
+// 내가 오늘 탭에서 글을 쓰거나 블록을 끄는 중이면 다시 그리면 쓰던 것이 사라지므로, 다음 확인(15초 뒤)으로 미룬다
+function reloadAfterMcpChange() {
+    const todayPanel = document.getElementById("today");
+    const active = document.activeElement;
+    const typingInToday = active && todayPanel.contains(active) &&
+        (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable);
+    if (todayPanel.classList.contains("active") && (typingInToday || isTimelineBusy())) {
+        return;  // localReloadPending은 true로 남아서 다음에 다시 시도한다
+    }
+    localReloadPending = false;
+    if (todayPanel.classList.contains("active")) {
+        reloadTodayAndInbox().catch(function (error) {
+            console.error("오늘 탭을 다시 불러오지 못했습니다:", error);
+        });
+    }
+    if (document.getElementById("projects").classList.contains("active")) {
+        loadProjects().catch(function (error) {
+            console.error("프로젝트를 다시 불러오지 못했습니다:", error);
+        });
+    }
+    // 달력의 날짜별 할 일은 받아 둔 기간이 있으면 늘 맞춘다 (가벼운 요청이다)
+    if (calendarTaskRange) {
+        loadCalendarTasks(calendarTaskRange.start, calendarTaskRange.end);
+    }
+}
+
 // 서버에 동기화 상태를 물어본다
 async function pollSyncStatus() {
     try {
@@ -8445,6 +8476,13 @@ async function pollSyncStatus() {
             reloadVisibleEvents();
         }
         lastSeenVersion = status.version;
+        if (lastSeenLocalVersion !== null && status.localVersion !== lastSeenLocalVersion) {
+            localReloadPending = true;
+        }
+        lastSeenLocalVersion = status.localVersion;
+        if (localReloadPending) {
+            reloadAfterMcpChange();
+        }
     } catch (error) {
         // 서버(내 컴퓨터)에 잠깐 못 닿은 것이므로 조용히 넘어가고 다음 번에 다시 물어본다
     }

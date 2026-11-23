@@ -19,3 +19,18 @@ def data_dir():
 
 
 DATA_DIR = data_dir()
+
+
+def connection_file():
+    """켜져 있는 StudyFlow의 주소를 적어 두는 파일(connection.json)의 경로.
+    MCP 서버(mcp_server.py)가 이 파일을 읽고 StudyFlow를 찾아간다.
+    StudyFlow 창은 켤 때마다 주소의 번호(포트)가 바뀌기 때문에, 이렇게 적어 두지 않으면 찾아갈 수 없다.
+
+    exe로 켜든 python main.py로 켜든 같은 곳을 써야 MCP 서버가 헤매지 않으므로, 데이터 폴더가 아니라
+    %LOCALAPPDATA%\\StudyFlow (윈도우가 프로그램마다 쓰라고 준 내 계정 전용 폴더)에 둔다.
+    테스트할 때는 환경 변수 STUDYFLOW_CONNECTION_FILE로 다른 파일을 쓰게 해서 진짜 파일을 덮어쓰지 않는다."""
+    override = os.environ.get("STUDYFLOW_CONNECTION_FILE")
+    if override:
+        return override
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    return os.path.join(base, "StudyFlow", "connection.json")

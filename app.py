@@ -4,6 +4,9 @@ import datetime
 # 환경 변수(프로그램을 켤 때 전달된 값)를 읽는 도구
 import os
 
+# 파이썬 데이터를 JSON 글자로 파일에 적는 도구 (MCP 연결 파일용)
+import json
+
 # 글자가 정해진 모양인지 검사하는 도구(정규식). 색이 "#rrggbb" 모양인지 확인하는 데 쓴다
 import re
 
@@ -48,6 +51,9 @@ import notes_store
 # 할 일을 studyflow.db에 읽고 쓰는 함수들
 import database
 
+# 데이터 폴더와 MCP 연결 파일(connection.json)의 위치
+import app_paths
+
 # Flask 앱(서버) 하나를 만든다. __name__은 "이 파일이 어디 있는지" 알려주는 값이다
 app = Flask(__name__)
 
@@ -66,6 +72,57 @@ app.config["TEMPLATES_AUTO_RELOAD"] = True  # HTML 템플릿도 고치면 서버
 @app.after_request
 def disable_browser_cache(response):
     response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+# ---------- MCP 연결: 옵시디언(Claudian)의 Claude가 StudyFlow의 할 일과 일정을 보고 바꾸게 하기 ----------
+# MCP 서버(mcp_server.py)는 따로 켜지는 작은 프로그램이라서, 켜져 있는 StudyFlow가 어디(주소)에 있는지 알아야 한다.
+# StudyFlow 창(pywebview)은 켤 때마다 빈 번호(포트)를 골라 서버를 열기 때문에, 첫 요청이 왔을 때 그 주소를 파일에 적어 둔다.
+# main.py가 켤 때만 적는다(WRITE_CONNECTION_FILE). 테스트 서버가 진짜 StudyFlow의 주소를 덮어쓰지 않게 하려는 것이다
+app.config.setdefault("WRITE_CONNECTION_FILE", False)
+_connection_written = False
+_connection_lock = threading.Lock()
+
+
+def write_connection_file(url):
+    """켜져 있는 StudyFlow의 주소를 connection.json에 적는다. 임시 파일에 먼저 쓰고 바꿔치기해서, 반쯤 쓰인 파일을 읽는 일이 없게 한다."""
+    path = app_paths.connection_file()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    temp_path = path + ".tmp"
+    with open(temp_path, "w", encoding="utf-8") as file:
+        json.dump({"url": url, "pid": os.getpid(), "startedAt": datetime.datetime.now().isoformat(timespec="seconds")}, file)
+    os.replace(temp_path, path)
+
+
+@app.before_request
+def remember_own_address():
+    global _connection_written
+    if _connection_written or not app.config["WRITE_CONNECTION_FILE"]:
+        return
+    with _connection_lock:
+        if _connection_written:
+            return
+        _connection_written = True
+        try:
+            # request.host_url: 이 요청이 들어온 주소의 앞부분. 예: "http://127.0.0.1:52817/"
+            write_connection_file(request.host_url)
+        except OSError as error:
+            # 적지 못해도 StudyFlow 자체는 멀쩡히 써야 하므로 기록만 남긴다 (Claude 연결만 안 된다)
+            print(f"[MCP 연결 파일 쓰기 실패] {error}")
+
+
+# Claude(MCP 서버)가 할 일이나 계획을 바꾸면 번호(localVersion)를 올린다. 화면은 15초마다 동기화 상태를 물어볼 때 이 번호도 받아서,
+# 달라졌으면 오늘 탭과 달력의 할 일을 다시 불러온다. MCP 서버는 요청마다 "X-StudyFlow-Client: mcp" 표시를 붙여 보낸다
+_local_change = {"version": 0}
+_local_change_lock = threading.Lock()
+
+
+@app.after_request
+def notice_change_from_mcp(response):
+    if (request.headers.get("X-StudyFlow-Client") == "mcp" and request.method != "GET"
+            and response.status_code < 400):
+        with _local_change_lock:
+            _local_change["version"] += 1
     return response
 
 
@@ -568,6 +625,9 @@ def api_events():
 def sync_status():
     status = event_store.status()
     status["login"], status["loginMessage"] = google_calendar.login_status()
+    # Google과 상관없는 번호: Claude(MCP)가 할 일을 바꿀 때마다 올라간다 (위의 notice_change_from_mcp)
+    with _local_change_lock:
+        status["localVersion"] = _local_change["version"]
     return status
 
 
