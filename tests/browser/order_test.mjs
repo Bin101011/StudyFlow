@@ -64,7 +64,7 @@ await reloadList();
 
 let info = await rowsInfo();
 check("처음 순서는 만든 순서(발표 자료 → LC → 장보기)", JSON.stringify(info.map((r) => r.t)) === JSON.stringify(["발표 자료 만들기", "LC 파트 풀기", "장보기"]), info);
-check("끝내지 않은 할 일이 둘 이상이면 1, 2, 3 번호가 붙고 1번만 파랗다", JSON.stringify(info.map((r) => r.rank)) === '["1","2","3"]' && info[0].first && !info[1].first, info);
+check("끝내지 않은 할 일이 둘 이상이면 1, 2, 3 번호가 붙고 1번에만 first 이름표", JSON.stringify(info.map((r) => r.rank)) === '["1","2","3"]' && info[0].first && !info[1].first, info);
 check("끝내지 않은 줄은 모두 끌 수 있다(프로젝트 할 일 포함)", info.every((r) => r.drag), info);
 await shot("o_before.png");
 
@@ -180,7 +180,7 @@ let open = info.filter((r) => !r.done);
 check("번호를 뺀 줄은 번호 자리에 점이 남는다", open[1].t === X && open[1].rank === "·" && !open[1].first, info);
 check("줄 자리는 그대로다(누르기가 끌기로 이어지지 않음)", JSON.stringify(await titles()) === JSON.stringify(orderNR), await titles());
 check("나머지 번호는 건너뛰어 1, 2, 3…으로 이어진다", JSON.stringify(open.filter((r) => r.t !== X).map((r) => r.rank)) === JSON.stringify(open.slice(1).map((_, i) => String(i + 1))), open);
-check("1번은 여전히 파랗다", open[0].rank === "1" && open[0].first, open[0]);
+check("1번은 여전히 first 이름표", open[0].rank === "1" && open[0].first, open[0]);
 let lefts = await checkLefts();
 check("점이 있는 줄도 체크박스가 다른 줄과 같은 선에 있다", lefts.every((x) => x === lefts[0]), lefts);
 check("점도 번호와 같은 폭이다", (await rankRect(X)).w === (await rankRect(open[0].t)).w, [await rankRect(X), await rankRect(open[0].t)]);
@@ -193,7 +193,7 @@ let bX = await box(X), bTop = await box(orderNR[0]);
 await drag(bX.x, bX.mid, bX.x, bTop.top + 4, 8);
 check("번호 없는 줄도 끌어서 순서를 바꿀 수 있다", await waitFor(async () => (await titles())[0] === X, 4000), await titles());
 info = await rowsInfo(); open = info.filter((r) => !r.done);
-check("맨 위에 있어도 점이고, 1번(파랑)은 그다음 줄이다", open[0].rank === "·" && !open[0].first && open[1].rank === "1" && open[1].first, open);
+check("맨 위에 있어도 점이고, 1번(first)은 그다음 줄이다", open[0].rank === "·" && !open[0].first && open[1].rank === "1" && open[1].first, open);
 
 // 할 일 목록에서 끌어와 점 줄 바로 뒤에 놓으면 알림은 화면 번호대로 "1번째"
 const inboxTitle = "번호 확인용 수집함 할 일";
