@@ -3830,3 +3830,58 @@ body.project-dragging * {
 .calendar-connect-hint button {
     margin-top: 6px;
 }
+
+/* ===== 나만의 시간표(교시) ===== */
+/* 일정 창의 교시 줄: 시간표마다 한 줄. 시간표가 둘 이상이면 앞에 이름이 붙는다 */
+.slot-groups {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+}
+
+.slot-group-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.slot-group-name {
+    flex: none;
+    font-weight: 600;
+    color: var(--text-muted);
+}
+
+/* 범위(예: 1~3교시)의 첫 교시로 눌러 둔 버튼: 다음에 누르는 교시까지 이어진다는 표시로 점선 테두리 */
+.slot-chip.anchor {
+    border-style: dashed;
+}
+
+/* 설정 탭의 시간표 카드 */
+.slot-group-card {
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+}
+
+.settings-row input.slot-group-name-input[type="text"] {
+    flex: 1;
+    min-width: 0;
+    font-weight: 600;
+}
+
+.settings-row input.slot-label-input[type="text"] {
+    flex: none;
+    width: 120px;
+}
+
+.settings-row input.slot-label-input.invalid {
+    border-color: var(--danger);
+    background-color: var(--danger-soft);
+}
+
+.slot-remove {
+    padding: 2px 9px;
+}

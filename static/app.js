@@ -1054,6 +1054,7 @@ function updateDurationChips() {
     durationChips.forEach(function (chip) {
         chip.classList.toggle("active", actual !== null && actual === Number(chip.dataset.minutes) * 60000);
     });
+    updateSlotChips();  // 교시 버튼의 강조도 지금 시간에 맞춘다 (아래 "교시 버튼")
 }
 
 // 끝(날짜, 시간)을 직접 고쳤거나 창을 막 열었을 때: 지금의 끝 − 시작을 "일정의 길이"로 기억한다.
@@ -1112,9 +1113,120 @@ function updateTimeInputs() {
     eventStartTime.closest(".time-field").hidden = eventAllDayCheckbox.checked;
     eventEndTime.closest(".time-field").hidden = eventAllDayCheckbox.checked;
     document.querySelector(".duration-row").hidden = eventAllDayCheckbox.checked;
+    updateSlotRowVisibility();
     updateDurationFromFields();  // 종일 ↔ 시간 있는 일정을 오가면 길이를 그 방식으로 다시 읽는다
 }
 eventAllDayCheckbox.addEventListener("change", updateTimeInputs);
+
+// ---------- 교시 버튼 (설정 탭의 "나만의 시간표") ----------
+// 설정의 timeSlotGroups = [{name: "학교", slots: [{label: "1교시", start: "08:40", end: "09:30"}, ...]}, ...]
+// 버튼을 한 번 누르면 그 교시의 시작~끝이 들어가고, 이어서 같은 시간표의 다른 교시를 누르면 두 교시 사이 전체(예: 1~3교시)가 된다.
+// 그다음 누르면 다시 한 교시부터 시작한다. 날짜는 건드리지 않고, 끝 날짜는 시작 날짜와 같게 맞춘다.
+const slotRow = document.querySelector(".slot-row");
+const slotGroupsElement = document.getElementById("event-slot-groups");
+// 범위의 첫 교시로 눌러 둔 버튼의 자리 {group: 시간표 번호, index: 교시 번호}. null이면 다음 누르기가 새 시작이다
+let slotAnchor = null;
+
+// 설정에서 쓸 수 있는 시간표만 꺼낸다: 이름·시각이 바르고 끝이 시작보다 늦은 교시만, 시작 순서로.
+// (설정 탭에서 쓰는 중인 칸은 아직 비었거나 틀릴 수 있어서, 일정 창은 다 맞는 교시만 쓴다)
+function usableSlotGroups() {
+    const groups = Array.isArray(settings.timeSlotGroups) ? settings.timeSlotGroups : [];
+    return groups.map(function (group) {
+        const slots = (group.slots || []).filter(function (slot) {
+            const start = parseTimeText(slot.start || "");
+            const end = parseTimeText(slot.end || "");
+            return (slot.label || "").trim() && start && end && start === slot.start && end === slot.end && end > start;
+        }).slice().sort(function (a, b) {
+            return a.start < b.start ? -1 : a.start > b.start ? 1 : 0;
+        });
+        return { name: (group.name || "").trim() || "시간표", slots: slots };
+    }).filter(function (group) {
+        return group.slots.length > 0;
+    });
+}
+
+// 일정 창을 열 때마다 교시 버튼을 지금 설정으로 새로 만든다
+function renderSlotChips() {
+    slotAnchor = null;
+    slotGroupsElement.innerHTML = "";
+    const groups = usableSlotGroups();
+    groups.forEach(function (group, groupIndex) {
+        const line = document.createElement("div");
+        line.className = "slot-group-line";
+        // 시간표가 둘 이상일 때만 앞에 이름(학교, 학원 …)을 붙인다
+        if (groups.length > 1) {
+            const name = document.createElement("span");
+            name.className = "slot-group-name";
+            name.textContent = group.name;
+            line.appendChild(name);
+        }
+        const chips = document.createElement("div");
+        chips.className = "duration-chips";
+        group.slots.forEach(function (slot, index) {
+            const chip = document.createElement("button");
+            chip.type = "button";
+            chip.className = "duration-chip slot-chip";
+            chip.textContent = slot.label;
+            chip.title = slot.start + " ~ " + slot.end;  // 마우스를 올리면 시각이 보인다
+            chip.dataset.group = groupIndex;
+            chip.dataset.index = index;
+            chip.dataset.start = slot.start;
+            chip.dataset.end = slot.end;
+            chip.addEventListener("click", function () {
+                pickSlot(group, groupIndex, index);
+            });
+            chips.appendChild(chip);
+        });
+        line.appendChild(chips);
+        slotGroupsElement.appendChild(line);
+    });
+    slotRow.dataset.empty = groups.length ? "" : "yes";
+    updateSlotRowVisibility();
+}
+
+// 시간표가 없거나 종일 일정이면 교시 줄을 숨긴다
+function updateSlotRowVisibility() {
+    slotRow.hidden = slotRow.dataset.empty === "yes" || eventAllDayCheckbox.checked;
+}
+
+// 교시 버튼을 눌렀을 때: 한 교시, 또는 먼저 눌러 둔 교시와의 범위로 시작·끝을 넣는다
+function pickSlot(group, groupIndex, index) {
+    if (!eventStartDate.value) {
+        eventError.textContent = "시작 날짜를 먼저 입력하세요.";
+        return;
+    }
+    eventError.textContent = "";
+    let first = index;
+    let last = index;
+    if (slotAnchor && slotAnchor.group === groupIndex && slotAnchor.index !== index) {
+        // 두 번째 누르기: 먼저 누른 교시와 이번 교시 사이 전체
+        first = Math.min(slotAnchor.index, index);
+        last = Math.max(slotAnchor.index, index);
+        slotAnchor = null;
+    } else {
+        slotAnchor = { group: groupIndex, index: index };
+    }
+    eventStartTime.value = group.slots[first].start;
+    eventEndTime.value = group.slots[last].end;
+    eventEndDate.value = eventStartDate.value;
+    eventStartTime.dataset.committed = eventStartTime.value;
+    eventEndTime.dataset.committed = eventEndTime.value;
+    eventStartTime.classList.remove("invalid");
+    eventEndTime.classList.remove("invalid");
+    updateDurationFromFields();  // 새 길이를 기억하고, 길이·교시 버튼 강조를 맞춘다
+}
+
+// 지금 시작~끝 안에 들어가는 교시 버튼을 강조하고, 범위의 첫 교시로 눌러 둔 버튼에는 따로 표시를 한다
+function updateSlotChips() {
+    const sameDay = eventStartDate.value && eventStartDate.value === eventEndDate.value;
+    const start = parseTimeText(eventStartTime.value);
+    const end = parseTimeText(eventEndTime.value);
+    slotGroupsElement.querySelectorAll(".slot-chip").forEach(function (chip) {
+        const inside = Boolean(sameDay && start && end && chip.dataset.start >= start && chip.dataset.end <= end);
+        chip.classList.toggle("active", inside);
+        chip.classList.toggle("anchor", Boolean(slotAnchor && slotAnchor.group === Number(chip.dataset.group) && slotAnchor.index === Number(chip.dataset.index)));
+    });
+}
 
 // 입력 창을 열고 칸들을 채운다. 추가/수정이 같이 쓴다
 function showEventDialog(values) {
@@ -1141,6 +1253,7 @@ function showEventDialog(values) {
     // 새 일정은 기본 캘린더가 미리 선택되고, 직접 바꿀 수 있다
     eventCalendarSelect.value = values.calendarId || defaultCalendarId;
     eventError.textContent = "";
+    renderSlotChips();  // 교시 버튼을 지금 설정으로 만든다 (updateTimeInputs가 강조를 맞춘다)
     updateTimeInputs();
 
     eventDialog.showModal();  // 창을 화면 위에 띄운다
@@ -7593,6 +7706,7 @@ async function loadSettings() {
         timelineCenterInput.value = settings.timelineCenterTime || TIMELINE_CENTER_DEFAULT;
         timelineCenterInput.classList.remove("invalid");
         showEventDefaultControls();
+        renderSlotGroupEditor();
 
         // 혹시 이미 있던 슬라이더를 비우고, 화면 크기 슬라이더와 Pomodoro 슬라이더를 각자의 칸에 만든다
         sliderListElement.innerHTML = "";
@@ -7775,6 +7889,161 @@ eventDefaultAllDayCheckbox.addEventListener("change", function () {
 eventDefaultMinutesSelect.addEventListener("change", function () {
     settings.eventDefaultMinutes = Number(eventDefaultMinutesSelect.value);
     saveSettings();
+});
+
+// ---------- 설정 탭: 나만의 시간표(교시) 고치기 ----------
+// 시간표 하나 = 이름 칸 + 교시 줄들(이름, 시작, 끝, 빼기 버튼) + [+ 교시 추가]. 칸을 고치면 바로 저장한다.
+// 글자를 고칠 때는 칸들을 다시 만들지 않는다(쓰던 칸의 커서가 사라지지 않게). 줄을 더하거나 뺄 때만 다시 만든다.
+// 아직 덜 쓴 줄(이름이 비었거나 시각이 틀림)도 화면에는 남지만, 서버는 다 맞는 줄만 파일에 저장하고 일정 창도 그런 줄만 쓴다
+const slotGroupListElement = document.getElementById("slot-group-list");
+const slotGroupAddButton = document.getElementById("slot-group-add");
+
+// "14:30" ↔ 분(870)
+function timeTextToMinutes(text) {
+    const [hour, minute] = text.split(":").map(Number);
+    return hour * 60 + minute;
+}
+function minutesToTimeText(minutes) {
+    const clamped = Math.max(0, Math.min(23 * 60 + 59, minutes));
+    return pad(Math.floor(clamped / 60)) + ":" + pad(clamped % 60);
+}
+
+// 새 교시의 기본값: 앞 교시가 있으면 "2교시"처럼 번호를 하나 올리고, 앞 교시가 끝나고 10분 뒤에 같은 길이로 시작한다
+function nextSlotFor(slots) {
+    const last = slots[slots.length - 1];
+    if (!last || !parseTimeText(last.start || "") || !parseTimeText(last.end || "") || last.end <= last.start) {
+        return { label: (slots.length + 1) + "교시", start: "09:00", end: "09:50" };
+    }
+    // 정규식 /^(\d+)(.*)$/: 글자 맨 앞의 숫자(1)와 나머지("교시")를 나눈다. 숫자로 시작하지 않으면 번호만 붙인다
+    const match = /^(\d+)(.*)$/.exec(last.label || "");
+    const label = match ? (Number(match[1]) + 1) + match[2] : (slots.length + 1) + "교시";
+    const length = timeTextToMinutes(last.end) - timeTextToMinutes(last.start);
+    const start = timeTextToMinutes(last.end) + 10;
+    return { label: label, start: minutesToTimeText(start), end: minutesToTimeText(start + length) };
+}
+
+// 설정의 시간표 목록을 화면에 다시 만든다
+function renderSlotGroupEditor() {
+    if (!Array.isArray(settings.timeSlotGroups)) {
+        settings.timeSlotGroups = [];
+    }
+    slotGroupListElement.innerHTML = "";
+    settings.timeSlotGroups.forEach(function (group, groupIndex) {
+        const card = document.createElement("div");
+        card.className = "slot-group-card";
+
+        // 맨 윗줄: 시간표 이름 + [시간표 지우기]
+        const head = document.createElement("div");
+        head.className = "settings-row";
+        const nameInput = document.createElement("input");
+        nameInput.type = "text";
+        nameInput.className = "slot-group-name-input";
+        nameInput.maxLength = 30;
+        nameInput.placeholder = "시간표 이름 (예: 학교)";
+        nameInput.value = group.name || "";
+        nameInput.addEventListener("change", function () {
+            group.name = nameInput.value.trim();
+            saveSettings();
+        });
+        const removeGroup = document.createElement("button");
+        removeGroup.type = "button";
+        removeGroup.className = "danger";
+        removeGroup.textContent = "시간표 지우기";
+        // 실수로 지우지 않게 두 번 눌러야 지운다 (일정 창의 삭제 버튼과 같은 방식)
+        removeGroup.addEventListener("click", function () {
+            if (removeGroup.dataset.armed !== "yes") {
+                removeGroup.dataset.armed = "yes";
+                removeGroup.textContent = "정말 지울까요?";
+                return;
+            }
+            settings.timeSlotGroups.splice(groupIndex, 1);
+            saveSettings();
+            renderSlotGroupEditor();
+        });
+        head.appendChild(nameInput);
+        head.appendChild(removeGroup);
+        card.appendChild(head);
+
+        // 교시 줄들
+        group.slots = Array.isArray(group.slots) ? group.slots : [];
+        group.slots.forEach(function (slot, slotIndex) {
+            const row = document.createElement("div");
+            row.className = "settings-row slot-edit-row";
+
+            const labelInput = document.createElement("input");
+            labelInput.type = "text";
+            labelInput.className = "slot-label-input";
+            labelInput.maxLength = 30;
+            labelInput.placeholder = "이름 (예: 1교시)";
+            labelInput.value = slot.label || "";
+            labelInput.addEventListener("change", function () {
+                slot.label = labelInput.value.trim();
+                labelInput.classList.toggle("invalid", !slot.label);
+                saveSettings();
+            });
+
+            // 시각 칸: 1645, 4:45pm처럼 써도 칸을 떠나면 "16:45"로 정리된다 (setupSettingTimeInput)
+            function makeTimeInput(key) {
+                const input = document.createElement("input");
+                input.type = "text";
+                input.className = "settings-time";
+                input.maxLength = 20;
+                input.autocomplete = "off";
+                input.value = slot[key] || "";
+                setupSettingTimeInput(input, function (value) {
+                    slot[key] = value;
+                    saveSettings();
+                });
+                return input;
+            }
+            const startInput = makeTimeInput("start");
+            const wave = document.createElement("span");
+            wave.className = "settings-unit";
+            wave.textContent = "~";
+            const endInput = makeTimeInput("end");
+
+            const removeSlot = document.createElement("button");
+            removeSlot.type = "button";
+            removeSlot.className = "slot-remove";
+            removeSlot.textContent = "×";
+            removeSlot.title = "이 교시 빼기";
+            removeSlot.setAttribute("aria-label", "이 교시 빼기");
+            removeSlot.addEventListener("click", function () {
+                group.slots.splice(slotIndex, 1);
+                saveSettings();
+                renderSlotGroupEditor();
+            });
+
+            row.append(labelInput, startInput, wave, endInput, removeSlot);
+            card.appendChild(row);
+        });
+
+        const addSlot = document.createElement("button");
+        addSlot.type = "button";
+        addSlot.textContent = "+ 교시 추가";
+        addSlot.addEventListener("click", function () {
+            group.slots.push(nextSlotFor(group.slots));
+            saveSettings();
+            renderSlotGroupEditor();
+            // 방금 더한 줄의 이름 칸에 커서를 둔다
+            const labels = slotGroupListElement.querySelectorAll(".slot-group-card")[groupIndex].querySelectorAll(".slot-label-input");
+            labels[labels.length - 1].focus();
+        });
+        card.appendChild(addSlot);
+        slotGroupListElement.appendChild(card);
+    });
+    slotGroupAddButton.disabled = settings.timeSlotGroups.length >= 10;  // 서버(settings_store)의 한계와 같다
+}
+
+slotGroupAddButton.addEventListener("click", function () {
+    // 첫 시간표는 "학교"로, 그다음은 빈 이름으로 시작한다. 교시 하나를 미리 넣어 두어 모양을 바로 볼 수 있게 한다
+    if (!Array.isArray(settings.timeSlotGroups)) {
+        settings.timeSlotGroups = [];
+    }
+    const name = settings.timeSlotGroups.length === 0 ? "학교" : "";
+    settings.timeSlotGroups.push({ name: name, slots: [nextSlotFor([])] });
+    saveSettings();
+    renderSlotGroupEditor();
 });
 
 // 지금 화면에 있는 일정 중 이 캘린더의 일정을 새 색으로 바꿔 그린다
