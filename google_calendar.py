@@ -4,6 +4,8 @@ import json
 import os.path
 import sys
 import time
+import urllib.parse
+import urllib.request
 import uuid
 
 import google_auth_httplib2
@@ -35,22 +37,25 @@ class CredentialsProblem(Exception):
     """credentials.json이 없거나 읽을 수 없을 때. 메시지가 그대로 화면에 보이므로, 무엇을 하면 되는지 적어 둔다.
     (이 오류가 없던 때는 "인터넷 연결을 확인하세요"가 떠서, 처음 설치한 사람이 엉뚱한 곳을 헤맸다)"""
 
+
+class NotConnected(CredentialsProblem):
+    """Google 계정을 아직 연결하지 않았다(token.json이 없다). 오류라기보다 "Google 없이 쓰는 중"인 상태다.
+    이때는 로그인 창을 저절로 열지 않는다. 사용자가 설정 탭의 [연결하기]를 누를 때만 연다(request_login)."""
+
 # 화면에 보여줄 안내 문장
-# exe로 실행하면 main.py가 없으므로 StudyFlow.exe가 있는 폴더라고 안내한다 (sys.frozen: app_paths.py 참고)
-CREDENTIALS_FOLDER_HINT = "StudyFlow.exe가 있는 폴더" if getattr(sys, "frozen", False) else "프로젝트 폴더(main.py가 있는 폴더)"
 CREDENTIALS_MISSING_MESSAGE = (
-    f"credentials.json 파일이 없습니다. README의 'Google 연결하기'를 따라 만든 파일을 {CREDENTIALS_FOLDER_HINT}에 넣으세요. "
-    "이름이 credentials.json.json이 아닌지도 확인하세요."
+    "앱 신분증(credentials.json)이 없습니다. 설정 탭의 'Google Calendar'에서 파일을 골라 주세요."
 )
 CREDENTIALS_UNREADABLE_MESSAGE = (
-    "credentials.json 파일을 읽을 수 없습니다. README의 'Google 연결하기'에서 받은 파일(애플리케이션 유형: 데스크톱 앱)이 맞는지, "
-    "내용이 잘리거나 바뀌지 않았는지 확인하세요."
+    "credentials.json 파일을 읽을 수 없습니다. 설정 탭의 'Google Calendar'에서 Google Cloud Console에서 받은 파일"
+    "(애플리케이션 유형: 데스크톱 앱)을 다시 골라 주세요."
 )
+NOT_CONNECTED_MESSAGE = "Google 계정이 연결되어 있지 않습니다. 설정 탭의 'Google Calendar'에서 연결하세요."
 LOGIN_NOT_FINISHED_MESSAGE = (
-    "Google 로그인이 끝나지 않았습니다. 위쪽의 '새로고침' 버튼을 누르면 로그인 창을 다시 엽니다."
+    "Google 로그인이 끝나지 않았습니다. 위쪽의 '새로고침'이나 설정 탭의 [다시 로그인]을 누르면 로그인 창을 다시 엽니다."
 )
 LOGIN_EXPIRED_MESSAGE = (
-    "Google 로그인이 만료되었습니다. 위쪽의 '새로고침' 버튼을 누르면 로그인 창을 다시 엽니다."
+    "Google 로그인이 만료되었습니다. 위쪽의 '새로고침'이나 설정 탭의 [다시 로그인]을 누르면 로그인 창을 다시 엽니다."
 )
 
 # 브라우저 로그인을 기다리는 최대 시간(초). 제한이 없으면 로그인 창을 그냥 닫았을 때 영원히 기다리고,
@@ -64,6 +69,11 @@ LOGIN_TIMEOUT_SECONDS = 180
 _login_state = None
 _login_message = ""  # "needed"일 때 화면에 보여줄 이유 (로그인을 끝내지 않음 / 로그인 만료)
 
+# 사용자가 로그인 창을 열어 달라고 했는가 ([연결하기]/[다시 로그인] 버튼, 또는 로그인이 필요할 때의 새로고침 버튼).
+# True일 때만 get_credentials가 브라우저 로그인을 연다. 한 번 열면 다시 False가 된다.
+# 이게 없던 때는 token.json이 없거나 로그인이 만료되면 프로그램을 켜자마자 묻지도 않고 브라우저가 열렸다
+_login_requested = False
+
 # 브라우저 로그인을 새로 끝낼 때마다 1씩 올라가는 번호. app.py가 이 번호를 보고,
 # 옛 로그인 정보로 만들어 둔 Google 연결을 버리고 새로 만든다 (안 그러면 다시 로그인해도 껐다 켜기 전까지 계속 실패한다)
 login_generation = 0
@@ -73,6 +83,96 @@ login_generation = 0
 from app_paths import DATA_DIR as BASE_DIR
 CREDENTIALS_PATH = os.path.join(BASE_DIR, "credentials.json")  # Google에서 받은 앱 신분증
 TOKEN_PATH = os.path.join(BASE_DIR, "token.json")  # 로그인 결과를 저장하는 파일
+
+# exe를 만들 때 프로젝트 폴더에 credentials.json이 있으면 exe 안(_internal)에 같이 묶는다(StudyFlow.spec).
+# 그러면 exe를 쓰는 사람은 파일을 고를 필요 없이 [연결하기]만 누르면 된다. 데이터 폴더에 파일이 있으면 그쪽이 먼저다.
+# sys._MEIPASS: PyInstaller가 묶은 파일을 풀어 둔 폴더(_internal)의 경로. exe로 실행할 때만 있다
+BUNDLED_CREDENTIALS_PATH = os.path.join(sys._MEIPASS, "credentials.json") if getattr(sys, "frozen", False) else None
+
+
+def client_file_path():
+    """쓸 수 있는 앱 신분증(credentials.json)의 경로. 데이터 폴더의 것 → exe에 묶인 것 순서로 찾고, 없으면 None."""
+    if os.path.exists(CREDENTIALS_PATH):
+        return CREDENTIALS_PATH
+    if BUNDLED_CREDENTIALS_PATH and os.path.exists(BUNDLED_CREDENTIALS_PATH):
+        return BUNDLED_CREDENTIALS_PATH
+    return None
+
+
+def client_source():
+    """화면에 보여줄 앱 신분증의 출처: "file"(내가 고른 파일), "bundled"(exe에 묶인 것), None(없음)."""
+    path = client_file_path()
+    if path is None:
+        return None
+    return "file" if path == CREDENTIALS_PATH else "bundled"
+
+
+def is_connected():
+    """Google 계정을 연결해 두었는가(로그인 결과 token.json이 있는가). 만료되었더라도 연결은 한 상태로 본다."""
+    return os.path.exists(TOKEN_PATH)
+
+
+def save_client_file(text):
+    """화면에서 고른 credentials.json의 내용(글자)을 확인하고 데이터 폴더에 저장한다.
+    문제가 있으면 화면에 그대로 보여 줄 이유를 담아 ValueError를 낸다."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        raise ValueError("JSON 파일이 아닙니다. Google Cloud Console에서 받은 credentials.json(…apps.googleusercontent.com.json)을 고르세요.")
+    if not isinstance(data, dict):
+        raise ValueError("credentials.json의 모양이 아닙니다.")
+    if "web" in data:
+        raise ValueError("'웹 애플리케이션' 유형의 파일입니다. 클라이언트를 만들 때 애플리케이션 유형을 '데스크톱 앱'으로 골라 다시 받으세요.")
+    if data.get("type") == "service_account":
+        raise ValueError("서비스 계정 키입니다. 'OAuth 클라이언트 ID'(데스크톱 앱)를 만들어 받은 파일을 고르세요.")
+    installed = data.get("installed")
+    if not isinstance(installed, dict) or not installed.get("client_id") or not installed.get("client_secret"):
+        raise ValueError("credentials.json에 client_id와 client_secret이 없습니다. '데스크톱 앱' 클라이언트를 만들자마자 받은 JSON을 고르세요.")
+    # 임시 파일에 먼저 쓰고 바꿔치기한다 (쓰다가 꺼져도 반쯤 쓰인 파일이 남지 않게)
+    temp_path = CREDENTIALS_PATH + ".tmp"
+    with open(temp_path, "w", encoding="utf-8") as file:
+        json.dump(data, file)
+    os.replace(temp_path, CREDENTIALS_PATH)
+
+
+def request_login():
+    """사용자가 [연결하기]/[다시 로그인]을 눌렀다. 다음 get_credentials에서 브라우저 로그인을 연다."""
+    global _login_requested, _login_state
+    _login_requested = True
+    if _login_state == "needed":
+        _login_state = None
+
+
+def disconnect():
+    """Google 연결을 끊는다: Google에 "이 로그인을 취소해 달라"고 알리고(실패해도 넘어간다), token.json을 지운다.
+    돌려주는 값: Google에 취소를 알리는 데 성공했는지 (True/False)."""
+    global _login_state, _login_requested, login_generation
+    revoked = False
+    try:
+        with open(TOKEN_PATH, encoding="utf-8") as token_file:
+            saved = json.load(token_file)
+        # 재발급 열쇠(refresh token)를 취소하면 그 열쇠로 받은 입장권도 함께 쓸 수 없게 된다
+        token = saved.get("refresh_token") or saved.get("token")
+        if token:
+            request = urllib.request.Request(
+                "https://oauth2.googleapis.com/revoke",
+                data=urllib.parse.urlencode({"token": token}).encode("ascii"),
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=10):
+                revoked = True
+    except (OSError, ValueError) as error:
+        # 인터넷이 끊겼거나 이미 취소된 열쇠다. 내 컴퓨터의 연결은 그래도 끊는다 (Google 계정 설정에서 직접 취소할 수도 있다)
+        print(f"[연결 끊기] Google에 로그인 취소를 알리지 못했습니다: {error}")
+    try:
+        os.remove(TOKEN_PATH)
+    except FileNotFoundError:
+        pass
+    _login_state = None
+    _login_requested = False
+    login_generation += 1  # 옛 로그인 정보로 만든 Google 연결(작업자마다 하나씩)을 버리게 한다
+    return revoked
 
 # 앱이 요청할 권한(스코프). Google Cloud 콘솔에 등록한 세 개와 같아야 한다
 SCOPES = [
@@ -95,16 +195,22 @@ def has_all_scopes():
 
 
 def login_status():
-    """화면에 보여줄 로그인 상태와 안내 문장을 (상태, 문장)으로 돌려준다. 문제가 없으면 (None, "")."""
+    """화면에 보여줄 로그인 상태와 안내 문장을 (상태, 문장)으로 돌려준다. 문제가 없으면 (None, "").
+    Google 계정을 연결하지 않았으면(token.json 없음) "disconnected"다. Google 없이 쓰는 중이라는 뜻이고, 오류가 아니다."""
+    if _login_state is None and not is_connected():
+        return "disconnected", ""
     return _login_state, (_login_message if _login_state == "needed" else "")
 
 
 def allow_login_again():
-    """로그인이 필요해서 멈춰 둔 로그인 창 열기를 다시 허락한다. 사용자가 새로고침 버튼을 누를 때 부른다."""
+    """로그인이 필요해서 멈춰 둔 로그인 창 열기를 다시 허락한다. 사용자가 새로고침 버튼을 누를 때 부른다.
+    "로그인 필요" 상태일 때만 다음 get_credentials가 로그인 창을 연다. 연결하지 않은 상태에서는 새로고침이 로그인 창을 열지 않는다
+    (연결은 설정 탭의 [연결하기]로만 한다)."""
     # global: 함수 안에서 바깥(모듈)의 변수 값을 바꾸겠다는 표시. 없으면 함수 안에 같은 이름의 새 변수가 생긴다
-    global _login_state
+    global _login_state, _login_requested
     if _login_state == "needed":  # 로그인 창을 기다리는 중("waiting")이면 그대로 둔다
         _login_state = None
+        _login_requested = True
 
 
 def mark_login_expired():
@@ -118,8 +224,10 @@ def mark_login_expired():
 
 
 def get_credentials():
-    """로그인 정보(creds)를 돌려준다. 저장된 게 있으면 재사용하고, 없으면 브라우저로 로그인한다."""
-    global _login_state, _login_message, login_generation
+    """로그인 정보(creds)를 돌려준다. 저장된 게 있으면 재사용하고, 만료됐으면 조용히 갱신한다.
+    브라우저 로그인은 사용자가 요청했을 때(request_login, 로그인이 필요할 때의 새로고침)만 연다.
+    요청하지 않았는데 로그인이 필요하면: 연결한 적이 없으면 NotConnected, 연결했었으면 "로그인 필요"로 표시하고 알린다."""
+    global _login_state, _login_message, login_generation, _login_requested
     if _login_state == "needed":
         # 다시 로그인해야 하는데 아직 새로고침 버튼을 누르지 않았다. 로그인 창을 다시 열지 않고 바로 안내한다
         raise CredentialsProblem(_login_message)
@@ -144,7 +252,7 @@ def get_credentials():
                 except RefreshError:
                     # 열쇠 자체가 만료되거나 취소된 경우(예: OAuth 동의 화면이 Testing이면 7일마다 만료).
                     # 인터넷이 끊긴 것(TransportError)과는 다른 오류이므로, 이때만 다시 로그인한다
-                    print("[로그인 만료] Google 로그인을 다시 해야 합니다. 브라우저가 열립니다.")
+                    print("[로그인 만료] Google 로그인을 다시 해야 합니다.")
                 except TransportError:
                     # 인터넷이 잠깐 흔들린 경우(주소를 못 찾음 등). 몇 번 다시 해 보고, 그래도 안 되면 오류를 그대로 올린다 (오프라인 처리)
                     if attempt == len(RETRY_DELAYS):
@@ -154,9 +262,20 @@ def get_credentials():
                 break
 
         if not refreshed:
-            # 처음이거나 갱신도 불가능하면, 브라우저를 열어 사용자가 직접 로그인
+            # 처음이거나 갱신도 불가능하면 브라우저 로그인이 필요하다. 사용자가 요청하지 않았으면 열지 않고 알리기만 한다
+            if not _login_requested:
+                if not is_connected():
+                    raise NotConnected(NOT_CONNECTED_MESSAGE)
+                # 연결은 했었는데 로그인이 만료됐거나, 새 기능 때문에 권한이 늘었다
+                _login_state = "needed"
+                _login_message = LOGIN_EXPIRED_MESSAGE
+                raise CredentialsProblem(LOGIN_EXPIRED_MESSAGE)
+            _login_requested = False  # 이번 한 번만 연다. 실패하면 다시 버튼을 눌러야 연다
+            client_path = client_file_path()
+            if client_path is None:
+                raise CredentialsProblem(CREDENTIALS_MISSING_MESSAGE)
             try:
-                flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_PATH, SCOPES)
+                flow = InstalledAppFlow.from_client_secrets_file(client_path, SCOPES)
             except FileNotFoundError:
                 raise CredentialsProblem(CREDENTIALS_MISSING_MESSAGE) from None
             except (ValueError, KeyError):

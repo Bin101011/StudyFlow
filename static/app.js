@@ -113,6 +113,11 @@ tabButtons.forEach(function (button) {
         } else {
             flushNote();
         }
+
+        // 9. 설정 탭을 열 때마다 Google 연결 상태를 새로 확인한다
+        if (tabName === "settings") {
+            loadGoogleStatus();
+        }
     });
 });
 
@@ -1049,6 +1054,7 @@ function updateDurationChips() {
     durationChips.forEach(function (chip) {
         chip.classList.toggle("active", actual !== null && actual === Number(chip.dataset.minutes) * 60000);
     });
+    updateSlotChips();  // 교시 버튼의 강조도 지금 시간에 맞춘다 (아래 "교시 버튼")
 }
 
 // 끝(날짜, 시간)을 직접 고쳤거나 창을 막 열었을 때: 지금의 끝 − 시작을 "일정의 길이"로 기억한다.
@@ -1107,9 +1113,120 @@ function updateTimeInputs() {
     eventStartTime.closest(".time-field").hidden = eventAllDayCheckbox.checked;
     eventEndTime.closest(".time-field").hidden = eventAllDayCheckbox.checked;
     document.querySelector(".duration-row").hidden = eventAllDayCheckbox.checked;
+    updateSlotRowVisibility();
     updateDurationFromFields();  // 종일 ↔ 시간 있는 일정을 오가면 길이를 그 방식으로 다시 읽는다
 }
 eventAllDayCheckbox.addEventListener("change", updateTimeInputs);
+
+// ---------- 교시 버튼 (설정 탭의 "나만의 시간표") ----------
+// 설정의 timeSlotGroups = [{name: "학교", slots: [{label: "1교시", start: "08:40", end: "09:30"}, ...]}, ...]
+// 버튼을 한 번 누르면 그 교시의 시작~끝이 들어가고, 이어서 같은 시간표의 다른 교시를 누르면 두 교시 사이 전체(예: 1~3교시)가 된다.
+// 그다음 누르면 다시 한 교시부터 시작한다. 날짜는 건드리지 않고, 끝 날짜는 시작 날짜와 같게 맞춘다.
+const slotRow = document.querySelector(".slot-row");
+const slotGroupsElement = document.getElementById("event-slot-groups");
+// 범위의 첫 교시로 눌러 둔 버튼의 자리 {group: 시간표 번호, index: 교시 번호}. null이면 다음 누르기가 새 시작이다
+let slotAnchor = null;
+
+// 설정에서 쓸 수 있는 시간표만 꺼낸다: 이름·시각이 바르고 끝이 시작보다 늦은 교시만, 시작 순서로.
+// (설정 탭에서 쓰는 중인 칸은 아직 비었거나 틀릴 수 있어서, 일정 창은 다 맞는 교시만 쓴다)
+function usableSlotGroups() {
+    const groups = Array.isArray(settings.timeSlotGroups) ? settings.timeSlotGroups : [];
+    return groups.map(function (group) {
+        const slots = (group.slots || []).filter(function (slot) {
+            const start = parseTimeText(slot.start || "");
+            const end = parseTimeText(slot.end || "");
+            return (slot.label || "").trim() && start && end && start === slot.start && end === slot.end && end > start;
+        }).slice().sort(function (a, b) {
+            return a.start < b.start ? -1 : a.start > b.start ? 1 : 0;
+        });
+        return { name: (group.name || "").trim() || "시간표", slots: slots };
+    }).filter(function (group) {
+        return group.slots.length > 0;
+    });
+}
+
+// 일정 창을 열 때마다 교시 버튼을 지금 설정으로 새로 만든다
+function renderSlotChips() {
+    slotAnchor = null;
+    slotGroupsElement.innerHTML = "";
+    const groups = usableSlotGroups();
+    groups.forEach(function (group, groupIndex) {
+        const line = document.createElement("div");
+        line.className = "slot-group-line";
+        // 시간표가 둘 이상일 때만 앞에 이름(학교, 학원 …)을 붙인다
+        if (groups.length > 1) {
+            const name = document.createElement("span");
+            name.className = "slot-group-name";
+            name.textContent = group.name;
+            line.appendChild(name);
+        }
+        const chips = document.createElement("div");
+        chips.className = "duration-chips";
+        group.slots.forEach(function (slot, index) {
+            const chip = document.createElement("button");
+            chip.type = "button";
+            chip.className = "duration-chip slot-chip";
+            chip.textContent = slot.label;
+            chip.title = slot.start + " ~ " + slot.end;  // 마우스를 올리면 시각이 보인다
+            chip.dataset.group = groupIndex;
+            chip.dataset.index = index;
+            chip.dataset.start = slot.start;
+            chip.dataset.end = slot.end;
+            chip.addEventListener("click", function () {
+                pickSlot(group, groupIndex, index);
+            });
+            chips.appendChild(chip);
+        });
+        line.appendChild(chips);
+        slotGroupsElement.appendChild(line);
+    });
+    slotRow.dataset.empty = groups.length ? "" : "yes";
+    updateSlotRowVisibility();
+}
+
+// 시간표가 없거나 종일 일정이면 교시 줄을 숨긴다
+function updateSlotRowVisibility() {
+    slotRow.hidden = slotRow.dataset.empty === "yes" || eventAllDayCheckbox.checked;
+}
+
+// 교시 버튼을 눌렀을 때: 한 교시, 또는 먼저 눌러 둔 교시와의 범위로 시작·끝을 넣는다
+function pickSlot(group, groupIndex, index) {
+    if (!eventStartDate.value) {
+        eventError.textContent = "시작 날짜를 먼저 입력하세요.";
+        return;
+    }
+    eventError.textContent = "";
+    let first = index;
+    let last = index;
+    if (slotAnchor && slotAnchor.group === groupIndex && slotAnchor.index !== index) {
+        // 두 번째 누르기: 먼저 누른 교시와 이번 교시 사이 전체
+        first = Math.min(slotAnchor.index, index);
+        last = Math.max(slotAnchor.index, index);
+        slotAnchor = null;
+    } else {
+        slotAnchor = { group: groupIndex, index: index };
+    }
+    eventStartTime.value = group.slots[first].start;
+    eventEndTime.value = group.slots[last].end;
+    eventEndDate.value = eventStartDate.value;
+    eventStartTime.dataset.committed = eventStartTime.value;
+    eventEndTime.dataset.committed = eventEndTime.value;
+    eventStartTime.classList.remove("invalid");
+    eventEndTime.classList.remove("invalid");
+    updateDurationFromFields();  // 새 길이를 기억하고, 길이·교시 버튼 강조를 맞춘다
+}
+
+// 지금 시작~끝 안에 들어가는 교시 버튼을 강조하고, 범위의 첫 교시로 눌러 둔 버튼에는 따로 표시를 한다
+function updateSlotChips() {
+    const sameDay = eventStartDate.value && eventStartDate.value === eventEndDate.value;
+    const start = parseTimeText(eventStartTime.value);
+    const end = parseTimeText(eventEndTime.value);
+    slotGroupsElement.querySelectorAll(".slot-chip").forEach(function (chip) {
+        const inside = Boolean(sameDay && start && end && chip.dataset.start >= start && chip.dataset.end <= end);
+        chip.classList.toggle("active", inside);
+        chip.classList.toggle("anchor", Boolean(slotAnchor && slotAnchor.group === Number(chip.dataset.group) && slotAnchor.index === Number(chip.dataset.index)));
+    });
+}
 
 // 입력 창을 열고 칸들을 채운다. 추가/수정이 같이 쓴다
 function showEventDialog(values) {
@@ -1136,6 +1253,7 @@ function showEventDialog(values) {
     // 새 일정은 기본 캘린더가 미리 선택되고, 직접 바꿀 수 있다
     eventCalendarSelect.value = values.calendarId || defaultCalendarId;
     eventError.textContent = "";
+    renderSlotChips();  // 교시 버튼을 지금 설정으로 만든다 (updateTimeInputs가 강조를 맞춘다)
     updateTimeInputs();
 
     eventDialog.showModal();  // 창을 화면 위에 띄운다
@@ -7944,6 +8062,7 @@ async function loadSettings() {
         timelineCenterInput.classList.remove("invalid");
         planDefaultMinutesSelect.value = String(settings.planDefaultMinutes || TL_DEFAULT_LENGTH);
         showEventDefaultControls();
+        renderSlotGroupEditor();
 
         // 혹시 이미 있던 슬라이더를 비우고, 화면 크기 슬라이더와 Pomodoro 슬라이더를 각자의 칸에 만든다
         sliderListElement.innerHTML = "";
@@ -8222,6 +8341,161 @@ eventDefaultMinutesSelect.addEventListener("change", function () {
     saveSettings();
 });
 
+// ---------- 설정 탭: 나만의 시간표(교시) 고치기 ----------
+// 시간표 하나 = 이름 칸 + 교시 줄들(이름, 시작, 끝, 빼기 버튼) + [+ 교시 추가]. 칸을 고치면 바로 저장한다.
+// 글자를 고칠 때는 칸들을 다시 만들지 않는다(쓰던 칸의 커서가 사라지지 않게). 줄을 더하거나 뺄 때만 다시 만든다.
+// 아직 덜 쓴 줄(이름이 비었거나 시각이 틀림)도 화면에는 남지만, 서버는 다 맞는 줄만 파일에 저장하고 일정 창도 그런 줄만 쓴다
+const slotGroupListElement = document.getElementById("slot-group-list");
+const slotGroupAddButton = document.getElementById("slot-group-add");
+
+// "14:30" ↔ 분(870)
+function timeTextToMinutes(text) {
+    const [hour, minute] = text.split(":").map(Number);
+    return hour * 60 + minute;
+}
+function minutesToTimeText(minutes) {
+    const clamped = Math.max(0, Math.min(23 * 60 + 59, minutes));
+    return pad(Math.floor(clamped / 60)) + ":" + pad(clamped % 60);
+}
+
+// 새 교시의 기본값: 앞 교시가 있으면 "2교시"처럼 번호를 하나 올리고, 앞 교시가 끝나고 10분 뒤에 같은 길이로 시작한다
+function nextSlotFor(slots) {
+    const last = slots[slots.length - 1];
+    if (!last || !parseTimeText(last.start || "") || !parseTimeText(last.end || "") || last.end <= last.start) {
+        return { label: (slots.length + 1) + "교시", start: "09:00", end: "09:50" };
+    }
+    // 정규식 /^(\d+)(.*)$/: 글자 맨 앞의 숫자(1)와 나머지("교시")를 나눈다. 숫자로 시작하지 않으면 번호만 붙인다
+    const match = /^(\d+)(.*)$/.exec(last.label || "");
+    const label = match ? (Number(match[1]) + 1) + match[2] : (slots.length + 1) + "교시";
+    const length = timeTextToMinutes(last.end) - timeTextToMinutes(last.start);
+    const start = timeTextToMinutes(last.end) + 10;
+    return { label: label, start: minutesToTimeText(start), end: minutesToTimeText(start + length) };
+}
+
+// 설정의 시간표 목록을 화면에 다시 만든다
+function renderSlotGroupEditor() {
+    if (!Array.isArray(settings.timeSlotGroups)) {
+        settings.timeSlotGroups = [];
+    }
+    slotGroupListElement.innerHTML = "";
+    settings.timeSlotGroups.forEach(function (group, groupIndex) {
+        const card = document.createElement("div");
+        card.className = "slot-group-card";
+
+        // 맨 윗줄: 시간표 이름 + [시간표 지우기]
+        const head = document.createElement("div");
+        head.className = "settings-row";
+        const nameInput = document.createElement("input");
+        nameInput.type = "text";
+        nameInput.className = "slot-group-name-input";
+        nameInput.maxLength = 30;
+        nameInput.placeholder = "시간표 이름 (예: 학교)";
+        nameInput.value = group.name || "";
+        nameInput.addEventListener("change", function () {
+            group.name = nameInput.value.trim();
+            saveSettings();
+        });
+        const removeGroup = document.createElement("button");
+        removeGroup.type = "button";
+        removeGroup.className = "danger";
+        removeGroup.textContent = "시간표 지우기";
+        // 실수로 지우지 않게 두 번 눌러야 지운다 (일정 창의 삭제 버튼과 같은 방식)
+        removeGroup.addEventListener("click", function () {
+            if (removeGroup.dataset.armed !== "yes") {
+                removeGroup.dataset.armed = "yes";
+                removeGroup.textContent = "정말 지울까요?";
+                return;
+            }
+            settings.timeSlotGroups.splice(groupIndex, 1);
+            saveSettings();
+            renderSlotGroupEditor();
+        });
+        head.appendChild(nameInput);
+        head.appendChild(removeGroup);
+        card.appendChild(head);
+
+        // 교시 줄들
+        group.slots = Array.isArray(group.slots) ? group.slots : [];
+        group.slots.forEach(function (slot, slotIndex) {
+            const row = document.createElement("div");
+            row.className = "settings-row slot-edit-row";
+
+            const labelInput = document.createElement("input");
+            labelInput.type = "text";
+            labelInput.className = "slot-label-input";
+            labelInput.maxLength = 30;
+            labelInput.placeholder = "이름 (예: 1교시)";
+            labelInput.value = slot.label || "";
+            labelInput.addEventListener("change", function () {
+                slot.label = labelInput.value.trim();
+                labelInput.classList.toggle("invalid", !slot.label);
+                saveSettings();
+            });
+
+            // 시각 칸: 1645, 4:45pm처럼 써도 칸을 떠나면 "16:45"로 정리된다 (setupSettingTimeInput)
+            function makeTimeInput(key) {
+                const input = document.createElement("input");
+                input.type = "text";
+                input.className = "settings-time";
+                input.maxLength = 20;
+                input.autocomplete = "off";
+                input.value = slot[key] || "";
+                setupSettingTimeInput(input, function (value) {
+                    slot[key] = value;
+                    saveSettings();
+                });
+                return input;
+            }
+            const startInput = makeTimeInput("start");
+            const wave = document.createElement("span");
+            wave.className = "settings-unit";
+            wave.textContent = "~";
+            const endInput = makeTimeInput("end");
+
+            const removeSlot = document.createElement("button");
+            removeSlot.type = "button";
+            removeSlot.className = "slot-remove";
+            removeSlot.textContent = "×";
+            removeSlot.title = "이 교시 빼기";
+            removeSlot.setAttribute("aria-label", "이 교시 빼기");
+            removeSlot.addEventListener("click", function () {
+                group.slots.splice(slotIndex, 1);
+                saveSettings();
+                renderSlotGroupEditor();
+            });
+
+            row.append(labelInput, startInput, wave, endInput, removeSlot);
+            card.appendChild(row);
+        });
+
+        const addSlot = document.createElement("button");
+        addSlot.type = "button";
+        addSlot.textContent = "+ 교시 추가";
+        addSlot.addEventListener("click", function () {
+            group.slots.push(nextSlotFor(group.slots));
+            saveSettings();
+            renderSlotGroupEditor();
+            // 방금 더한 줄의 이름 칸에 커서를 둔다
+            const labels = slotGroupListElement.querySelectorAll(".slot-group-card")[groupIndex].querySelectorAll(".slot-label-input");
+            labels[labels.length - 1].focus();
+        });
+        card.appendChild(addSlot);
+        slotGroupListElement.appendChild(card);
+    });
+    slotGroupAddButton.disabled = settings.timeSlotGroups.length >= 10;  // 서버(settings_store)의 한계와 같다
+}
+
+slotGroupAddButton.addEventListener("click", function () {
+    // 첫 시간표는 "학교"로, 그다음은 빈 이름으로 시작한다. 교시 하나를 미리 넣어 두어 모양을 바로 볼 수 있게 한다
+    if (!Array.isArray(settings.timeSlotGroups)) {
+        settings.timeSlotGroups = [];
+    }
+    const name = settings.timeSlotGroups.length === 0 ? "학교" : "";
+    settings.timeSlotGroups.push({ name: name, slots: [nextSlotFor([])] });
+    saveSettings();
+    renderSlotGroupEditor();
+});
+
 // 시간표에 넣을 때 기본 길이: 고르면 바로 저장한다. 다음에 할 일을 끌어다 놓을 때부터 쓰인다(taskPlanLength가 그때마다 읽는다)
 planDefaultMinutesSelect.addEventListener("change", function () {
     settings.planDefaultMinutes = Number(planDefaultMinutesSelect.value);
@@ -8251,7 +8525,7 @@ async function loadCalendarList() {
     // index.html에서 만들어둔 빈 칸(<aside id="calendar-list">)
     const listElement = document.getElementById("calendar-list");
 
-    listElement.querySelectorAll("label, .calendar-list-error").forEach(function (element) {
+    listElement.querySelectorAll("label, .calendar-list-error, .calendar-connect-hint").forEach(function (element) {
         element.remove();
     });
     eventCalendarSelect.innerHTML = "";
@@ -8271,6 +8545,12 @@ async function loadCalendarList() {
             throw new Error("서버 오류: " + response.status);
         }
         const calendars = await response.json();
+
+        // 캘린더가 하나도 없다 = Google을 연결하지 않았다 (연결한 계정에는 기본 캘린더가 늘 있다). 연결하는 곳을 알려 준다
+        if (calendars.length === 0) {
+            listElement.appendChild(makeCalendarConnectHint());
+            return;
+        }
 
         // 저장된 기본 캘린더 설정을 쓰려면 설정을 먼저 불러온 상태여야 한다
         await settingsReady;
@@ -8834,6 +9114,10 @@ const syncRefreshButton = document.getElementById("sync-refresh");
 
 // 서버가 마지막으로 알려준 변경 번호. 이 번호가 달라지면 다른 곳에서 일정이 바뀐 것이다. null이면 아직 한 번도 못 받았다
 let lastSeenVersion = null;
+// 서버가 마지막으로 알려준 "Claude(MCP)가 바꾼 횟수". 달라지면 할 일을 다시 불러온다. null이면 아직 한 번도 못 받았다
+let lastSeenLocalVersion = null;
+// Claude가 바꿨는데 그때 내가 무언가 쓰는 중이라 다시 불러오기를 미뤄 둔 상태인지
+let localReloadPending = false;
 // 새로고침 요청이 진행 중인지
 let refreshing = false;
 // 서버가 마지막으로 알려준 로그인 상태. null이면 문제 없음, "waiting"은 브라우저 로그인을 기다리는 중, "needed"는 다시 로그인해야 함
@@ -8847,6 +9131,9 @@ function describeSync(status) {
     }
     if (status.login === "needed") {
         return "Google 로그인 필요 · 새로고침을 누르세요";
+    }
+    if (status.login === "disconnected") {
+        return "Google 연결 안 됨";
     }
     let when = "아직 동기화 안 됨";
     if (status.lastSync) {
@@ -8864,6 +9151,10 @@ function showSyncStatus(status) {
     // 로그인이 필요하거나 (로그인 문제 없이) 연결이 끊겼으면 빨간색(offline), 로그인을 기다리는 중이면 주황색(login-waiting)
     syncStatusElement.classList.toggle("offline", status.login === "needed" || (!status.online && !status.login));
     syncStatusElement.classList.toggle("login-waiting", status.login === "waiting");
+    // Google 없이 쓰는 중: 회색 동그라미. 글자를 누르면 설정 탭의 연결 칸으로 간다. 새로고침은 할 것이 없어서 숨긴다
+    syncStatusElement.classList.toggle("disconnected", status.login === "disconnected");
+    syncRefreshButton.hidden = status.login === "disconnected";
+    syncTextElement.title = status.login === "disconnected" ? "누르면 설정 탭에서 Google을 연결할 수 있습니다" : "";
     const loggedInNow = lastLoginState !== null && !status.login;
     lastLoginState = status.login || null;
     return loggedInNow;
@@ -8886,6 +9177,221 @@ function reloadVisibleEvents() {
     }
 }
 
+// ---------- 설정 탭: Google Calendar 연결 ----------
+// Google 없이도 StudyFlow를 모두 쓸 수 있다. 연결은 여기의 [연결하기]로만 하고, 켤 때 로그인 창이 저절로 뜨지 않는다.
+// 연결 순서: (1) 앱 신분증 credentials.json이 없으면 [고르기]로 파일을 고른다 → (2) [연결하기] → 브라우저에서 허용 → 연결됨.
+// 서버가 알려 주는 상태(state): "disconnected" 연결 안 함, "waiting" 브라우저 로그인 기다리는 중, "needed" 다시 로그인 필요, "connected" 연결됨
+
+const googleStatusText = document.getElementById("google-status-text");
+const googleClientSetup = document.getElementById("google-client-setup");
+const googleClientPick = document.getElementById("google-client-pick");
+const googleClientInput = document.getElementById("google-client-input");
+const googleConnectButton = document.getElementById("google-connect");
+const googleDisconnectButton = document.getElementById("google-disconnect");
+const googleNote = document.getElementById("google-note");
+// 데이터 액세스에 붙여 넣을 권한(범위) 3개. 서버의 google_calendar.SCOPES와 같아야 한다
+const GOOGLE_SCOPES = [
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.calendarlist",
+    "https://www.googleapis.com/auth/calendar.app.created",
+];
+let googleState = null;        // 마지막으로 받은 상태
+let googleWaitTimer = null;    // 로그인을 기다리는 동안 2초마다 상태를 묻는 타이머
+
+function renderGoogleStatus(status) {
+    const previous = googleState;
+    googleState = status.state;
+    const texts = {
+        disconnected: "연결 안 됨 · Google 없이 쓰는 중",
+        waiting: "브라우저에서 Google 로그인을 끝내 주세요 (3분 안에)",
+        needed: "다시 로그인이 필요합니다",
+        connected: "연결됨" + (status.account ? " · " + status.account : ""),
+    };
+    googleStatusText.textContent = texts[status.state] || status.state;
+    googleStatusText.className = "google-status " + status.state;
+
+    const hasClient = status.clientSource !== null;
+    // 신분증 준비 안내는 "아직 연결 안 했고 신분증도 없을 때"만 보인다
+    googleClientSetup.hidden = hasClient || status.state === "connected";
+    // [고르기]는 연결하기 전에만. 신분증이 이미 있으면 "다른 파일 고르기"가 된다(잘못 고른 경우)
+    googleClientPick.hidden = status.state === "connected" || status.state === "waiting" || status.clientSource === "bundled";
+    googleClientPick.textContent = hasClient ? "다른 credentials.json 고르기…" : "credentials.json 고르기…";
+    googleClientPick.classList.toggle("primary", !hasClient);
+    googleConnectButton.hidden = !(status.state === "disconnected" || status.state === "needed");
+    googleConnectButton.disabled = !hasClient;
+    googleConnectButton.textContent = status.state === "needed" ? "다시 로그인" : "연결하기";
+    googleDisconnectButton.hidden = !(status.state === "connected" || status.state === "needed");
+
+    let note = "";
+    if (status.state === "needed" || (status.state === "disconnected" && status.message)) {
+        note = status.message;  // 다시 로그인해야 하는 이유, 또는 방금 연결하려다 실패한 이유
+    } else if (status.state === "waiting") {
+        note = "브라우저 창이 안 보이면 작업 표시줄을 확인하세요. \"확인되지 않은 앱\"이 뜨면 본인이 만든 앱이므로 [고급] → [StudyFlow(으)로 이동]을 누르면 됩니다.";
+    } else if (status.state === "connected") {
+        note = "캘린더 탭에 Google 일정이 보이고, StudyFlow에서 바꾼 일정은 폰과 웹의 Google Calendar에도 반영됩니다. " +
+            "연결을 끊어도 Google에 있는 일정은 그대로이고, 이 컴퓨터에 기억해 둔 일정만 지워집니다.";
+    } else if (hasClient) {
+        note = (status.clientSource === "bundled" ? "앱 신분증이 StudyFlow 안에 들어 있습니다. " : "앱 신분증이 준비되었습니다. ") +
+            "[연결하기]를 누르면 브라우저에서 Google 로그인 창이 열립니다.";
+    }
+    googleNote.textContent = note;
+
+    // 로그인을 기다리는 동안은 자주(2초마다) 물어서, 끝나자마자 화면을 바꾼다
+    if (status.state === "waiting" && googleWaitTimer === null) {
+        googleWaitTimer = setInterval(loadGoogleStatus, 2000);
+    } else if (status.state !== "waiting" && googleWaitTimer !== null) {
+        clearInterval(googleWaitTimer);
+        googleWaitTimer = null;
+    }
+    // 방금 연결됐다: 캘린더 목록과 일정을 새로 받는다 (동기화 표시의 15초 확인을 기다리지 않는다)
+    if (previous !== null && previous !== "connected" && status.state === "connected") {
+        showToast("Google Calendar에 연결했습니다.");
+        reloadAfterLogin();
+        pollSyncStatus();
+    }
+}
+
+async function loadGoogleStatus() {
+    try {
+        const response = await fetch("/api/google/status");
+        if (!response.ok) {
+            throw new Error(await errorMessageFrom(response));
+        }
+        renderGoogleStatus(await response.json());
+    } catch (error) {
+        googleStatusText.textContent = "연결 상태를 확인하지 못했습니다: " + error.message;
+    }
+}
+
+// [고르기]: 숨겨 둔 파일 선택 칸을 대신 눌러서 윈도우의 파일 선택 창을 연다
+googleClientPick.addEventListener("click", function () {
+    googleClientInput.value = "";  // 같은 파일을 다시 골라도 change가 일어나게 비운다
+    googleClientInput.click();
+});
+
+// 파일을 고르면: 내용을 글자로 읽어서 서버에 보낸다. 서버가 모양(데스크톱 앱 유형인지 등)을 확인하고 데이터 폴더에 저장한다
+googleClientInput.addEventListener("change", async function () {
+    const file = googleClientInput.files[0];
+    if (!file) {
+        return;
+    }
+    try {
+        // file.text(): 고른 파일의 내용을 글자로 읽는다 (파일은 내 컴퓨터 안에서만 오간다)
+        const content = await file.text();
+        const status = await sendRequest("/api/google/client-file", "POST", { content: content });
+        renderGoogleStatus(status);
+        showToast("앱 신분증을 저장했습니다. 이제 [연결하기]를 누르세요.");
+    } catch (error) {
+        showToast(error.message, 8000);
+    }
+});
+
+googleConnectButton.addEventListener("click", async function () {
+    googleConnectButton.disabled = true;
+    try {
+        renderGoogleStatus(await sendRequest("/api/google/connect", "POST", {}));
+    } catch (error) {
+        showToast(error.message, 8000);
+        loadGoogleStatus();
+    }
+});
+
+// [연결 끊기]: 확인 창을 먼저 띄운다 (<dialog>의 showModal: 뒤 화면을 누를 수 없게 막고 가운데에 띄운다)
+const googleDisconnectDialog = document.getElementById("google-disconnect-dialog");
+googleDisconnectButton.addEventListener("click", function () {
+    googleDisconnectDialog.showModal();
+});
+document.getElementById("google-disconnect-cancel").addEventListener("click", function () {
+    googleDisconnectDialog.close();
+});
+
+document.getElementById("google-disconnect-confirm").addEventListener("click", async function () {
+    googleDisconnectDialog.close();
+    try {
+        const status = await sendRequest("/api/google/disconnect", "POST", {});
+        renderGoogleStatus(status);
+        showToast(status.revoked ? "Google 연결을 끊었습니다." :
+            "이 컴퓨터의 연결은 끊었습니다. (인터넷 문제로 Google에 알리지는 못했습니다. Google 계정 설정의 '타사 앱'에서도 지울 수 있습니다)", 8000);
+        loadCalendarList();
+        calendar.refetchEvents();
+        pollSyncStatus();
+    } catch (error) {
+        showToast(error.message, 8000);
+    }
+});
+
+// [열기]: Console의 해당 화면을 컴퓨터의 기본 브라우저로 연다 (이 창 안에서 열면 StudyFlow 화면이 사라진다)
+document.querySelectorAll("[data-google-link]").forEach(function (button) {
+    button.addEventListener("click", function () {
+        sendRequest("/api/open-external", "POST", { url: button.dataset.googleLink }).catch(function (error) {
+            showToast("브라우저를 열지 못했습니다: " + error.message);
+        });
+    });
+});
+
+// [범위 복사]: 붙여 넣을 범위 3개를 한 줄씩 클립보드에 복사한다
+document.getElementById("google-copy-scopes").addEventListener("click", async function () {
+    try {
+        await navigator.clipboard.writeText(GOOGLE_SCOPES.join("\n"));
+        showToast("범위 3개를 복사했습니다. Console의 직접 입력 칸에 붙여 넣으세요(Ctrl+V).");
+    } catch (error) {
+        showToast("복사하지 못했습니다. 범위: " + GOOGLE_SCOPES.join(" , "), 10000);
+    }
+});
+
+// 캘린더 탭의 "내 캘린더" 칸에 넣는 안내: Google을 연결하지 않았을 때
+function makeCalendarConnectHint() {
+    const box = document.createElement("div");
+    box.className = "calendar-connect-hint";
+    box.textContent = "Google Calendar가 연결되지 않았습니다. 지금은 할 일만 보입니다.";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "설정에서 연결하기";
+    button.addEventListener("click", openGoogleSettings);
+    box.appendChild(document.createElement("br"));
+    box.appendChild(button);
+    return box;
+}
+
+function openGoogleSettings() {
+    document.querySelector("[data-tab=settings]").click();
+    document.getElementById("google-section").scrollIntoView({ block: "start" });
+}
+
+// 위쪽 "Google 연결 안 됨" 글자를 누르면 설정 탭의 연결 칸으로 간다
+syncTextElement.addEventListener("click", function () {
+    if (syncStatusElement.classList.contains("disconnected")) {
+        openGoogleSettings();
+    }
+});
+
+// Claude(옵시디언의 MCP)가 할 일을 바꿨을 때: 지금 보이는 탭의 할 일을 다시 불러온다.
+// 내가 오늘 탭에서 글을 쓰거나 블록을 끄는 중이면 다시 그리면 쓰던 것이 사라지므로, 다음 확인(15초 뒤)으로 미룬다
+function reloadAfterMcpChange() {
+    const todayPanel = document.getElementById("today");
+    const active = document.activeElement;
+    const typingInToday = active && todayPanel.contains(active) &&
+        (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable);
+    if (todayPanel.classList.contains("active") && (typingInToday || isTimelineBusy())) {
+        return;  // localReloadPending은 true로 남아서 다음에 다시 시도한다
+    }
+    localReloadPending = false;
+    if (todayPanel.classList.contains("active")) {
+        reloadTodayAndInbox().catch(function (error) {
+            console.error("오늘 탭을 다시 불러오지 못했습니다:", error);
+        });
+    }
+    if (document.getElementById("projects").classList.contains("active")) {
+        loadProjects().catch(function (error) {
+            console.error("프로젝트를 다시 불러오지 못했습니다:", error);
+        });
+    }
+    // 달력의 날짜별 할 일은 받아 둔 기간이 있으면 늘 맞춘다 (가벼운 요청이다)
+    if (calendarTaskRange) {
+        loadCalendarTasks(calendarTaskRange.start, calendarTaskRange.end);
+    }
+}
+
 // 서버에 동기화 상태를 물어본다
 async function pollSyncStatus() {
     try {
@@ -8901,6 +9407,13 @@ async function pollSyncStatus() {
             reloadVisibleEvents();
         }
         lastSeenVersion = status.version;
+        if (lastSeenLocalVersion !== null && status.localVersion !== lastSeenLocalVersion) {
+            localReloadPending = true;
+        }
+        lastSeenLocalVersion = status.localVersion;
+        if (localReloadPending) {
+            reloadAfterMcpChange();
+        }
     } catch (error) {
         // 서버(내 컴퓨터)에 잠깐 못 닿은 것이므로 조용히 넘어가고 다음 번에 다시 물어본다
     }

@@ -289,8 +289,38 @@
 
             <!-- 설정 구역들: 화면이 넓으면 2열로 놓인다 (style.css의 .settings-grid) -->
             <div class="settings-grid">
-            <!-- 구역 순서: 화면 크기, 일정 표시, 일정 추가 / Pomodoro, 노트, 프로젝트 탭. CSS 다단은 앞에서부터 한 열을 채우므로,
+            <!-- 구역 순서: Google Calendar, 화면 크기, 일정 표시, 일정 추가 / Pomodoro, 노트, 프로젝트 탭. CSS 다단은 앞에서부터 한 열을 채우므로,
                 두 열의 높이가 비슷해지도록 이 순서로 놓았다 -->
+
+            <!-- Google 계정 연결. 내용(상태 글, 버튼, 안내)은 app.js의 renderGoogleStatus가 상태에 맞게 보이고 숨긴다 -->
+            <section class="settings-section" id="google-section">
+                <h2>Google Calendar</h2>
+                <p id="google-status-text" class="google-status">확인 중...</p>
+
+                <!-- 앱 신분증(credentials.json)이 없을 때만 보이는 준비 안내 -->
+                <div id="google-client-setup" hidden>
+                    <p class="settings-hint">연결하려면 먼저 <b>앱 신분증</b>(credentials.json)이 필요합니다. Google Cloud Console에서 <b>한 번만</b> 만들면 되고, 무료입니다. 각 줄의 [열기]를 누르면 그 화면이 브라우저에서 열립니다.</p>
+                    <ol class="google-steps">
+                        <li><b>새 프로젝트</b>를 만듭니다(이름 예: StudyFlow). 만든 뒤 위쪽에서 그 프로젝트가 선택되어 있는지 확인하세요. <button type="button" class="link-button" data-google-link="https://console.cloud.google.com/projectcreate">열기</button></li>
+                        <li><b>Google Calendar API</b>에서 [사용]을 누릅니다. <button type="button" class="link-button" data-google-link="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com">열기</button></li>
+                        <li><b>브랜딩</b>에서 [시작하기] → 앱 이름, 내 이메일 → 대상 <b>외부</b> → 연락처 이메일 → 정책 동의 → [만들기]. <button type="button" class="link-button" data-google-link="https://console.cloud.google.com/auth/branding">열기</button></li>
+                        <li><b>대상(잠재고객)</b> → 테스트 사용자 → [사용자 추가]에 <b>내 Google 이메일</b>을 넣고 저장합니다. (빼먹으면 "액세스 차단됨"이 뜹니다) <button type="button" class="link-button" data-google-link="https://console.cloud.google.com/auth/audience">열기</button></li>
+                        <li><b>데이터 액세스</b> → [범위 추가 또는 삭제] → 아래쪽 직접 입력 칸에 범위 3개를 붙여 넣고 [추가] → [저장]. <button type="button" class="link-button" id="google-copy-scopes">범위 복사</button> <button type="button" class="link-button" data-google-link="https://console.cloud.google.com/auth/scopes">열기</button></li>
+                        <li><b>클라이언트</b> → [클라이언트 만들기] → 애플리케이션 유형 <b>데스크톱 앱</b> → [만들기] → 뜬 창에서 바로 <b>JSON 다운로드</b>. <button type="button" class="link-button" data-google-link="https://console.cloud.google.com/auth/clients">열기</button></li>
+                        <li>받은 파일(이름이 client_secret_…​.json)을 아래 버튼으로 고릅니다. 이름은 바꾸지 않아도 됩니다.</li>
+                    </ol>
+                </div>
+
+                <div class="settings-row google-actions">
+                    <button type="button" id="google-client-pick">credentials.json 고르기…</button>
+                    <button type="button" class="primary" id="google-connect">연결하기</button>
+                    <button type="button" id="google-disconnect">연결 끊기</button>
+                    <!-- 파일 선택 창. 눈에 보이지 않게 두고 위의 [고르기] 버튼이 대신 연다 -->
+                    <input type="file" id="google-client-input" accept=".json,application/json" hidden>
+                </div>
+                <p id="google-note" class="settings-hint"></p>
+            </section>
+
             <section class="settings-section">
                 <h2>화면 크기</h2>
                 <p class="settings-hint">슬라이더를 움직이면 캘린더에 바로 반영되고, 자동으로 저장됩니다.</p>
@@ -344,6 +374,14 @@
                     </select>
                 </label>
                 <p class="settings-hint">월간 보기에서 날짜를 누르면 위의 시각에 시작하는 일정 추가 창이 열립니다. 종일을 체크하면 종일 일정 창으로 열리고, 창에서 종일을 끄면 위의 시각이 들어가 있습니다(주간·일간 보기의 종일 줄을 눌렀을 때도 같습니다). 주간·일간 보기의 시간 칸에서는 누른 시각에 시작합니다. 기본 길이는 어느 보기에서든 쓰입니다. 시각은 1645, 4:45pm, 오후 4시 45분처럼 써도 됩니다.</p>
+            </section>
+
+            <section class="settings-section">
+                <h2>나만의 시간표 (교시)</h2>
+                <p class="settings-hint">자주 쓰는 시간대에 이름을 붙여 두면(예: 학교 1교시 08:40~09:30), 일정 추가 창에서 그 이름을 눌러 시작·끝 시각을 한 번에 넣을 수 있습니다. 한 교시를 누르고 다른 교시를 누르면 그 사이 전체(예: 1~3교시)가 됩니다. 고치면 자동으로 저장됩니다.</p>
+                <!-- 시간표 목록은 app.js가 설정(timeSlotGroups)을 보고 여기에 만든다 -->
+                <div id="slot-group-list"></div>
+                <button type="button" id="slot-group-add">+ 시간표 추가</button>
             </section>
 
             <section class="settings-section">
@@ -464,6 +502,12 @@
             </div>
         </div>
 
+        <!-- 교시: 설정 탭의 "나만의 시간표"에 만든 시간대 버튼. 누르면 시작·끝 시각이 그 시간대로 정해진다.
+             시간표가 없거나 종일 일정이면 숨는다. 버튼은 app.js가 만든다 -->
+        <div class="dialog-row top slot-row" hidden><span class="dialog-label">교시</span>
+            <div class="slot-groups" id="event-slot-groups"></div>
+        </div>
+
         <!-- 메모: Google Calendar 일정의 "설명" 칸에 저장되어 폰이나 웹에서도 보인다. 오늘 탭의 일정 줄에서도 바로 고칠 수 있다 -->
         <label class="dialog-row top"><span class="dialog-label">메모</span>
             <textarea id="event-memo" rows="3" placeholder="예: 노트 가져가기"></textarea>
@@ -547,6 +591,17 @@
     </dialog>
 
     <!-- 캘린더 지우기/목록에서 빼기 확인 창. 문구와 버튼 글자는 app.js가 상황에 맞게 바꾼다 -->
+    <!-- 설정 탭의 [연결 끊기] 확인 창 -->
+    <dialog id="google-disconnect-dialog">
+        <h2>Google 연결 끊기</h2>
+        <p class="calendar-remove-message">Google에 있는 일정은 지워지지 않습니다. 이 컴퓨터에 기억해 둔 일정과 로그인 정보만 지워지고, 캘린더 탭에는 할 일만 보이게 됩니다. 다시 연결하면 그대로 돌아옵니다.</p>
+        <div class="dialog-buttons">
+            <span class="spacer"></span>
+            <button id="google-disconnect-cancel">취소</button>
+            <button id="google-disconnect-confirm" class="danger">연결 끊기</button>
+        </div>
+    </dialog>
+
     <dialog id="calendar-remove-dialog">
         <h2 id="calendar-remove-title">캘린더 삭제</h2>
         <p id="calendar-remove-message" class="calendar-remove-message"></p>

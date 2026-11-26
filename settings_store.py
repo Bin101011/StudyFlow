@@ -131,6 +131,14 @@ OVERDUE_REVIEW_ENABLED_DEFAULT = True  # 시험 서버(tests/fake_google.py)는 
 OVERDUE_REVIEW_DATE_KEY = "overdueReviewDate"
 DATE_TEXT_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
 
+# 11) 나만의 시간표(교시): 시간대에 이름을 붙여 두고, 일정 창에서 눌러 시작·끝을 한 번에 넣는다.
+#     [{"name": "학교", "slots": [{"label": "1교시", "start": "08:40", "end": "09:30"}, ...]}, ...] 모양의 리스트다.
+#     시간표(그룹)를 여러 개 둘 수 있다(예: 학교, 학원). 설정 파일이 부풀지 않게 개수와 글자 수에 한계를 둔다
+TIME_SLOT_GROUPS_KEY = "timeSlotGroups"
+MAX_TIME_SLOT_GROUPS = 10
+MAX_TIME_SLOTS = 30
+MAX_TIME_SLOT_TEXT = 30
+
 # "00:00"~"23:59" 모양의 시각 글자. re.fullmatch로 쓰면 앞뒤에 다른 글자가 붙은 값은 걸러진다
 TIME_TEXT_PATTERN = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
 
@@ -171,7 +179,37 @@ def default_settings():
     settings[PLAN_DEFAULT_MINUTES_KEY] = PLAN_DEFAULT_MINUTES_DEFAULT
     settings[OVERDUE_REVIEW_ENABLED_KEY] = OVERDUE_REVIEW_ENABLED_DEFAULT
     settings[OVERDUE_REVIEW_DATE_KEY] = ""
+    settings[TIME_SLOT_GROUPS_KEY] = []
     return settings
+
+
+def clean_time_slot_groups(raw):
+    """시간표(교시) 리스트를 검사해서 쓸 수 있는 것만 남긴 새 리스트를 돌려준다. 모양이 아예 틀리면 None.
+    - 이름은 앞뒤 빈칸을 지우고 30자까지. 이름이 빈 시간표는 "시간표"라고 부른다
+    - 교시는 이름이 있고, 시작·끝이 "08:40" 모양이고, 끝이 시작보다 늦은 것만 남긴다
+    - 교시는 시작 시각 순서로 정렬한다 (일정 창에서 1교시~3교시처럼 범위를 고를 때 순서가 맞아야 한다)"""
+    if not isinstance(raw, list):
+        return None
+    groups = []
+    for group in raw[:MAX_TIME_SLOT_GROUPS]:
+        if not isinstance(group, dict):
+            continue
+        name = group.get("name")
+        name = name.strip()[:MAX_TIME_SLOT_TEXT] if isinstance(name, str) else ""
+        slots = []
+        raw_slots = group.get("slots")
+        for slot in (raw_slots if isinstance(raw_slots, list) else [])[:MAX_TIME_SLOTS]:
+            if not isinstance(slot, dict):
+                continue
+            label, start, end = slot.get("label"), slot.get("start"), slot.get("end")
+            if not (isinstance(label, str) and label.strip() and isinstance(start, str) and isinstance(end, str)):
+                continue
+            if not (TIME_TEXT_PATTERN.fullmatch(start) and TIME_TEXT_PATTERN.fullmatch(end)) or end <= start:
+                continue  # 같은 모양의 시각 글자는 글자 순서가 곧 시간 순서다
+            slots.append({"label": label.strip()[:MAX_TIME_SLOT_TEXT], "start": start, "end": end})
+        slots.sort(key=lambda item: item["start"])
+        groups.append({"name": name or "시간표", "slots": slots})
+    return groups
 
 
 def clean_settings(raw, base=None):
@@ -258,6 +296,10 @@ def clean_settings(raw, base=None):
     # 빈 글자("아직 없음") 또는 "2026-11-10" 모양의 날짜만 인정한다
     if isinstance(review_date, str) and (review_date == "" or DATE_TEXT_PATTERN.fullmatch(review_date)):
         settings[OVERDUE_REVIEW_DATE_KEY] = review_date
+
+    slot_groups = clean_time_slot_groups(raw.get(TIME_SLOT_GROUPS_KEY))
+    if slot_groups is not None:
+        settings[TIME_SLOT_GROUPS_KEY] = slot_groups
 
     month_rows = raw.get(MONTH_ROWS_KEY)
     if isinstance(month_rows, int) and not isinstance(month_rows, bool) and month_rows in MONTH_ROWS_ALLOWED:

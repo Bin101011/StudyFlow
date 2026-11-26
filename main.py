@@ -31,6 +31,9 @@ import webview
 # app.py에서 만들어둔 Flask 앱과, 뒤에서 할 일을 시작하는 함수를 가져온다
 from app import app, start_background_tasks
 
+# 진짜 StudyFlow를 켤 때만, 첫 요청이 오면 내 주소를 connection.json에 적게 한다 (옵시디언의 Claude가 MCP로 찾아오는 데 쓴다. app.py 참고)
+app.config["WRITE_CONNECTION_FILE"] = True
+
 # 창을 닫기 직전에 쓴 글이 사라지지 않게 하는 도구
 import close_guard
 
