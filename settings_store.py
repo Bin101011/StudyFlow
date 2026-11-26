@@ -34,14 +34,19 @@ POMODORO_SLIDER_DEFINITIONS = [
 # 오늘 탭의 슬라이더 설정들. 설정 탭의 "오늘 탭" 칸에 따로 보인다.
 # 시간표 너비: 오늘 탭 왼쪽 시간표 칸의 가로 길이. 기본값 400은 처음 만들 때의 값이고, 넓히면 겹친 블록의 제목이 덜 잘리지만 가운데 할 일 칸이 좁아진다
 # 오른쪽 칸 너비: 작은 달력과 할 일 목록이 있는 칸의 가로 길이. 넓히면 달력도 함께 넓어진다
+# 메모 칸 높이: 가운데 칸 바닥의 하루 메모 입력 칸의 세로 길이. 기본값 110은 예전 모양(글자 크기 16px에서 네 줄)과 거의 같다.
+#   창이 낮아서 다 들어가지 않으면 화면(style.css)이 할 일 목록을 조금 남기고 메모 칸을 줄여서 보여 준다
+# 세 값 모두 오늘 탭에서 칸 경계(메모는 메모 위의 선)를 마우스로 끌어서도 바꿀 수 있다 (app.js의 "오늘 탭 크기 끌기")
 TIMELINE_WIDTH_KEY = "timelineWidth"
 TODAY_RIGHT_WIDTH_KEY = "todayRightWidth"
+DAY_MEMO_HEIGHT_KEY = "dayMemoHeight"
 TODAY_SLIDER_DEFINITIONS = [
     {"key": TIMELINE_WIDTH_KEY, "label": "시간표 너비", "min": 300, "max": 500, "step": 10, "default": 400, "unit": "px"},
     {"key": TODAY_RIGHT_WIDTH_KEY, "label": "오른쪽 칸 너비", "min": 300, "max": 500, "step": 10, "default": 300, "unit": "px"},
+    {"key": DAY_MEMO_HEIGHT_KEY, "label": "메모 칸 높이", "min": 60, "max": 600, "step": 10, "default": 110, "unit": "px"},
 ]
 # 두 칸을 합친 너비의 한계. 가운데 할 일 칸이 너무 좁아지지 않게 한다. 화면(app.js)도 /api/settings로 이 값을 받아 슬라이더를 막는다
-TODAY_WIDTHS_MAX = 850
+TODAY_WIDTHS_MAX = 900  # 처음에는 850이었고, 2026-11-20에 사용자 요청으로 900으로 넓혔다
 
 # 숫자 슬라이더 설정 전체 (clean_settings와 default_settings가 같이 쓴다)
 ALL_SLIDER_DEFINITIONS = SLIDER_DEFINITIONS + POMODORO_SLIDER_DEFINITIONS + TODAY_SLIDER_DEFINITIONS
@@ -52,7 +57,8 @@ DEFAULT_CALENDAR_KEY = "defaultCalendarId"
 # 2) "내 캘린더" 목록에서 체크를 꺼서 숨기기로 한 캘린더들의 id 리스트
 HIDDEN_CALENDARS_KEY = "hiddenCalendarIds"
 
-# 3) 종일 일정의 긴 제목을 줄바꿈해서 다 보여줄지 (True/False). 끄면 한 줄로 두고 길면 "…"로 줄인다
+# 3) 일정의 긴 제목을 줄바꿈해서 다 보여줄지 (True/False). 끄면 한 줄로 두고 길면 줄인다.
+#    처음에는 종일 일정만이었고 2026-11-20부터 시간 있는 일정에도 쓴다(이름은 저장 파일과 맞추려고 그대로 둔다)
 WRAP_ALL_DAY_KEY = "wrapAllDay"
 
 # 4) Pomodoro 타이머가 끝났을 때 알림 소리를 낼지 (True/False)
@@ -112,6 +118,12 @@ EVENT_DEFAULT_MINUTES_KEY = "eventDefaultMinutes"
 EVENT_DEFAULT_MINUTES_ALLOWED = (15, 30, 60, 90, 120, 180)
 EVENT_DEFAULT_MINUTES_DEFAULT = 60
 
+# 9-1) 할 일을 오늘 탭 시간표에 넣을 때(끌어다 놓기, "+ 시간")의 기본 길이(분). 할 일에 걸리는 시간을 정해 두었으면 그 길이를 쓰고,
+#      안 정한 할 일에만 이 값을 쓴다(2026-11-23 사용자 요청). 할 일의 길이 창에 있는 길이 버튼과 같은 값만 고를 수 있다
+PLAN_DEFAULT_MINUTES_KEY = "planDefaultMinutes"
+PLAN_DEFAULT_MINUTES_ALLOWED = (15, 30, 45, 60, 90, 120)
+PLAN_DEFAULT_MINUTES_DEFAULT = 60
+
 # 10) 아침 정리 창(밀린 할 일 정리): 그날 앱을 처음 열 때 밀린 할 일이 있으면 띄울지(True/False)와,
 #     마지막으로 창을 닫은 날("2026-11-10" 모양, 아직 없으면 빈 글자). 창을 닫은 날에는 다시 저절로 띄우지 않는다
 OVERDUE_REVIEW_ENABLED_KEY = "overdueReviewEnabled"
@@ -164,6 +176,7 @@ def default_settings():
     settings[EVENT_DEFAULT_START_KEY] = EVENT_DEFAULT_START_DEFAULT
     settings[EVENT_DEFAULT_ALL_DAY_KEY] = False
     settings[EVENT_DEFAULT_MINUTES_KEY] = EVENT_DEFAULT_MINUTES_DEFAULT
+    settings[PLAN_DEFAULT_MINUTES_KEY] = PLAN_DEFAULT_MINUTES_DEFAULT
     settings[OVERDUE_REVIEW_ENABLED_KEY] = OVERDUE_REVIEW_ENABLED_DEFAULT
     settings[OVERDUE_REVIEW_DATE_KEY] = ""
     settings[TIME_SLOT_GROUPS_KEY] = []
@@ -269,6 +282,11 @@ def clean_settings(raw, base=None):
     event_minutes = raw.get(EVENT_DEFAULT_MINUTES_KEY)
     if isinstance(event_minutes, int) and not isinstance(event_minutes, bool) and event_minutes in EVENT_DEFAULT_MINUTES_ALLOWED:
         settings[EVENT_DEFAULT_MINUTES_KEY] = event_minutes
+
+    # 정수만 인정한다. True/False는 파이썬에서 1/0으로 취급되어 int 검사를 통과하므로 따로 막는다
+    plan_minutes = raw.get(PLAN_DEFAULT_MINUTES_KEY)
+    if isinstance(plan_minutes, int) and not isinstance(plan_minutes, bool) and plan_minutes in PLAN_DEFAULT_MINUTES_ALLOWED:
+        settings[PLAN_DEFAULT_MINUTES_KEY] = plan_minutes
 
     review_enabled = raw.get(OVERDUE_REVIEW_ENABLED_KEY)
     if isinstance(review_enabled, bool):  # 켜기/끄기 값은 true/false만 인정한다

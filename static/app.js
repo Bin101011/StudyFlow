@@ -1719,7 +1719,8 @@ async function pasteCopiedEvent() {
 document.addEventListener("keydown", function (e) {
     // 창이 하나라도 열려 있거나 글자 입력 칸에 커서가 있으면, 그 칸의 평소 복사/붙여넣기가 우선이다.
     // (예전에는 일정 창만 봤다. 아침 정리 창은 마우스가 일정 위에 있을 때 저절로 뜰 수 있어서, 창 뒤의 일정이 복사·붙여넣기되지 않게 모든 창을 본다)
-    if (document.querySelector("dialog[open]") || ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)) {
+    // (서식 칸(isContentEditable, 하루 메모)도 글자 입력 칸으로 본다. 하루 메모는 오늘 탭에 있어서 지금은 겹칠 일이 없지만, 칸이 늘어도 안전하게)
+    if (document.querySelector("dialog[open]") || ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName) || document.activeElement.isContentEditable) {
         return;
     }
     // 캘린더 탭이 아닌 곳에서는 동작하지 않는다
@@ -1793,6 +1794,7 @@ const taskInput = document.getElementById("task-input");
 const taskAddButton = document.getElementById("task-add-button");
 const taskProjectSelect = document.getElementById("task-project");
 const tasksHeading = document.getElementById("tasks-heading");
+const tasksTotal = document.getElementById("tasks-total");  // 제목 옆 "· 총 1시간 30분 남음" (loadTodayTasks가 채운다)
 const dayPrevButton = document.getElementById("day-prev");
 const dayNextButton = document.getElementById("day-next");
 const dayTodayButton = document.getElementById("day-today");
@@ -1846,7 +1848,7 @@ const TL_QUARTER_LINES_PX = 120; // 이만큼 확대하면 15분 줄도 보여�
 const TL_SCROLL_PAD = 10;        // .tl-scroll의 위쪽 안쪽 여백(px). style.css와 같은 값
 let tlHourPx = TL_HOUR_DEFAULT;  // 지금 한 시간의 세로 길이(px). 두 손가락 동작은 조금씩 변하므로 소수일 수 있다
 
-const TL_DEFAULT_LENGTH = 60;    // 할 일을 끌어다 놓았을 때 만들어지는 길이(분)
+const TL_DEFAULT_LENGTH = 60;    // 걸리는 시간을 안 정한 할 일을 시간표에 넣을 때의 길이(분)의 처음 값. 설정 탭에서 바꾼 값(settings.planDefaultMinutes)이 있으면 그걸 쓴다(taskPlanLength). 서버 settings_store와 같은 값
 const TL_CLICK_LENGTH = 30;      // 빈 곳을 한 번 눌렀을 때 만들어지는 길이(분)
 const TL_CREATE_START_STEP = 5;  // 새 계획을 누르거나 끌기 시작한 자리를 맞추는 단위(분). 확대 정도와 관계없이 같다
 const TL_DAY_MIN = 24 * 60;      // 하루의 분
@@ -2371,12 +2373,12 @@ function checkDayRollover() {
     if (toDateText(new Date()) === todayText) {
         return;
     }
-    // 글자를 쓰는 중이거나 시간표를 끄는 중이면 건드리지 않고 다음 확인 때 다시 본다.
+    // 글자를 쓰는 중이거나 시간표를 끄는 중이면 건드리지 않고 다음 확인 때 다시 본다. (하루 메모는 textarea가 아니라 서식 칸(isContentEditable)이다)
     // 메모를 쓰다가 갑자기 다음 날의 빈 메모 칸으로 바뀌면 안 되기 때문이다. (할 일 입력 칸은 화면을 다시 그려도 지워지지 않으므로 제외한다)
     const active = document.activeElement;
     const typing = active && document.getElementById("today").contains(active) &&
         active.id !== "task-input" && active.id !== "inbox-input" &&
-        (active.tagName === "TEXTAREA" || (active.tagName === "INPUT" && active.type === "text"));
+        (active.tagName === "TEXTAREA" || active.isContentEditable || (active.tagName === "INPUT" && active.type === "text"));
     if (typing || isTimelineBusy()) {
         return;
     }
@@ -2404,6 +2406,10 @@ function refreshTaskSlots() {
                 old.remove();
             });
             const plans = plansByTask[row.dataset.taskId];
+            // 시간표에 이미 들어간 할 일: 길이가 계획 블록으로 정해져 있으므로 "+ 길이"를 숨긴다(style.css의 .has-plan).
+            // 이런 줄은 시간 글자("10:00–11:00")까지 붙어서 가장 붐비는 줄이라, "+ 길이"까지 있으면 마우스를 올렸을 때 이름이 두 줄로 접힌다.
+            // 이미 정해 둔 "15분" 글자는 그대로 보인다
+            row.classList.toggle("has-plan", !!plans);
             const anchor = row.querySelector(".task-content, .task-edit-input");
             if (!anchor) {
                 return;
@@ -2416,7 +2422,8 @@ function refreshTaskSlots() {
                     empty.className = "task-slot task-slot-empty";
                     empty.textContent = "+ 시간";
                     empty.title = "시각을 써서 시간표에 넣습니다 (끌어다 놓지 않아도 됩니다)";
-                    const task = { id: Number(row.dataset.taskId), content: anchor.textContent };
+                    // duration_min: 줄에 적어 둔 걸리는 시간(data-duration). 정해 두었으면 창의 처음 길이가 그 길이가 된다
+                    const task = { id: Number(row.dataset.taskId), content: anchor.textContent, duration_min: Number(row.dataset.duration) || null };
                     empty.addEventListener("click", function () {
                         openNewPlanPopover(task, empty);
                     });
@@ -2798,8 +2805,9 @@ function showTimelinePopover(key, anchor, build) {
 
 // 작은 창 밖을 누르면 닫는다 (다른 블록을 누르면 그 블록의 클릭이 새 창을 연다)
 document.addEventListener("pointerdown", function (e) {
-    // 가운데 할 일 옆의 시간 글자(.task-slot)도 블록처럼 그 자리의 클릭이 창을 열고 닫으므로 여기서 닫지 않는다
-    if (timelinePopover && !timelinePopover.el.contains(e.target) && !e.target.closest(".tl-block, .task-slot")) {
+    // 가운데 할 일 옆의 시간 글자(.task-slot)와 걸리는 시간 글자·"+ 길이"(.task-duration)도
+    // 블록처럼 그 자리의 클릭이 창을 열고 닫으므로 여기서 닫지 않는다
+    if (timelinePopover && !timelinePopover.el.contains(e.target) && !e.target.closest(".tl-block, .task-slot, .task-duration")) {
         closeTimelinePopover();
     }
 }, true);
@@ -3356,14 +3364,14 @@ function markTimeError(time) {
 }
 
 // 시간 정하기 창의 처음 시작 시각: 오늘을 보고 있으면 지금 시각을 5분 단위로 올린 값(14:23 → 14:25), 다른 날이면 09:00.
-// 기본 길이(1시간)가 하루 안에 들어가도록 23:00보다 늦게는 잡지 않는다
-function defaultNewPlanStart() {
+// 계획 길이(length분, 할 일의 걸리는 시간이나 기본 1시간)가 하루 안에 들어가도록 그보다 늦게는 잡지 않는다(1시간이면 23:00까지)
+function defaultNewPlanStart(length) {
     let start = 9 * 60;
     if (viewedDate === todayText) {
         const now = new Date();
         start = Math.ceil((now.getHours() * 60 + now.getMinutes()) / 5) * 5;
     }
-    return Math.min(start, TL_DAY_MIN - TL_DEFAULT_LENGTH);
+    return Math.min(start, TL_DAY_MIN - length);
 }
 
 // 시간표에서 그 시각이 보이지 않으면 보이도록 스크롤한다(칸 위쪽 1/3쯤에 오게). 이미 보이면 움직이지 않는다
@@ -3379,15 +3387,16 @@ function revealTimelineMinute(min) {
 //  - 시작·끝·길이 칸은 계획 창과 같다(makePlanTimeRow). 처음에는 시작 칸이 선택되어 있어서 바로 "1430"처럼 쓰면 된다.
 //  - Enter나 [넣기]를 눌러야 만든다. 다른 곳을 누르거나 Esc로 닫으면 아무것도 만들지 않는다(실수로 계획이 생기지 않게).
 //    계획 창은 닫힐 때 저장하지만, 그건 이미 있는 계획을 고치는 것이라 다르다.
-// task: { id, content }, anchor: 창을 붙일 곳("+ 시간" 글자)
+// task: { id, content, duration_min }, anchor: 창을 붙일 곳("+ 시간" 글자). 걸리는 시간을 정해 둔 할 일이면 처음 길이가 그 길이다
 function openNewPlanPopover(task, anchor) {
     showTimelinePopover("n:" + task.id, anchor, function (el) {
         const title = document.createElement("h3");
         title.textContent = task.content;
         el.appendChild(title);
 
-        const start = defaultNewPlanStart();
-        const time = makePlanTimeRow(start, Math.min(start + TL_DEFAULT_LENGTH, TL_DAY_MIN));
+        const length = taskPlanLength(task);
+        const start = defaultNewPlanStart(length);
+        const time = makePlanTimeRow(start, start + length);
         el.appendChild(time.row);
 
         const tip = document.createElement("p");
@@ -3449,14 +3458,15 @@ function openNewPlanPopover(task, anchor) {
 
 let timelineDropPreview = null;
 
-function showTimelineDropPreview(start, text) {
+// length: 만들어질 계획의 길이(분). 끄는 할 일의 걸리는 시간이거나 기본 1시간이다(taskPlanLength)
+function showTimelineDropPreview(start, text, length) {
     if (!timelineDropPreview) {
         timelineDropPreview = document.createElement("div");
         timelineDropPreview.className = "tl-drop-preview";
         timelineGrid.appendChild(timelineDropPreview);
     }
     timelineDropPreview.style.top = minToY(start) + "px";
-    timelineDropPreview.style.height = minToY(TL_DEFAULT_LENGTH) + "px";
+    timelineDropPreview.style.height = minToY(length) + "px";
     timelineDropPreview.textContent = minToText(start) + "  " + text;
 }
 
@@ -3467,9 +3477,9 @@ function hideTimelineDropPreview() {
     }
 }
 
-// 포인터 위치에 놓을 때의 시작 시각 (15분 단위, 1시간짜리 블록이 하루 안에 들어오도록 맞춘다)
-function dropStartMinutes(clientY) {
-    return clampNumber(floorSnap(yToMin(clientY)), 0, TL_DAY_MIN - TL_DEFAULT_LENGTH);
+// 포인터 위치에 놓을 때의 시작 시각 (15분 단위, length분짜리 블록이 하루 안에 들어오도록 맞춘다)
+function dropStartMinutes(clientY, length) {
+    return clampNumber(floorSnap(yToMin(clientY)), 0, TL_DAY_MIN - length);
 }
 
 async function dropTaskOnTimeline(task, start) {
@@ -3478,13 +3488,14 @@ async function dropTaskOnTimeline(task, start) {
         if (!sameDate) {
             await sendRequest("/api/tasks/" + task.id, "PATCH", { date: viewedDate });
         }
-        const plan = await createPlan(start, start + TL_DEFAULT_LENGTH, null, task.id);
+        const end = start + taskPlanLength(task);  // 걸리는 시간을 정해 둔 할 일은 그 길이, 아니면 1시간
+        const plan = await createPlan(start, end, null, task.id);
         // 그날의 할 일을 놓은 것만 Ctrl+Z로 되돌린다. 다른 날(밀린 할 일, 할 일 목록)에서 온 할 일은 날짜까지 바뀌어서
         // 계획만 지우면 반쪽만 되돌아가므로 기록하지 않는다
         if (sameDate) {
             rememberPlanCreated(plan, task.content);
         }
-        showToast("'" + task.content + "'을(를) " + minToText(start) + "–" + minToText(start + TL_DEFAULT_LENGTH) + "에 배치했습니다");
+        showToast("'" + task.content + "'을(를) " + minToText(start) + "–" + minToText(end) + "에 배치했습니다");
     } catch (error) {
         showToast("시간표에 놓지 못했습니다: " + error.message);
     }
@@ -3532,7 +3543,7 @@ function makeTaskRow(task, options) {
     content.textContent = task.content;
 
     // 오늘 탭 목록에서만: 끝내지 않은 할 일에 "1, 2, 3…" 번호를 붙인다. 끌어서 순서를 바꾸면 번호가 따라 바뀐다.
-    // 1번이 "첫 번째로 할 것"이라 파랗게 강조한다. 끝낸 할 일과 오늘 탭 밖(밀린 할 일, 프로젝트 카드)에는 loadTodayTasks 등이 rank를 주지 않는다.
+    // 번호는 모두 같은 모양(파란색)이다. 1번에 붙는 "first" 이름표는 모양에 쓰지 않고 화면 시험(order_test)이 1번을 알아보는 데만 쓴다. 끝낸 할 일과 오늘 탭 밖(밀린 할 일, 프로젝트 카드)에는 loadTodayTasks 등이 rank를 주지 않는다.
     // rank가 "none"이면 번호에서 뺀 할 일이다("점심"처럼 순서를 매길 필요 없는 일). 번호 자리에 점을 두어 체크박스 줄을 맞춘다(글자는 "·"이고, 보이는 모양은 style.css가 그리는 회색 동그라미).
     // 번호나 점을 누르면 번호에서 빼거나 다시 넣는다. <button>이라서 누르기가 줄 끌기로 이어지지 않는다(beginTaskDrag가 버튼을 건너뛴다)
     if (options.rank) {
@@ -3628,6 +3639,37 @@ function makeTaskRow(task, options) {
         count.className = "task-count";
         count.textContent = options.countText;
         item.appendChild(count);
+    }
+
+    // 걸리는 시간("15분"): 오늘 탭의 목록(그날 할 일, 밀린 할 일, 할 일 목록)에서만 다룬다(options.editDuration).
+    // 정해 두었으면 줄에 늘 보이는 작은 회색 글자이고, 누르면 길이를 고르는 작은 창이 열린다.
+    // 아직 안 정했으면 같은 자리에 "+ 길이"가 있다. "+ 시간"처럼 마우스를 올린 줄에서만 보이고, 안 보일 때도 자리는 차지한다(style.css).
+    // 처음에는 마우스를 올리면 뜨는 버튼 묶음에 "길이" 버튼을 넣었는데, 시간과 프로젝트 이름표가 있는 줄에서는 버튼이 하나 늘어난 만큼
+    // 줄이 넘쳐서 마우스를 올릴 때마다 이름이 두 줄로 접히며 줄이 들썩였다(tl_test가 잡음). 그래서 자리를 미리 잡아 두는 방식으로 바꿨다.
+    // 끝낸 할 일에는 두지 않는다. data-duration은 "+ 시간" 창(refreshTaskSlots)이 이 줄의 길이를 읽어 가는 이름표다
+    if (options.editDuration) {
+        item.dataset.duration = task.duration_min || "";
+        if (task.duration_min) {
+            const chip = document.createElement("button");
+            chip.type = "button";
+            chip.className = "task-duration";
+            chip.textContent = durationText(task.duration_min);
+            chip.title = "걸릴 시간 (누르면 바꿉니다)";
+            chip.addEventListener("click", function () {
+                openTaskDurationPopover(task, chip, options);
+            });
+            item.appendChild(chip);
+        } else if (task.done !== 1) {
+            const add = document.createElement("button");
+            add.type = "button";
+            add.className = "task-duration task-duration-empty";
+            add.textContent = "+ 길이";
+            add.title = "몇 분 걸릴지 정하기 (시각은 정하지 않습니다)";
+            add.addEventListener("click", function () {
+                openTaskDurationPopover(task, add, options);
+            });
+            item.appendChild(add);
+        }
     }
 
     // 프로젝트에 연결된 할 일이면 프로젝트 색 동그라미와 이름을 붙인다. 하위 단계면 상위 단계 이름도 같이 붙는다
@@ -3756,6 +3798,129 @@ function makeTaskRow(task, options) {
     return item;
 }
 
+// ----- 할 일의 걸리는 시간 -----
+// "몇 시부터 몇 시까지"는 정하지 않고 "15분 걸릴 것"만 적어 두는 값(tasks.duration_min, 2026-11-23 사용자 요청).
+// 할 일 줄의 "15분" 글자나 "+ 길이"를 누르면 작은 창이 열린다. 자주 쓰는 길이 버튼을 누르면 바로 저장되고,
+// 그 밖의 길이는 칸에 "40", "1:30", "1시간 20분"처럼 쓰고 Enter(또는 [정하기])로 저장한다. 읽는 방법은 계획 창의 길이 칸과 같다(parseDurationText).
+// 시간표 계획 창과 같은 작은 창(showTimelinePopover)을 써서, 창 밖을 누르거나 Esc를 누르면 닫히는 방식도 같다.
+const TASK_DURATION_PRESETS = [15, 30, 45, 60, 90, 120];  // 창에 버튼으로 늘어놓는 길이(분)
+const TASK_DURATION_MIN = 5;         // 가장 짧은 길이(분). 서버(app.py의 TASK_DURATION_MIN)와 같은 값
+const TASK_DURATION_MAX = 12 * 60;   // 가장 긴 길이(분). 서버와 같은 값
+
+// task: 할 일 한 줄의 내용(서버에서 받은 것), anchor: 창을 붙일 곳, options: makeTaskRow의 options(reload, undoable를 쓴다)
+function openTaskDurationPopover(task, anchor, options) {
+    const current = task.duration_min || null;  // 지금 정해 둔 길이. 안 정했으면 null
+
+    // min이 null이면 길이를 지운다. 오늘 탭에서 바꾼 것이면 Ctrl+Z로 원래 길이로 되돌릴 수 있게 기록한다
+    async function save(min) {
+        closeTimelinePopover();
+        if (min === current) {
+            return;  // 같은 값을 다시 고른 것은 바뀐 게 없으므로 저장도 기록도 하지 않는다
+        }
+        const undo = options.undoable ? {
+            requests: [{ url: "/api/tasks/" + task.id, method: "PATCH", body: { duration_min: current } }],
+            message: "'" + task.content + "'의 걸리는 시간을 " + (current ? durationText(current) + "(으)로" : "정하기 전으로") + " 되돌렸습니다",
+        } : null;
+        await updateTask(task.id, { duration_min: min }, options.reload, undo);
+    }
+
+    showTimelinePopover("d:" + task.id, anchor, function (el) {
+        const title = document.createElement("h3");
+        title.textContent = task.content;
+        const sub = document.createElement("p");
+        sub.className = "tl-pop-sub";
+        sub.textContent = "얼마나 걸릴까요? 시간표로 끌어다 놓으면 이 길이로 들어갑니다";
+        el.append(title, sub);
+
+        // 자주 쓰는 길이 버튼들. 일정 창의 길이 버튼과 같은 모양이고, 지금 길이와 같은 버튼은 파랗게 강조한다(active)
+        const chips = document.createElement("div");
+        chips.className = "duration-chips";
+        TASK_DURATION_PRESETS.forEach(function (min) {
+            const chip = makePopoverButton(durationText(min), function () {
+                save(min);
+            }, "duration-chip" + (min === current ? " active" : ""));
+            chips.appendChild(chip);
+        });
+        el.appendChild(chips);
+
+        // 직접 쓰는 칸. 버튼에 없는 길이(예: 40분)가 정해져 있으면 그 값을 미리 넣어 둔다
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "task-duration-input";
+        input.placeholder = "직접 쓰기: 40, 1:30, 1시간 20분";
+        input.value = current && !TASK_DURATION_PRESETS.includes(current) ? durationText(current) : "";
+        el.appendChild(input);
+
+        function saveTyped() {
+            const min = parseDurationText(input.value);
+            if (min === null || min < TASK_DURATION_MIN || min > TASK_DURATION_MAX) {
+                input.classList.add("invalid");
+                showToast("길이는 " + TASK_DURATION_MIN + "분에서 " + (TASK_DURATION_MAX / 60) + "시간 사이로, 40이나 1시간 20분처럼 써 주세요.");
+                return;
+            }
+            save(min);
+        }
+
+        input.addEventListener("input", function () {
+            input.classList.remove("invalid");
+        });
+        input.addEventListener("keydown", function (e) {
+            if (e.isComposing) {
+                return;  // 한글을 조합하는 중의 Enter는 글자를 확정하는 키다
+            }
+            if (e.key === "Enter") {
+                e.preventDefault();
+                saveTyped();
+            } else if (e.key === "Escape") {
+                e.preventDefault();
+                closeTimelinePopover();
+            }
+        });
+
+        const buttons = document.createElement("div");
+        buttons.className = "tl-pop-buttons";
+        if (current) {
+            buttons.appendChild(makePopoverButton("길이 지우기", function () {
+                save(null);
+            }));
+        }
+        const spacer = document.createElement("span");
+        spacer.className = "spacer";
+        buttons.append(spacer, makePopoverButton("닫기", closeTimelinePopover), makePopoverButton("정하기", saveTyped, "primary"));
+        el.appendChild(buttons);
+
+        input.focus();  // 창이 열리면 바로 "40"처럼 쓸 수 있게 한다
+    });
+}
+
+// 끝내지 않은 할 일들의 걸리는 시간을 더해 제목 옆에 "· 총 1시간 30분 남음"으로 보여 준다(2026-11-23 사용자가 고른 문구. 처음의 "남은 1시간 30분"은 뜻이 안 와닿는다고 함).
+// 길이를 안 정한 할 일은 더할 수 없으므로 빼고 더하고, 그런 할 일이 있으면 마우스를 올렸을 때 몇 개가 빠졌는지 알려 준다.
+// 길이를 정한 할 일이 하나도 없으면 비워 둔다(길이를 안 쓰는 날에는 아무것도 보이지 않게)
+function showTasksTotal(openTasks) {
+    let total = 0;
+    let missing = 0;
+    openTasks.forEach(function (task) {
+        if (task.duration_min) {
+            total += task.duration_min;
+        } else {
+            missing++;
+        }
+    });
+    if (total === 0) {
+        tasksTotal.textContent = "";
+        tasksTotal.title = "";
+        return;
+    }
+    tasksTotal.textContent = "· 총 " + durationText(total) + " 남음";
+    tasksTotal.title = "끝내지 않은 할 일의 걸리는 시간 합계" + (missing ? " (길이를 안 정한 " + missing + "개는 빼고 더했습니다)" : "");
+}
+
+// 할 일을 시간표에 넣을 때의 계획 길이(분): 걸리는 시간을 정해 두었으면 그 길이, 아니면 설정 탭의 "시간표에 넣을 때 기본 길이"
+// (settings.planDefaultMinutes, 설정을 아직 못 받았으면 1시간). 하루(24시간)보다 길 수는 없다
+function taskPlanLength(task) {
+    return task.duration_min ? Math.min(task.duration_min, TL_DAY_MIN) : (settings.planDefaultMinutes || TL_DEFAULT_LENGTH);
+}
+
 // 서버에서 할 일 목록을 받아와서 오른쪽에 그린다
 async function loadTodayTasks() {
     const date = viewedDate;  // loadTimeline과 같은 이유로, 요청 시점의 날짜를 기억해둔다
@@ -3815,8 +3980,10 @@ async function loadTodayTasks() {
             // 끌 수 있는 할 일: 프로젝트 없는 할 일("loose")은 시간표나 "할 일 목록"으로, 프로젝트 할 일("project")은 시간표로(또는 작은 달력 날짜로)
             dragFrom: task.done === 1 ? null : (task.project_id ? "project" : "loose"),
             undoable: true,
+            editDuration: true,
         }));
     });
+    showTasksTotal(openTasks);  // 제목 옆 "· 총 1시간 30분 남음"
 
     loadMiniTaskDays();  // 할 일이 바뀌었을 수 있으니 작은 달력의 점도 새로 받는다
 
@@ -3835,6 +4002,7 @@ async function loadTodayTasks() {
                 toInbox: true,
                 dragFrom: task.project_id ? "project" : "loose",
                 undoable: true,
+                editDuration: true,
             }));
         });
     }
@@ -4092,6 +4260,7 @@ async function loadInbox() {
         inboxList.appendChild(makeTaskRow(task, {
             reload: reloadTodayAndInbox,
             dragFrom: "inbox",
+            editDuration: true,
             extraButtons: [
                 makeAssignButton("오늘", function () { return todayText; }, task),
                 makeAssignButton("내일", function () { return addDaysToText(todayText, 1); }, task),
@@ -4545,8 +4714,8 @@ function moveTaskDrag(e) {
 
     // 시간표 위에서는 놓일 자리(15분 단위)를 점선 상자로 미리 보여 준다
     if (drag.hover && drag.hover.classList.contains("tl-grid")) {
-        drag.dropMin = dropStartMinutes(e.clientY);
-        showTimelineDropPreview(drag.dropMin, drag.task.content);
+        drag.dropMin = dropStartMinutes(e.clientY, taskPlanLength(drag.task));
+        showTimelineDropPreview(drag.dropMin, drag.task.content, taskPlanLength(drag.task));
     } else {
         hideTimelineDropPreview();
     }
@@ -4632,6 +4801,7 @@ function cancelTaskDragOnEscape(e) {
 }
 
 // 입력 칸의 글자를 지금 보고 있는 날의 할 일로 추가한다 (▶로 내일을 열고 적으면 내일 계획이 된다)
+// 들어갈 자리(번호 있는 마지막 할 일 바로 뒤)는 서버가 정한다(database.place_after_last_ranked)
 async function addTask() {
     const content = taskInput.value.trim();
     if (!content) {
@@ -4702,14 +4872,62 @@ function showDay(dateText) {
 // ----- 하루 메모 -----
 // 날짜마다 하나씩 적는 자유 메모. 일정과 상관없는 그날의 생각, 챙길 것 등을 적는다. 내 컴퓨터(studyflow.db)에만 저장하고 Google에는 보내지 않는다.
 // 입력을 멈추고 1초 뒤, 또는 다른 곳을 누르거나 다른 날로 넘길 때 저절로 저장된다. 내용을 모두 지우면 메모가 사라진다.
+//
+// 서식(2026-11-20): Ctrl+B 굵게, Ctrl+I 기울임, Ctrl+5 취소선. 그래서 칸이 textarea가 아니라 서식 칸(contenteditable인 <div>)이다.
+//  - 저장 모양: 칸 안의 HTML(<b>, <i>, <strike>, 줄바꿈 등)을 DOMPurify로 거른 글자를 format "html"로 보낸다.
+//  - 서식 기능 전에 쓴 메모는 서버에 format "text"(글자 그대로)로 남아 있다. 글자 그대로 칸에 넣어 보여 주고(white-space: pre-wrap이라 줄바꿈이 보인다),
+//    사용자가 고칠 때만 "html"로 저장한다. 그냥 보기만 하면 옛 메모를 다시 저장하지 않는다.
+//  - textarea가 저절로 해 주던 일(value, disabled, 예시 글자, 글자 수 한계, 붙여넣기는 글자만)을 아래 함수들이 대신한다.
 const dayMemoInput = document.getElementById("day-memo");
 const dayMemoStatus = document.getElementById("day-memo-status");
 const DAY_MEMO_SAVE_DELAY_MS = 1000;
-const DAY_MEMO_MAX = 20000;  // 서버(app.py의 DAY_MEMO_MAX)와 같은 값
-dayMemoInput.maxLength = DAY_MEMO_MAX;
+const DAY_MEMO_MAX = 20000;  // 보이는 글자 수 한계. 서버(app.py의 DAY_MEMO_MAX)와 같은 값
+
+// 서식 메모에 남겨 두는 태그. 굵게(b, strong), 기울임(i, em), 취소선(s, strike), 줄(br, div, p).
+// 그 밖의 태그(span, img, script 등)와 모든 속성(style, onclick 등)은 지운다. 태그를 지워도 안의 글자는 남는다(script 같은 위험한 것은 글자도 지운다)
+const DAY_MEMO_TAGS = ["b", "strong", "i", "em", "s", "strike", "br", "div", "p"];
+
+function cleanDayMemoHtml(html) {
+    return DOMPurify.sanitize(html, { ALLOWED_TAGS: DAY_MEMO_TAGS, ALLOWED_ATTR: [] });
+}
+
+// 칸의 지금 내용을 저장할 모양(HTML 글자)으로 돌려준다. 보이는 글자가 없으면(띄어쓰기·줄바꿈뿐이어도) ""(= 메모 지우기).
+// textContent = 태그를 빼고 글자만 이어 붙인 것
+function dayMemoContent() {
+    if (dayMemoInput.textContent.trim() === "") {
+        return "";
+    }
+    return cleanDayMemoHtml(dayMemoInput.innerHTML);
+}
+
+// 칸이 비어 있으면 예시 글자를 보이게 한다 (style.css의 #day-memo.empty::before)
+function updateDayMemoEmpty() {
+    dayMemoInput.classList.toggle("empty", dayMemoInput.textContent === "");
+}
+
+// 서버에서 받은 메모를 칸에 채운다. format이 "html"이 아니면(서식 기능 전의 메모) 글자 그대로 넣는다
+function fillDayMemo(content, format) {
+    dayMemoCaret = null;  // 새 글을 채우면 기억한 커서 자리는 버린다(다음에 들어오면 글의 끝에서 시작. textarea와 같다)
+    if (format === "html") {
+        dayMemoInput.innerHTML = cleanDayMemoHtml(content);
+    } else {
+        dayMemoInput.textContent = content;
+    }
+    updateDayMemoEmpty();
+}
+
+// 칸을 쓸 수 있게 하거나 잠근다 (textarea의 disabled 대신). 잠글 때 커서가 칸에 있으면 빼낸다
+function setDayMemoEnabled(enabled) {
+    dayMemoInput.contentEditable = enabled ? "true" : "false";
+    dayMemoInput.classList.toggle("disabled", !enabled);
+    dayMemoInput.setAttribute("aria-disabled", String(!enabled));
+    if (!enabled && document.activeElement === dayMemoInput) {
+        dayMemoInput.blur();
+    }
+}
 
 let dayMemoDate = null;     // 입력 칸의 글이 어느 날짜의 것인지. null이면 불러오는 중이라 칸을 쓸 수 없다
-let dayMemoSaved = "";      // 서버에 저장된 것으로 아는 내용
+let dayMemoSaved = "";      // 서버에 저장된 것으로 아는 내용 (dayMemoContent()와 같은 모양)
 let dayMemoTimer = null;    // "입력을 멈추고 1초 뒤 저장"을 기다리는 타이머
 // 저장 요청들을 한 줄로 세워 하나씩 보낸다. 날짜를 빠르게 넘길 때 요청이 뒤섞여 옛 내용이 새 내용을 덮어쓰는 일을 막으려는 것이다.
 // Promise는 "나중에 끝나는 일"을 담는 자바스크립트 상자이고, .then(...)으로 "이 일이 끝나면 다음 일"을 이어 붙인다
@@ -4724,12 +4942,15 @@ function setDayMemoStatus(text, isError) {
 // keepalive가 true면(창이 닫히는 중) 줄을 서지 않고 바로 보내고, 창이 닫혀도 요청이 끝까지 가도록 한다
 function saveDayMemo(keepalive) {
     clearTimeout(dayMemoTimer);
-    if (dayMemoDate === null || dayMemoInput.value === dayMemoSaved) {
+    if (dayMemoDate === null) {
         return dayMemoQueue;
     }
     // 보내는 순간의 날짜와 내용을 지금 붙잡아 둔다. 줄을 서서 기다리는 사이에 날짜가 바뀌어도 이 날짜에 저장되어야 한다
     const date = dayMemoDate;
-    const content = dayMemoInput.value;
+    const content = dayMemoContent();
+    if (content === dayMemoSaved) {
+        return dayMemoQueue;
+    }
     setDayMemoStatus("저장 중…");
 
     async function send() {
@@ -4737,7 +4958,7 @@ function saveDayMemo(keepalive) {
             const response = await fetch("/api/day-memo", {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ date: date, content: content }),
+                body: JSON.stringify({ date: date, content: content, format: "html" }),
                 keepalive: Boolean(keepalive),
             });
             if (!response.ok) {
@@ -4746,7 +4967,7 @@ function saveDayMemo(keepalive) {
             if (dayMemoDate === date) {
                 dayMemoSaved = content;
                 // 보내는 사이에 더 썼다면 아직 "수정 중"이다 (곧 다음 저장이 일어난다)
-                setDayMemoStatus(dayMemoInput.value === content ? "저장됨" : "수정 중…");
+                setDayMemoStatus(dayMemoContent() === content ? "저장됨" : "수정 중…");
             }
         } catch (error) {
             showToast("메모를 저장하지 못했습니다: " + error.message);
@@ -4770,10 +4991,14 @@ async function loadDayMemo(dateText) {
     saveDayMemo();
     dayMemoDate = null;
     dayMemoSaved = "";
-    dayMemoInput.value = "";
-    dayMemoInput.disabled = true;
+    fillDayMemo("", "text");
+    setDayMemoEnabled(false);
     setDayMemoStatus("");
     try {
+        // 거르는 도구(DOMPurify, static/lib/purify.min.js)를 못 읽었으면 서식 메모를 안전하게 보이거나 저장할 수 없다. 칸을 잠가 둔다(아래 catch)
+        if (typeof DOMPurify === "undefined") {
+            throw new Error("DOMPurify를 불러오지 못했습니다");
+        }
         await dayMemoQueue;  // 방금 세운 저장이 끝난 뒤에 읽어야 같은 날로 돌아왔을 때 옛 내용이 보이지 않는다
         const response = await fetch("/api/day-memo?date=" + dateText);
         if (!response.ok) {
@@ -4784,9 +5009,11 @@ async function loadDayMemo(dateText) {
             return;  // 그 사이 다른 날로 넘어갔다
         }
         dayMemoDate = dateText;
-        dayMemoSaved = data.content;
-        dayMemoInput.value = data.content;
-        dayMemoInput.disabled = false;
+        fillDayMemo(data.content, data.format);
+        // 서버의 글자 그대로가 아니라 "칸에 채운 뒤의 모양"을 저장된 내용으로 기억한다.
+        // 그래야 옛 메모(text)를 보기만 했을 때나 브라우저가 HTML을 조금 다르게 적었을 때 바뀐 것으로 잘못 알고 저장하지 않는다
+        dayMemoSaved = dayMemoContent();
+        setDayMemoEnabled(true);
     } catch (error) {
         console.error("하루 메모를 불러오지 못했습니다:", error);
         if (dateText === viewedDate) {
@@ -4797,13 +5024,49 @@ async function loadDayMemo(dateText) {
 }
 
 dayMemoInput.addEventListener("input", function () {
+    updateDayMemoEmpty();
     setDayMemoStatus("수정 중…");
     clearTimeout(dayMemoTimer);
     dayMemoTimer = setTimeout(saveDayMemo, DAY_MEMO_SAVE_DELAY_MS);
 });
-// 다른 곳을 누르면 기다리지 않고 바로 저장한다
+// 커서 자리 되살리기: textarea는 칸마다 커서 자리를 기억해서, 다시 들어오면(Tab 키 등) 그 자리에서 이어 쓰고, 새 글을 채우면 끝에서 시작했다.
+// 서식 칸은 그냥 두면 들어올 때마다 글의 맨 앞에 커서가 가서 이어 쓴 글이 앞에 붙는다. 그래서 칸에서 나갈 때의 커서 자리를 기억해 두고,
+// 마우스가 아닌 방법으로 들어오면 되살린다(기억이 없으면 글의 끝). 마우스로 누른 경우에는 브라우저가 누른 자리에 커서를 두므로 건드리지 않는다.
+// Range = 글 안의 한 구간(또는 한 자리). cloneRange로 복사해 둔다
+let dayMemoCaret = null;
+let dayMemoPointerDown = false;
+dayMemoInput.addEventListener("pointerdown", function () {
+    dayMemoPointerDown = true;
+});
+// 칸 밖에서 손을 떼도 풀리게 문서 전체에서 듣는다 (true = 다른 코드보다 먼저 듣기. 아무것도 막지 않는다)
+document.addEventListener("pointerup", function () {
+    dayMemoPointerDown = false;
+}, true);
+document.addEventListener("pointercancel", function () {
+    dayMemoPointerDown = false;
+}, true);
+
+// 다른 곳을 누르면 기다리지 않고 바로 저장한다. 나가기 전의 커서 자리도 기억해 둔다
 dayMemoInput.addEventListener("blur", function () {
+    const selection = window.getSelection();
+    dayMemoCaret = selection.rangeCount && selection.anchorNode !== dayMemoInput && dayMemoInput.contains(selection.anchorNode)
+        ? selection.getRangeAt(0).cloneRange() : null;
     saveDayMemo();
+});
+dayMemoInput.addEventListener("focus", function () {
+    if (dayMemoPointerDown) {
+        return;
+    }
+    let range = dayMemoCaret;
+    // 기억한 자리의 글이 그 사이 사라졌으면(다른 날의 메모를 채움 등) 쓰지 않는다
+    if (!range || !dayMemoInput.contains(range.startContainer) || !dayMemoInput.contains(range.endContainer)) {
+        range = document.createRange();
+        range.selectNodeContents(dayMemoInput);
+        range.collapse(false);  // false = 끝으로 모은다
+    }
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
 });
 // 창이 가려지거나 닫히기 직전에 저장 안 한 글이 있으면 서둘러 저장한다
 document.addEventListener("visibilitychange", function () {
@@ -4813,6 +5076,94 @@ document.addEventListener("visibilitychange", function () {
 });
 window.addEventListener("pagehide", function () {
     saveDayMemo(true);
+});
+
+// 서식 단축키. 키의 자리(e.code)로 봐서 한글 입력 상태에서도 된다. Ctrl과 함께, Shift·Alt·Win 없이 누를 때만.
+// Ctrl+U(밑줄)는 브라우저가 저절로 밑줄을 넣지만, 남기는 태그가 아니라서 저장하면 사라지므로 아무 일도 안 하게 막는다(null)
+const DAY_MEMO_SHORTCUTS = { KeyB: "bold", KeyI: "italic", Digit5: "strikeThrough", Numpad5: "strikeThrough", KeyU: null };
+dayMemoInput.addEventListener("keydown", function (e) {
+    if (!e.ctrlKey || e.altKey || e.shiftKey || e.metaKey || !(e.code in DAY_MEMO_SHORTCUTS)) {
+        return;
+    }
+    e.preventDefault();  // 브라우저가 스스로 하는 서식(Ctrl+B 등)과 두 번 겹치지 않게
+    const command = DAY_MEMO_SHORTCUTS[e.code];
+    // 꾹 눌러서 저절로 반복된 입력(e.repeat)은 무시한다 (굵게가 켜졌다 꺼졌다 깜빡이지 않게)
+    if (command && !e.repeat && dayMemoInput.isContentEditable) {
+        // execCommand: 고른 글자에(고른 게 없으면 이제부터 쓸 글자에) 서식을 켜거나 끈다. 브라우저의 되돌리기(Ctrl+Z)에도 들어간다.
+        // 오래된 방법이라 "앞으로 바뀔 수 있음"으로 표시되어 있지만, 서식 칸에서 되돌리기와 함께 쓸 수 있는 방법은 아직 이것뿐이다
+        document.execCommand(command);
+    }
+});
+
+// 칸 안에서 고른 글자의 수 (글자 수 한계를 잴 때 바뀔 부분을 빼려고)
+function dayMemoSelectedLength() {
+    const selection = window.getSelection();
+    if (!selection.rangeCount || !dayMemoInput.contains(selection.anchorNode)) {
+        return 0;
+    }
+    return selection.toString().length;
+}
+
+// 글자 text를 커서 자리에 넣는다(고른 글자가 있으면 바꾼다). 서식 없이 글자만 들어가고, 되돌리기(Ctrl+Z)에도 들어간다.
+// 넣으면 한계를 넘으면 넣지 않고 알린다
+function insertDayMemoText(text) {
+    text = text.replace(/\r\n?/g, "\n");  // 윈도우의 줄바꿈(\r\n)을 \n 하나로
+    if (text === "") {
+        return;
+    }
+    if (dayMemoInput.textContent.length - dayMemoSelectedLength() + text.length > DAY_MEMO_MAX) {
+        showToast("메모는 " + DAY_MEMO_MAX + "자까지 쓸 수 있습니다.");
+        return;
+    }
+    document.execCommand("insertText", false, text);
+}
+
+// 붙여넣기: 웹 페이지나 워드에서 복사한 글의 색·크기·링크 같은 서식은 빼고 글자만 넣는다
+dayMemoInput.addEventListener("paste", function (e) {
+    e.preventDefault();
+    insertDayMemoText((e.clipboardData && e.clipboardData.getData("text/plain")) || "");
+});
+
+// 끌어다 놓기: 칸 안에서 고른 글을 끌어 옮기는 것은 브라우저에 맡긴다(서식도 같이 옮겨진다).
+// 밖에서 끌어온 것은 글자만 놓은 자리에 넣고, 파일처럼 글자가 없는 것은 받지 않는다
+let dayMemoDragInside = false;
+dayMemoInput.addEventListener("dragstart", function () {
+    dayMemoDragInside = true;
+});
+dayMemoInput.addEventListener("dragend", function () {
+    dayMemoDragInside = false;
+});
+dayMemoInput.addEventListener("drop", function (e) {
+    if (dayMemoDragInside) {
+        return;
+    }
+    e.preventDefault();
+    const text = e.dataTransfer ? e.dataTransfer.getData("text/plain") : "";
+    if (!text || !dayMemoInput.isContentEditable) {
+        return;
+    }
+    dayMemoInput.focus();
+    // caretRangeFromPoint: 화면의 한 점에 해당하는 글자 사이 자리. 놓은 자리에 커서를 옮긴 뒤 넣는다
+    const range = document.caretRangeFromPoint(e.clientX, e.clientY);
+    if (range && dayMemoInput.contains(range.startContainer)) {
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+    }
+    insertDayMemoText(text);
+});
+
+// 글자 수 한계: 쓰는 글자가 한계를 넘게 하면 들어가지 않게 막는다(textarea의 maxLength 대신).
+// 한글을 조합하는 중의 입력(insertCompositionText)은 브라우저가 막을 수 없게 되어 있어서 그대로 둔다(그만큼 조금 넘을 수 있다)
+dayMemoInput.addEventListener("beforeinput", function (e) {
+    if (!e.inputType.startsWith("insert") || e.inputType === "insertCompositionText") {
+        return;
+    }
+    const added = typeof e.data === "string" ? e.data.length : 1;
+    if (dayMemoInput.textContent.length - dayMemoSelectedLength() + added > DAY_MEMO_MAX) {
+        e.preventDefault();
+        showToast("메모는 " + DAY_MEMO_MAX + "자까지 쓸 수 있습니다.");
+    }
 });
 
 // 오늘 탭을 처음 열 때 실행된다 (탭을 누를 때마다). 항상 "진짜 오늘"로 시작한다
@@ -7575,6 +7926,7 @@ const SETTING_CSS_VARS = {
     letterSpacing: "--letter-spacing",
     timelineWidth: "--timeline-width",  // 오늘 탭 시간표 칸의 너비
     todayRightWidth: "--today-right-width",  // 오늘 탭 오른쪽 칸(작은 달력, 할 일 목록)의 너비
+    dayMemoHeight: "--day-memo-height",  // 오늘 탭 하루 메모 입력 칸의 높이
 };
 
 // 오늘 탭의 두 칸은 합계에 한계가 있다. 서로의 짝과 한계(서버가 알려 준다)를 적어 둔다
@@ -7589,6 +7941,8 @@ function limitSliderValue(key, value) {
 
 // 설정 이름 → 단위("px", "em" 등). 서버가 알려준 슬라이더 정의에서 loadSettings가 채운다
 const settingUnits = {};
+// 설정 이름 → 서버가 알려준 슬라이더 정의(범위 min~max 등). 오늘 탭에서 칸을 끌 때 범위를 지키는 데 쓴다
+const sliderDefinitions = {};
 
 // 시간표 블록을 마지막으로 그릴 때 쓴 글자 크기 설정 (applySettings가 바뀐 것을 알아채는 데 쓴다)
 let timelineFontSetting = null;
@@ -7601,7 +7955,7 @@ function applySettings() {
             document.documentElement.style.setProperty(SETTING_CSS_VARS[key], settings[key] + (settingUnits[key] || "px"));
         }
     }
-    // 종일 일정 제목 줄바꿈: 값이 없으면(false가 아니면) 켜진 상태가 기본이다
+    // 일정 제목 줄바꿈(종일·시간 있는 일정 모두. 설정 이름 wrapAllDay는 종일 일정만 하던 때의 것): 값이 없으면(false가 아니면) 켜진 상태가 기본이다
     calendarElement.classList.toggle("wrap-all-day", settings.wrapAllDay !== false);
     // 월간 캘린더의 줄 수(6 또는 7). 바뀌었고 지금 월간 보기를 보고 있다면 같은 달을 새 줄 수로 다시 그린다
     const monthRows = settings.monthRows === 7 ? 7 : 6;
@@ -7640,6 +7994,7 @@ async function saveSettings() {
 // 슬라이더 한 줄(이름 + 슬라이더 + 현재 값)을 만들어 container에 붙인다. def는 서버가 알려준 슬라이더 정의다
 function buildSlider(def, container) {
     settingUnits[def.key] = def.unit;
+    sliderDefinitions[def.key] = def;
 
     const row = document.createElement("label");
     row.className = "settings-row";
@@ -7705,6 +8060,7 @@ async function loadSettings() {
         vaultPathInput.value = settings.vaultPath || "";
         timelineCenterInput.value = settings.timelineCenterTime || TIMELINE_CENTER_DEFAULT;
         timelineCenterInput.classList.remove("invalid");
+        planDefaultMinutesSelect.value = String(settings.planDefaultMinutes || TL_DEFAULT_LENGTH);
         showEventDefaultControls();
         renderSlotGroupEditor();
 
@@ -7748,11 +8104,104 @@ document.getElementById("settings-reset").addEventListener("click", function () 
     resetSliders(sliderListElement);
 });
 document.getElementById("today-settings-reset").addEventListener("click", function () {
-    // 같은 칸의 "시간표 첫 위치"도 기본값으로 돌린다 (저장은 resetSliders가 한 번에 한다)
+    // 같은 칸의 "시간표 첫 위치"와 "시간표에 넣을 때 기본 길이"도 기본값으로 돌린다 (저장은 resetSliders가 한 번에 한다)
     settings.timelineCenterTime = TIMELINE_CENTER_DEFAULT;
     timelineCenterInput.value = TIMELINE_CENTER_DEFAULT;
     timelineCenterInput.classList.remove("invalid");
+    settings.planDefaultMinutes = TL_DEFAULT_LENGTH;
+    planDefaultMinutesSelect.value = String(TL_DEFAULT_LENGTH);
     resetSliders(todaySliderListElement);
+});
+
+// ----- 오늘 탭 크기 끌기 -----
+// 오늘 탭에서 칸 사이의 빈 곳을 좌우로 끌면 칸 너비가, 메모 위의 선을 위아래로 끌면 메모 칸 높이가 바뀐다.
+// 설정 탭의 슬라이더와 같은 설정값(timelineWidth, todayRightWidth, dayMemoHeight)을 바꾸는 또 하나의 방법이다.
+// 끄는 동안은 화면에만 바로 반영하고, 마우스를 놓을 때 한 번 저장한다 (슬라이더의 input/change와 같은 방식).
+//
+// Pointer Events: pointerdown(누름) → pointermove(움직임) → pointerup(뗌). 마우스·터치패드·펜을 한 가지 방법으로 다루는 브라우저 이벤트다.
+// setPointerCapture: 끄는 동안 포인터가 손잡이 밖(다른 칸 위)으로 나가도 움직임을 계속 이 손잡이가 받게 한다. 그래서 빨리 끌어도 놓치지 않는다.
+
+// 설정 탭의 슬라이더와 옆의 값 글자를 지금 설정값에 맞춘다 (오늘 탭에서 끌어서 바꾼 값이 설정 탭에도 보이게)
+function syncSliderDisplay(key) {
+    const slider = document.querySelector('input[type=range][data-key="' + key + '"]');
+    if (slider) {
+        slider.value = settings[key];
+        slider.nextElementSibling.textContent = settings[key] + slider.dataset.unit;
+    }
+}
+
+// handle(손잡이)을 끌어서 설정 key의 값(px)을 바꾸게 한다.
+//  axis: "x"(좌우로 끌기) 또는 "y"(위아래로 끌기)
+//  direction: 1이면 오른쪽(아래)으로 끌 때 커지고, -1이면 왼쪽(위)으로 끌 때 커진다
+//  measure(): 지금 화면에 실제로 보이는 크기(px). 끄기를 시작할 때와, 값을 바꾼 뒤 CSS가 줄였는지 볼 때 쓴다
+function setupResizeHandle(handle, key, axis, direction, measure) {
+    let start = null;  // 끄기 시작할 때의 { pos: 포인터 위치, size: 크기, changed: 값을 바꿨는지 }. null이면 끄는 중이 아니다
+
+    handle.addEventListener("pointerdown", function (event) {
+        // 왼쪽 버튼만, 그리고 설정을 불러온 뒤에만 (못 불러왔으면 범위도 모르고 저장도 안 된다)
+        if (event.button !== 0 || !settingsLoaded || !sliderDefinitions[key]) {
+            return;
+        }
+        event.preventDefault();  // 끄는 동안 글자가 선택되지 않게
+        handle.setPointerCapture(event.pointerId);
+        start = { pos: axis === "x" ? event.clientX : event.clientY, size: measure(), changed: false };
+        handle.classList.add("dragging");
+        document.body.classList.add(axis === "x" ? "resizing-x" : "resizing-y");
+    });
+
+    handle.addEventListener("pointermove", function (event) {
+        if (!start) {
+            return;
+        }
+        const def = sliderDefinitions[key];
+        const pos = axis === "x" ? event.clientX : event.clientY;
+        // 시작 크기 + 움직인 거리. 범위(min~max) 안으로 맞추고, 오늘 탭 두 칸의 합계 한계도 지킨다(limitSliderValue)
+        let value = Math.round(start.size + (pos - start.pos) * direction);
+        value = Math.max(def.min, Math.min(def.max, value));
+        value = Math.max(def.min, limitSliderValue(key, value));
+        if (value === settings[key]) {
+            return;
+        }
+        settings[key] = value;
+        document.documentElement.style.setProperty(SETTING_CSS_VARS[key], value + "px");
+        // 창이 작아서 CSS가 그만큼 키워 주지 못했으면(예: 메모를 너무 높게) 실제로 보이는 크기를 값으로 쓴다.
+        // 그래야 놓은 뒤 반대로 끌 때 손잡이가 바로 따라온다 (보이지 않는 여분이 저장되지 않는다)
+        const shown = Math.round(measure());
+        if (shown < value) {
+            settings[key] = Math.max(def.min, shown);
+            document.documentElement.style.setProperty(SETTING_CSS_VARS[key], settings[key] + "px");
+        }
+        start.changed = true;
+        syncSliderDisplay(key);
+    });
+
+    // 끄기를 끝낸다: 손을 뗐거나(pointerup), 브라우저가 끄기를 취소했거나(pointercancel), 붙잡기가 풀렸을 때(lostpointercapture)
+    function finish() {
+        if (!start) {
+            return;
+        }
+        const changed = start.changed;
+        start = null;
+        handle.classList.remove("dragging");
+        document.body.classList.remove("resizing-x", "resizing-y");
+        if (changed) {
+            saveSettings();
+        }
+    }
+    handle.addEventListener("pointerup", finish);
+    handle.addEventListener("pointercancel", finish);
+    handle.addEventListener("lostpointercapture", finish);
+}
+
+// getBoundingClientRect() = 화면에 실제로 그려진 상자의 위치와 크기
+setupResizeHandle(document.getElementById("timeline-resize-handle"), "timelineWidth", "x", 1, function () {
+    return document.getElementById("timeline-column").getBoundingClientRect().width;
+});
+setupResizeHandle(document.getElementById("inbox-resize-handle"), "todayRightWidth", "x", -1, function () {
+    return document.getElementById("inbox-column").getBoundingClientRect().width;
+});
+setupResizeHandle(document.getElementById("day-memo-resize-handle"), "dayMemoHeight", "y", -1, function () {
+    return dayMemoInput.getBoundingClientRect().height;
 });
 
 // 일정 추가 창에서 미리 선택해둘 캘린더를 정한다.
@@ -7771,7 +8220,7 @@ function updateDefaultCalendar() {
     defaultCalendarSelect.value = chosen ? chosen.id : "";
 }
 
-// 설정 탭에서 종일 일정 줄바꿈 스위치를 눌렀을 때: 바로 반영하고 저장한다
+// 설정 탭에서 일정 제목 줄바꿈 스위치를 눌렀을 때: 바로 반영하고 저장한다
 wrapAllDayCheckbox.addEventListener("change", function () {
     settings.wrapAllDay = wrapAllDayCheckbox.checked;
     applySettings();
@@ -7841,6 +8290,7 @@ const eventDefaultAllDayCheckbox = document.getElementById("event-default-allday
 const eventDefaultStartInput = document.getElementById("event-default-start");
 const eventDefaultStartHint = document.getElementById("event-default-start-hint");
 const eventDefaultMinutesSelect = document.getElementById("event-default-minutes");
+const planDefaultMinutesSelect = document.getElementById("plan-default-minutes");  // 오늘 탭 칸의 "시간표에 넣을 때 기본 길이"
 
 // 시각 칸 하나를 연결한다. 칸을 떠나거나 Enter를 누르면 "16:45" 모양으로 정리하고, 읽을 수 있으면 onValid(정리된 값)를 부른다.
 // 읽을 수 없으면 칸을 빨갛게 하고 저장하지 않는다 (일정 창의 시간 칸과 같은 규칙: normalizeTimeInput)
@@ -8044,6 +8494,12 @@ slotGroupAddButton.addEventListener("click", function () {
     settings.timeSlotGroups.push({ name: name, slots: [nextSlotFor([])] });
     saveSettings();
     renderSlotGroupEditor();
+});
+
+// 시간표에 넣을 때 기본 길이: 고르면 바로 저장한다. 다음에 할 일을 끌어다 놓을 때부터 쓰인다(taskPlanLength가 그때마다 읽는다)
+planDefaultMinutesSelect.addEventListener("change", function () {
+    settings.planDefaultMinutes = Number(planDefaultMinutesSelect.value);
+    saveSettings();
 });
 
 // 지금 화면에 있는 일정 중 이 캘린더의 일정을 새 색으로 바꿔 그린다

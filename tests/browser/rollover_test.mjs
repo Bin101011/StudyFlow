@@ -83,14 +83,14 @@ check("보던 날(" + farDay + ")이 오늘이 되었다", s4.today === farDay &
 check("그래서 '오늘 할 일' 제목이고 돌아가기 버튼이 숨는다", s4.heading === "오늘 할 일" && s4.backHidden === true, s4);
 
 console.log("--- 메모를 쓰는 중에는 화면을 바꾸지 않는다 ---");
-await waitFor(async () => (await js(`!dayMemoInput.disabled`)), 5000);
+await waitFor(async () => (await js(`dayMemoInput.isContentEditable`)), 5000);
 const typingDay = (await state()).viewed;
 await js(`dayMemoInput.focus()`); await type("야간 공부 메모"); await sleep(300);
 await shiftDays(1); await wake(); await sleep(1500);
 const expected4 = await js(`toDateText(new Date())`);
 const s5 = await state();
 check("메모 칸에 글자를 쓰는 중에는 날짜가 바뀌지 않는다", s5.today !== expected4 && s5.viewed === typingDay, s5);
-check("쓰던 글자가 그대로 남아 있다", (await js(`dayMemoInput.value`)) === "야간 공부 메모");
+check("쓰던 글자가 그대로 남아 있다", (await js(`dayMemoInput.innerText`)) === "야간 공부 메모");
 await js(`document.activeElement.blur()`); await sleep(500); await wake();
 const rolled5 = await waitFor(async () => (await state()).today === expected4, 5000); await sleep(1200);
 check("메모 칸에서 나오면 다음 확인 때 새 오늘로 넘어간다", rolled5, await state());

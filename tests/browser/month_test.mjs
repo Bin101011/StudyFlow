@@ -185,6 +185,40 @@ await js(`document.querySelector('[data-tab="calendar"]').click()`); await sleep
 st = await info();
 check("껐다 켜도 7줄 설정이 유지된다", st.rows === Math.max(7, st.needed) && st.month === monthNow, st);
 
+// 시간 있는 일정의 긴 제목 줄바꿈 (2026-11-20, 사용자 요청): 둘째 줄은 왼쪽 끝(색 점의 왼쪽)에서 시작하고, 첫 줄 모양과 색 점 높이는 줄바꿈을 끈 모양과 같다.
+// 종일 일정과 같은 설정 스위치(wrapAllDay)를 쓴다
+console.log("--- 시간 있는 일정 제목 줄바꿈 ---");
+const LONG = "1도장 미션 릴레이 종목 실행 계획 회의와 준비물 챙기기";
+const created = await api("/api/events", "POST", { calendarId: "me@test", title: LONG, allDay: false, start: today + "T17:50:00+09:00", end: today + "T19:00:00+09:00" });
+check("(준비) 긴 제목의 시간 있는 일정을 만들었다", created.status === 200 || created.status === 201, created);
+await js(`calendar.refetchEvents(); true`);
+const dotInfo = () => js(`(() => {
+  const ev = [...document.querySelectorAll(".fc-daygrid-dot-event")].find(e => e.textContent.includes(${JSON.stringify(LONG)}));
+  if (!ev) return null;
+  const title = ev.querySelector(".fc-event-title"), time = ev.querySelector(".fc-event-time"), dot = ev.querySelector(".fc-daygrid-event-dot");
+  const range = document.createRange(); range.selectNodeContents(title);
+  const er = ev.getBoundingClientRect();
+  // 제목 글자의 줄마다 위치 (일정 상자의 왼쪽 위에서 잰 값)
+  const lines = [...range.getClientRects()].reduce((acc, r) => { if (!acc.some(a => Math.abs(a.top - r.top) < 3)) acc.push({ top: r.top, left: r.left - er.left, bottom: r.bottom }); return acc; }, []);
+  const tr = title.getBoundingClientRect(), mr = time.getBoundingClientRect(), dr = dot.getBoundingClientRect();
+  const lh = tr.height / Math.max(1, lines.length);  // 제목 한 줄의 높이 (line-height가 normal이라 글자로는 숫자를 못 읽는다)
+  return JSON.stringify({ dotFromTop: +((dr.top + dr.bottom) / 2 - er.top).toFixed(2), dotLeft: dr.left - er.left, timeLeft: mr.left - er.left, lines: lines.length, lineLefts: lines.map(l => +l.left.toFixed(1)),
+    timeH: mr.height, lh, eventH: er.height, ws: getComputedStyle(title).whiteSpace });
+})()`).then((s) => (s ? JSON.parse(s) : null));
+await waitFor(async () => (await dotInfo()) !== null, 8000);
+let d = await dotInfo();
+check("켜져 있으면(기본) 긴 제목이 두 줄 이상으로 다 보인다", d && d.lines >= 2 && d.ws === "normal", d);
+check("둘째 줄부터는 왼쪽 끝(색 점의 왼쪽)에서 시작한다", d && d.lineLefts.slice(1).every((x) => Math.abs(x - d.dotLeft) <= 1) && d.lineLefts[0] > d.timeLeft, d);
+check("시간 글자는 한 줄 그대로", d && d.timeH < d.lh * 1.5, d);
+await js(`document.getElementById("wrap-all-day-checkbox").click()`); await sleep(400);
+let off = await dotInfo();
+check("스위치를 끄면 제목이 한 줄로 돌아가고 일정 높이도 줄어든다", off && off.lines === 1 && off.eventH < d.eventH, off);
+check("첫 줄의 점·시간·제목 가로 위치는 줄바꿈을 끈 모양과 같다", d && off && Math.abs(d.dotLeft - off.dotLeft) <= 0.5 && Math.abs(d.timeLeft - off.timeLeft) <= 0.5 && Math.abs(d.lineLefts[0] - off.lineLefts[0]) <= 0.5, [d, off]);
+check("색 점은 첫 줄에 있고, 줄바꿈을 끈 한 줄 모양과 거의 같은 높이다(1px 안)", d && off && Math.abs(d.dotFromTop - off.dotFromTop) <= 1 && d.dotFromTop < d.lh + 2, [d.dotFromTop, off.dotFromTop]);
+check("스위치를 끄면 저장된다", (await api("/api/settings")).data.values.wrapAllDay === false);
+await js(`document.getElementById("wrap-all-day-checkbox").click()`); await sleep(400);
+check("다시 켜면 다시 여러 줄", (await dotInfo()).lines >= 2 && (await api("/api/settings")).data.values.wrapAllDay === true);
+
 // 오늘이 '다음 달 주'에 걸리는 경우(예: 11월 3일): 10월을 볼 때 오늘 버튼이 켜져 있어야 11월로 갈 수 있다
 console.log("--- 오늘이 앞 달의 다음 달 주에 걸리는 경우(가짜 날짜 2026-11-03) ---");
 const mockSrc = `const RealDate = Date; const off = new RealDate("2026-11-03T10:00:00").getTime() - RealDate.now();

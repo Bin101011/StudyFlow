@@ -91,7 +91,7 @@
                     </div>
                 </aside>
                 <!-- 오른쪽: 달력이 그려질 빈 칸. FullCalendar가 이 안에 달력을 만든다 -->
-                <!-- wrap-all-day: 종일 일정의 긴 제목을 줄바꿈한다. 설정 탭의 스위치에 따라 app.js가 붙였다 뗀다 -->
+                <!-- wrap-all-day: 일정(종일, 시간 있는 일정 모두)의 긴 제목을 줄바꿈한다. 이름은 종일 일정만 하던 때의 것이다. 설정 탭의 스위치에 따라 app.js가 붙였다 뗀다 -->
                 <div id="calendar-view" class="wrap-all-day"></div>
             </div>
         </div>
@@ -134,10 +134,14 @@
                             <div id="timeline-grid" class="tl-grid"></div>
                         </div>
                     </div>
+                    <!-- 시간표 칸과 가운데 칸 사이의 손잡이: 좌우로 끌면 시간표 칸의 너비가 바뀐다 (app.js의 "오늘 탭 크기 끌기") -->
+                    <div class="col-resize-handle" id="timeline-resize-handle" title="좌우로 끌어서 시간표 칸 너비 바꾸기"></div>
                 </section>
 
                 <section class="today-column" id="tasks-column">
-                    <h2 id="tasks-heading">오늘 할 일</h2>
+                    <!-- 제목 글자("오늘 할 일"/"할 일")는 app.js가 날짜를 바꿀 때마다 새로 쓰므로 안쪽 <span>에 따로 둔다.
+                         옆의 tasks-total은 끝내지 않은 할 일의 걸리는 시간 합계("남은 1시간 30분"). 길이를 정한 할 일이 없으면 비어 있다 -->
+                    <h2><span id="tasks-heading">오늘 할 일</span> <span id="tasks-total" class="tasks-total"></span></h2>
                     <!-- 할 일 입력 줄: 글자를 쓰고 Enter를 누르거나 추가 버튼을 누른다 -->
                     <div class="task-add">
                         <input type="text" id="task-input" placeholder="할 일을 입력하고 Enter">
@@ -167,13 +171,21 @@
                     <!-- 하루 메모: 이 날짜에 대한 자유 메모. 칸의 바닥에 고정되어 할 일이 많아져도 밀려나지 않는다.
                          입력을 멈추면 저절로 저장된다 (내 컴퓨터에만 저장, Google에는 보내지 않는다) -->
                     <div class="day-memo">
-                        <h2>메모 <span id="day-memo-status" class="day-memo-status"></span></h2>
-                        <textarea id="day-memo" rows="4" placeholder="이 날의 메모를 자유롭게 적으세요" disabled></textarea>
+                        <!-- 메모 위의 선을 잡는 손잡이: 위로 끌면 메모 칸이 높아지고, 아래로 끌면 낮아진다 -->
+                        <div class="memo-resize-handle" id="day-memo-resize-handle" title="위아래로 끌어서 메모 칸 높이 바꾸기"></div>
+                        <h2 title="Ctrl+B 굵게, Ctrl+I 기울임, Ctrl+5 취소선">메모 <span id="day-memo-status" class="day-memo-status"></span></h2>
+                        <!-- 서식 메모 칸: contenteditable은 상자 안의 글을 직접 고칠 수 있게 하는 속성이다(textarea와 달리 굵게·기울임 같은 서식이 보인다).
+                             Ctrl+B 굵게, Ctrl+I 기울임, Ctrl+5 취소선. 처음에는 불러오는 중이라 잠겨 있다(contenteditable="false").
+                             role/aria-*: 화면 읽기 프로그램에 "여러 줄 입력 칸"이라고 알려 준다. 예시 글자(data-placeholder)는 비어 있을 때 CSS가 보여 준다 -->
+                        <div id="day-memo" class="day-memo-editor empty disabled" contenteditable="false" role="textbox" aria-multiline="true"
+                             aria-label="하루 메모" aria-disabled="true" data-placeholder="이 날의 메모를 자유롭게 적으세요"></div>
                     </div>
                 </section>
 
                 <!-- 작은 달력 + 할 일 목록(수집함): 날짜를 아직 정하지 않은 할 일(프로젝트 없는 것만). 줄의 버튼으로 날짜를 정하거나, 가운데 "할 일" 칸이나 시간표로 끌어다 놓는다 -->
                 <section class="today-column" id="inbox-column">
+                    <!-- 가운데 칸과 오른쪽 칸 사이의 손잡이: 좌우로 끌면 오른쪽 칸의 너비가 바뀐다 -->
+                    <div class="col-resize-handle" id="inbox-resize-handle" title="좌우로 끌어서 오른쪽 칸 너비 바꾸기"></div>
                     <!-- 작은 달력: 날짜를 누르면 그날로 이동한다. 칸은 app.js가 만든다 -->
                     <div id="mini-calendar" class="mini-calendar"></div>
                     <h2>할 일 목록 <span id="inbox-count" class="inbox-count"></span></h2>
@@ -321,9 +333,9 @@
                 <h2>일정 표시</h2>
                 <label class="settings-row">
                     <input type="checkbox" id="wrap-all-day-checkbox">
-                    <span>종일 일정의 긴 제목은 줄바꿈해서 다 보기</span>
+                    <span>일정의 긴 제목은 줄바꿈해서 다 보기 (종일 일정, 시간 있는 일정 모두)</span>
                 </label>
-                <p class="settings-hint">끄면 제목을 한 줄로 두고 길면 "…"로 줄입니다. 어느 쪽이든 일정 위에 마우스를 올리면 전체 제목과 시간이 보입니다.</p>
+                <p class="settings-hint">끄면 제목을 한 줄로 두고 길면 잘립니다. 어느 쪽이든 일정 위에 마우스를 올리면 전체 제목과 시간이 보입니다.</p>
                 <div class="settings-row">
                     <span class="settings-label">월간 캘린더 줄 수</span>
                     <label class="settings-choice"><input type="radio" name="month-rows" value="6"> 6줄</label>
@@ -374,7 +386,7 @@
 
             <section class="settings-section">
                 <h2>오늘 탭</h2>
-                <p class="settings-hint">오늘 탭 왼쪽 시간표 칸과 오른쪽 칸(작은 달력, 할 일 목록)의 너비입니다. 넓힐수록 가운데 할 일 칸이 좁아져서, 두 칸의 합은 850px까지만 됩니다. 시간표의 확대/축소(한 시간의 높이)는 시간표 위에서 두 손가락으로 벌리거나 오므려서 바꿉니다.</p>
+                <p class="settings-hint">오늘 탭 왼쪽 시간표 칸과 오른쪽 칸(작은 달력, 할 일 목록)의 너비, 가운데 칸 바닥의 메모 칸 높이입니다. 오늘 탭에서 칸 사이의 빈 곳이나 메모 위의 선을 마우스로 끌어도 바뀝니다. 너비는 넓힐수록 가운데 할 일 칸이 좁아져서, 두 칸의 합은 900px까지만 됩니다. 시간표의 확대/축소(한 시간의 높이)는 시간표 위에서 두 손가락으로 벌리거나 오므려서 바꿉니다.</p>
                 <!-- 슬라이더는 app.js가 서버(/api/settings)에서 정의를 받아 여기에 만든다 -->
                 <div id="today-slider-list"></div>
                 <div class="settings-row">
@@ -383,6 +395,19 @@
                     <span class="settings-unit">이 시각이 가운데에 옵니다</span>
                 </div>
                 <p class="settings-hint">오늘 탭을 열거나 날짜를 넘길 때 시간표가 이 시각을 가운데에 놓고 시작합니다.</p>
+                <!-- 할 일을 시간표에 넣을 때의 기본 길이. 고른 값은 app.js가 settings.planDefaultMinutes로 저장한다 -->
+                <label class="settings-row">
+                    <span class="settings-label">시간표에 넣을 때 기본 길이</span>
+                    <select id="plan-default-minutes">
+                        <option value="15">15분</option>
+                        <option value="30">30분</option>
+                        <option value="45">45분</option>
+                        <option value="60">1시간</option>
+                        <option value="90">1시간 30분</option>
+                        <option value="120">2시간</option>
+                    </select>
+                </label>
+                <p class="settings-hint">할 일을 시간표로 끌어다 놓거나 "+ 시간"으로 넣을 때 만들어지는 계획의 길이입니다. 할 일에 걸리는 시간("15분")을 정해 두었으면 그 길이가 먼저입니다.</p>
                 <label class="settings-row">
                     <input type="checkbox" id="overdue-review-checkbox">
                     <span>그날 처음 열 때 밀린 할 일 정리 창 띄우기</span>

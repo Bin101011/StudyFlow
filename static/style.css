@@ -715,6 +715,35 @@ input.color-dot::-webkit-color-swatch {
     overflow-wrap: anywhere;  /* 띄어쓰기 없이 너무 긴 제목만 칸 끝에서 끊는다 */
 }
 
+/* 시간 있는 일정(색 점 + 시간 + 제목)도 같은 스위치로 줄바꿈한다 (2026-11-20, 사용자 요청).
+   FullCalendar는 세 조각을 가로로 나란히 놓인 상자(flex)로 그린다. 그대로 제목만 줄바꿈하면 둘째 줄이 제목이 시작한 자리(오른쪽)에서
+   시작해서 어색했다(사용자 의견). 그래서 줄바꿈이 켜져 있으면 세 조각을 한 문단처럼 이어진 글(display: block + inline)로 바꾼다.
+   그러면 둘째 줄은 색 점의 왼쪽 끝 아래에서 시작한다.
+   첫 줄 모양(점·시간·제목 위치)은 줄바꿈을 끈 모양과 같게 맞췄다: 점의 왼쪽 여백 4px를 상자 안쪽 여백으로 옮겨서 둘째 줄도 4px에서 시작한다 */
+.wrap-all-day .fc-daygrid-dot-event {
+    display: block;
+    padding-left: 4px;
+    white-space: normal;
+    word-break: keep-all;     /* 한글은 단어 중간이 아니라 띄어쓰기에서 줄바꿈 */
+    overflow-wrap: anywhere;  /* 띄어쓰기 없이 너무 긴 제목만 칸 끝에서 끊는다 */
+}
+
+.wrap-all-day .fc-daygrid-dot-event .fc-event-time,
+.wrap-all-day .fc-daygrid-dot-event .fc-event-title {
+    display: inline;
+}
+
+/* inline-block: 글 사이에 놓이지만 크기(8×8 동그라미)를 가질 수 있는 모양. vertical-align: middle로 글자 가운데쯤에 놓고,
+   position: relative + top으로 조금 올린다. 재 보니 middle만으로는 줄바꿈을 끈 모양보다 한글 제목에서 2.5px, 영어 제목에서 1px 낮아서
+   그 사이(글자 크기의 0.13배, 13.6px에서 약 1.8px)만큼 올렸다. em이라 글자 크기를 바꿔도 같은 비율로 맞는다 */
+.wrap-all-day .fc-daygrid-dot-event .fc-daygrid-event-dot {
+    display: inline-block;
+    margin-left: 0;
+    vertical-align: middle;
+    position: relative;
+    top: -0.13em;
+}
+
 /* 저장을 기다리지 않고 먼저 그린 새 일정: Google 저장이 끝날 때까지 흐리게 보인다 (app.js의 createEventDrawnFirst) */
 .fc .event-saving {
     opacity: 0.55;
@@ -911,6 +940,70 @@ input.color-dot::-webkit-color-swatch {
     flex-direction: column;
 }
 
+/* 칸 사이의 손잡이(.col-resize-handle)가 이 두 칸을 기준으로 자리를 잡는다 */
+#timeline-column,
+#inbox-column {
+    position: relative;
+}
+
+/* 칸 경계 손잡이: 칸 사이 빈 곳(32px) 한가운데에 폭 12px로 눕힌다. 칸 바깥에 있어서 시간표의 스크롤바나 블록 끌기와 겹치지 않는다.
+   평소에는 보이지 않고, 마우스를 올리면 커서가 ↔ 모양이 되고 가운데에 파란 세로선이 생긴다.
+   touch-action: none은 터치 화면에서 끌 때 브라우저가 화면 스크롤로 가로채지 않게 한다 */
+.col-resize-handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 12px;
+    cursor: col-resize;
+    touch-action: none;
+    z-index: 5;
+}
+
+#timeline-column > .col-resize-handle {
+    right: -22px;  /* 칸의 오른쪽 끝에서 10~22px = 빈 곳(32px)의 가운데 */
+}
+
+#inbox-column > .col-resize-handle {
+    left: -22px;
+}
+
+/* ::after = 손잡이 안에 CSS로만 그린 세로선. 마우스를 올렸거나 끄는 중일 때만 색이 생긴다 */
+.col-resize-handle::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 5px;
+    width: 2px;
+    border-radius: 1px;
+    transition: background-color 0.15s;
+}
+
+.col-resize-handle:hover::after,
+.col-resize-handle.dragging::after {
+    background-color: var(--accent);
+}
+
+/* 끄는 동안에는 마우스가 다른 칸 위를 지나가도 커서 모양을 유지하고, 지나가는 글자가 선택(파랗게 칠해짐)되지 않게 한다 */
+body.resizing-x,
+body.resizing-x * {
+    cursor: col-resize !important;
+    user-select: none;
+}
+
+body.resizing-y,
+body.resizing-y * {
+    cursor: row-resize !important;
+    user-select: none;
+}
+
+/* 창이 좁아 칸 배치가 바뀌면(아래 1100px 미만 규칙) 칸 경계 손잡이는 숨긴다. 그때는 설정 탭의 슬라이더로 바꾼다 */
+@media (max-width: 1099px) {
+    .col-resize-handle {
+        display: none;
+    }
+}
+
 /* 칸 안에서 스크롤되는 목록 상자. 스크롤바가 글자를 가리지 않도록 오른쪽에 여유를 둔다 */
 .column-scroll {
     flex: 1;
@@ -934,7 +1027,8 @@ input.color-dot::-webkit-color-swatch {
     z-index: 3;
 }
 
-/* 오늘 할 일 앞의 순서 번호: 1번(첫 번째로 할 것)은 파랗게.
+/* 오늘 할 일 앞의 순서 번호: 모두 같은 파란색, 같은 굵기·크기 (사용자 요청 2026-11-23. 예전에는 1번만 파랬다).
+   app.js는 1번에 여전히 "first" 이름표를 붙이지만(화면 시험이 1번을 알아보는 데 쓴다) 모양은 다르게 하지 않는다.
    누르면 번호에서 빼거나 다시 넣는 버튼(<button>)이라서, 모든 버튼에 붙는 테두리·여백·배경(위의 button)을 지워 글자처럼 보이게 한다 */
 .task-rank {
     flex-shrink: 0;
@@ -945,20 +1039,16 @@ input.color-dot::-webkit-color-swatch {
     border-radius: 3px;
     background: none;
     text-align: center;
-    font-size: 0.8em;
+    font-size: 0.88em;  /* 예전 0.8em에서 조금 키움 (사용자 요청 2026-11-23). 글자 약 12.3px라 두 자리 번호(10 이상)도 폭 16px에 겨우 들어갈 것으로 어림했다(재 보지는 않음) */
     font-weight: 600;
     line-height: 1.4;
-    color: var(--text-muted);
+    color: var(--accent);
     font-variant-numeric: tabular-nums;
 }
 
 /* 마우스를 올리면 누를 수 있다는 걸 알 수 있게 옅은 배경을 깐다 (button:hover의 테두리 색은 쓰지 않는다) */
 .task-rank:hover:not(:disabled) {
     background-color: var(--surface-strong);
-}
-
-.task-rank.first {
-    color: var(--accent);
 }
 
 /* 번호에서 뺀 할 일: 번호 자리에 번호와 같은 회색의 작은 점(지름 5px). 자리는 번호와 같은 폭이라 체크박스가 위아래로 줄 맞춰 선다.
@@ -1564,9 +1654,9 @@ input.color-dot::-webkit-color-swatch {
     width: 84px;
 }
 
-/* 메모 입력 칸들(일정 줄, 하루 메모, 일정 창)이 같이 쓰는 모양 */
+/* 메모 입력 칸들(일정 줄, 하루 메모, 일정 창)이 같이 쓰는 모양. 하루 메모(#day-memo)는 textarea가 아니라 서식 칸(contenteditable)이다 */
 .tl-popover textarea,
-.day-memo textarea,
+#day-memo,
 .project-memo-input,
 .task-memo-input,
 #project-memo,
@@ -1589,7 +1679,7 @@ input.color-dot::-webkit-color-swatch {
 }
 
 .tl-popover textarea:focus,
-.day-memo textarea:focus,
+#day-memo:focus,
 .project-memo-input:focus,
 .task-memo-input:focus,
 #project-memo:focus,
@@ -1600,7 +1690,6 @@ input.color-dot::-webkit-color-swatch {
 }
 
 .tl-popover textarea::placeholder,
-.day-memo textarea::placeholder,
 .project-memo-input::placeholder,
 .task-memo-input::placeholder,
 #project-memo::placeholder,
@@ -1608,24 +1697,105 @@ input.color-dot::-webkit-color-swatch {
     color: var(--text-faint);
 }
 
-/* 하루 메모: 할 일 칸의 바닥에 고정된다 (위의 할 일 목록만 스크롤되므로 밀려나지 않는다) */
+/* 하루 메모: 할 일 칸의 바닥에 고정된다 (위의 할 일 목록만 스크롤되므로 밀려나지 않는다).
+   메모 칸의 높이는 설정값(--day-memo-height)이다. 창이 낮아서 다 들어가지 않으면 메모가 먼저 줄어든다(flex-shrink 1).
+   할 일 목록은 80px까지만 줄어들어서(아래 #tasks-column .column-scroll), 메모를 아주 높게 정해도 목록이 사라지지 않는다 */
 .day-memo {
-    flex: none;
+    flex: 0 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    position: relative;  /* 위쪽 선의 손잡이(.memo-resize-handle)가 이 상자를 기준으로 자리를 잡는다 */
     margin-top: 10px;
     padding-top: 12px;
     border-top: 1px solid var(--border);
 }
 
+#tasks-column .column-scroll {
+    min-height: 80px;
+}
+
 .day-memo h2 {
+    flex: none;
     margin-bottom: 8px;
 }
 
-.day-memo textarea {
-    min-height: 110px;
+/* 하루 메모 서식 칸(contenteditable, 2026-11-20). textarea가 아니라서 textarea가 저절로 하던 일을 여기서 직접 정한다.
+   - resize: none — 오른쪽 아래의 크기 손잡이를 없앤다(높이는 위쪽 선을 끌어서 바꾸고, 그래야 저장된다)
+   - overflow-y: auto — 글이 칸보다 길면 칸 안에서 스크롤된다
+   - white-space: pre-wrap — 띄어쓰기를 여러 번 해도 그대로 두고, 칸 끝에서는 줄을 바꾼다. overflow-wrap: anywhere — 띄어쓰기 없는 긴 글자도 칸 끝에서 끊는다
+   - user-select: text, cursor: text — 프로그램 창(pywebview)은 body 전체에 "글자 선택 금지 + 화살표 커서"를 걸어 두는데,
+     textarea는 그 영향을 안 받지만 이 칸은 받는다. 그래서 이 칸과 안쪽의 굵은 글자 등에서 다시 켠다(안 그러면 진짜 앱에서만 글자를 고르지 못한다)
+   - position: relative — 비어 있을 때 보이는 예시 글자(::before)가 이 칸을 기준으로 자리를 잡는다 */
+#day-memo {
+    flex: 0 1 auto;
+    height: var(--day-memo-height, 110px);
+    min-height: 60px;
+    resize: none;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    position: relative;
+    cursor: text;
 }
 
-.day-memo textarea:disabled {
+#day-memo,
+#day-memo * {
+    -webkit-user-select: text;
+    user-select: text;
+}
+
+/* 예시 글자: 칸이 비어 있으면(app.js가 empty를 붙인다) 안쪽 여백 자리에 흐린 글자로 보인다. 글자가 아니라 그림처럼 놓여서 커서나 저장 내용에 끼어들지 않는다 */
+#day-memo.empty::before {
+    content: attr(data-placeholder);
+    position: absolute;
+    top: 7px;
+    left: 10px;
+    right: 10px;
+    color: var(--text-faint);
+    pointer-events: none;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+/* 서식: 굵게(<b>), 기울임(<i>), 취소선(<strike>, <s>). 굵기는 브라우저 기본(bolder) 대신 700으로 정해 둔다 */
+#day-memo b,
+#day-memo strong {
+    font-weight: 700;
+}
+
+/* 메모 위쪽 선(border-top)을 잡는 손잡이: 선 위아래로 5px씩 넉넉하게 잡히고, 마우스를 올리면 선이 파랗게 굵어진다 */
+.memo-resize-handle {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -6px;
+    height: 11px;
+    cursor: row-resize;
+    touch-action: none;
+    z-index: 2;
+}
+
+.memo-resize-handle::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 4px;
+    height: 3px;
+    border-radius: 2px;
+    transition: background-color 0.15s;
+}
+
+.memo-resize-handle:hover::after,
+.memo-resize-handle.dragging::after {
+    background-color: var(--accent);
+}
+
+/* 불러오는 중이거나 못 불러와서 잠긴 칸 (app.js가 disabled를 붙인다. textarea의 :disabled 대신) */
+#day-memo.disabled {
     background-color: var(--surface);
+    cursor: default;
 }
 
 /* 제목 오른쪽의 저장 상태 글자 ("수정 중…", "저장됨") */
@@ -2037,6 +2207,75 @@ input.color-dot::-webkit-color-swatch {
     background-color: var(--danger-soft);
     color: var(--danger);
     font-weight: 600;
+}
+
+/* 걸리는 시간 글자("15분"): 연한 회색 알약. 누르면 길이를 고르는 작은 창이 열리는 버튼(<button>)이라서,
+   모든 버튼에 붙는 테두리·여백(위의 button)을 지우고 마감일 알약과 비슷한 크기로 맞춘다.
+   마감일(주황)과 헷갈리지 않게 색은 넣지 않고, 마우스를 올렸을 때만 파랗게 한다 */
+.task-duration {
+    flex-shrink: 0;
+    padding: 1px 6px;
+    border: none;
+    border-radius: 999px;
+    background-color: var(--surface-strong);
+    color: var(--text-muted);
+    font-size: 0.82em;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.task-duration:hover:not(:disabled) {
+    background-color: var(--accent-soft);
+    color: var(--accent);
+}
+
+/* 아직 안 정한 할 일의 "+ 길이": "+ 시간"(.task-slot-empty)처럼 바탕 없는 옅은 글자이고, 마우스를 올린 줄(또는 키보드로 들어간 줄)에서만 보인다.
+   안 보일 때도 자리는 차지해서(visibility: hidden) 마우스를 올리고 내릴 때 줄의 다른 것이 움직이지 않는다 */
+.task-duration.task-duration-empty {
+    background: none;
+    color: var(--text-faint);
+    visibility: hidden;
+}
+
+.task-row:hover .task-duration-empty,
+.task-row:focus-within .task-duration-empty {
+    visibility: visible;
+}
+
+.task-duration.task-duration-empty:hover:not(:disabled) {
+    background: none;
+    color: var(--accent);
+}
+
+/* 시간표에 이미 들어간 할 일(app.js의 refreshTaskSlots가 has-plan을 붙인다)에는 "+ 길이"를 두지 않는다.
+   길이는 계획 블록이 이미 말해 주고, 시간 글자까지 붙은 붐비는 줄이라 자리도 모자라다 */
+.task-row.has-plan .task-duration-empty {
+    display: none;
+}
+
+/* 끝낸 할 일의 길이 글자는 흐리게 (끝낸 할 일 이름이 흐린 것과 같이) */
+.task-row[data-done="1"] .task-duration {
+    opacity: 0.6;
+}
+
+/* "오늘 할 일" 제목 옆 "· 남은 1시간 30분": 제목과 같은 크기, 조금 옅은 색. 마우스를 올리면 설명이 나온다(title) */
+.tasks-total {
+    font-weight: 500;
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+}
+
+/* 걸리는 시간 작은 창의 직접 쓰는 칸: 길이 버튼 줄 아래에 창 폭을 다 쓴다 */
+.tl-popover .task-duration-input {
+    box-sizing: border-box;
+    width: 100%;
+    margin-top: 10px;
+    padding: 5px 8px;
+}
+
+.tl-popover .task-duration-input.invalid {
+    border-color: var(--danger);
+    background-color: var(--danger-soft);
 }
 
 /* 마감일 버튼 + 눌렀을 때 열리는 날짜 선택 창.

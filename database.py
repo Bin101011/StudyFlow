@@ -162,7 +162,8 @@ def init_db():
             run(f"ALTER TABLE tasks ADD COLUMN {name} {column_type}")
 
     # sort_order: 오늘 탭의 할 일 목록에서 사용자가 끌어서 정한 순서(1, 2, 3…). 정한 적 없으면 NULL이고, NULL인 것은 정한 것들 뒤에 만든 순서로 온다.
-    # 할 일의 날짜가 바뀌면 NULL로 되돌린다(그 날짜의 맨 뒤로 가도록). 새로 만든 할 일도 NULL이라 맨 뒤에 붙는다
+    # 할 일의 날짜가 바뀌면 NULL로 되돌린다(그 날짜의 맨 뒤로 가도록).
+    # 오늘 탭에서 새로 만든 할 일은 add_task가 "번호 있는 마지막 할 일 바로 뒤"에 순서를 정해 준다(place_after_last_ranked)
     if "sort_order" not in existing:
         run("ALTER TABLE tasks ADD COLUMN sort_order INTEGER")
     # step_order: 프로젝트 탭에서 사용자가 끌어서 정한 단계 순서(같은 상위 단계 아래, 또는 맨 위 단계들끼리 1, 2, 3…).
@@ -176,6 +177,11 @@ def init_db():
     # 우선순위 탭과는 관계없다. 이미 있던 할 일은 모두 번호가 있는 채(0)로 시작한다. 다른 날로 옮겨도 그대로 남는다
     if "no_rank" not in existing:
         run("ALTER TABLE tasks ADD COLUMN no_rank INTEGER NOT NULL DEFAULT 0")
+    # duration_min: 이 할 일이 얼마나 걸릴지(분). "몇 시부터"는 정하지 않고 "15분 걸릴 것"만 적어 둔다(2026-11-23 사용자 요청).
+    # 정하지 않은 할 일은 NULL이다. 오늘 탭의 남은 시간 합계와, 시간표로 끌어다 놓을 때 만들어지는 계획의 길이에 쓴다.
+    # 이미 있던 할 일은 모두 NULL(안 정함)로 시작한다. 다른 날로 옮겨도 그대로 남는다
+    if "duration_min" not in existing:
+        run("ALTER TABLE tasks ADD COLUMN duration_min INTEGER")
 
     # projects 표에도 folder_id(들어 있는 폴더, 없으면 NULL)를 덧붙인다
     columns, _ = run("PRAGMA table_info(projects)")
@@ -184,6 +190,12 @@ def init_db():
     # 프로젝트 메모: 프로젝트 카드에 붙이는 자유 메모. 이미 있던 프로젝트들은 빈 글자("")로 시작한다 (DEFAULT '')
     if "memo" not in [column["name"] for column in columns]:
         run("ALTER TABLE projects ADD COLUMN memo TEXT NOT NULL DEFAULT ''")
+
+    # 하루 메모의 형식(2026-11-20): "text"는 글자 그대로(줄바꿈은 \n), "html"은 굵게·기울임·취소선이 들어간 서식 메모(<b>, <i>, <strike>, 줄은 <br>/<div>).
+    # 서식을 넣기 전에 쓴 메모는 모두 "text"로 남는다(DEFAULT 'text'). 옛 메모의 내용은 여기서 바꾸지 않고, 사용자가 그 메모를 고칠 때 화면이 "html"로 저장한다
+    columns, _ = run("PRAGMA table_info(day_memos)")
+    if "format" not in [column["name"] for column in columns]:
+        run("ALTER TABLE day_memos ADD COLUMN format TEXT NOT NULL DEFAULT 'text'")
 
     # 인덱스(색인): 책 뒤의 "찾아보기"처럼, 표 전체를 처음부터 끝까지 훑지 않고 원하는 줄을 바로 찾게 해 주는 장치다.
     # 특히 parent_id가 중요하다. NO_CHILDREN("하위 단계가 있는가?")이 할 일 한 줄마다 "나를 부모로 삼는 줄이 있나?"를 묻는데,
@@ -353,13 +365,39 @@ def add_task(content, date, project_id=None, parent_id=None):
                 (content, date, project_id, parent_id),
             )
             # lastrowid: 방금 추가한 줄에 자동으로 붙은 번호
-            row = connection.execute("SELECT * FROM tasks WHERE id = ?", (cursor.lastrowid,)).fetchone()
+            new_id = cursor.lastrowid
+            if date is not None and parent_id is None:
+                place_after_last_ranked(connection, date, new_id)
+            row = connection.execute("SELECT * FROM tasks WHERE id = ?", (new_id,)).fetchone()
             return dict(row)
+
+
+def place_after_last_ranked(connection, date, new_id):
+    """오늘 탭에 새로 만든 할 일(new_id)을 그날 "번호 있는 마지막 할 일" 바로 뒤에 놓는다.
+    그냥 두면 목록 맨 끝에 붙어서, 번호 없는 할 일(예: "• 점심") 아래에 "5"가 생긴다. 그러면 1~4와 5 사이가 떨어져 보인다.
+    번호 있는 할 일이 하나도 없으면 맨 위(1번 자리)에 놓는다.
+    그날 안 끝낸 할 일 전체에 1, 2, 3… 순서를 새로 적는다(끌어서 순서를 바꿀 때와 같은 방식). add_task와 같은 거래 안에서 실행된다."""
+    # 화면(list_tasks)과 같은 조건, 같은 순서로 그날 안 끝낸 할 일을 가져온다. 방금 만든 할 일은 빼고 따로 끼워 넣는다
+    rows = connection.execute(
+        "SELECT t.id, t.no_rank FROM tasks t "
+        f"WHERE t.date = ? AND t.done = 0 AND t.id != ? AND {NO_CHILDREN} "
+        "ORDER BY t.sort_order IS NULL, t.sort_order, t.id",
+        (date, new_id),
+    ).fetchall()
+    ids = [row["id"] for row in rows]
+    # 번호 있는(no_rank 0) 할 일 중 가장 아래에 있는 것의 자리. 없으면 -1이라서 아래 insert가 0번 자리(맨 위)에 넣는다
+    last_ranked = -1
+    for index, row in enumerate(rows):
+        if row["no_rank"] == 0:
+            last_ranked = index
+    ids.insert(last_ranked + 1, new_id)
+    for position, task_id in enumerate(ids, start=1):
+        connection.execute("UPDATE tasks SET sort_order = ? WHERE id = ?", (position, task_id))
 
 
 # 수정할 수 있는 칸의 이름들. 아래 update_row가 SQL 문장에 칸 이름을 직접 넣는데,
 # 칸 이름은 ?로 안전하게 넘길 수 없다. 그래서 화면이 보낸 이름을 그대로 쓰지 않고, 이 목록에 있는 것만 쓴다
-EDITABLE_COLUMNS = ("content", "date", "done", "done_at", "deadline", "importance", "urgency", "memo", "no_rank")
+EDITABLE_COLUMNS = ("content", "date", "done", "done_at", "deadline", "importance", "urgency", "memo", "no_rank", "duration_min")
 
 
 def update_task(task_id, changes):
@@ -696,19 +734,20 @@ def delete_time_block(block_id):
 # ---------- 하루 메모 ----------
 
 def get_day_memo(date):
-    """그날의 메모 내용을 돌려준다. 메모가 없으면 빈 글자."""
-    rows, _ = run("SELECT content FROM day_memos WHERE date = ?", (date,))
-    return rows[0]["content"] if rows else ""
+    """그날의 메모를 (내용, 형식)으로 돌려준다. 형식은 "text" 또는 "html"(init_db의 설명). 메모가 없으면 ("", "text")."""
+    rows, _ = run("SELECT content, format FROM day_memos WHERE date = ?", (date,))
+    return (rows[0]["content"], rows[0]["format"]) if rows else ("", "text")
 
 
-def set_day_memo(date, content):
-    """그날의 메모를 저장한다. 내용이 비어 있으면(공백뿐인 경우도) 메모를 지운다."""
+def set_day_memo(date, content, memo_format="text"):
+    """그날의 메모를 저장한다. 내용이 비어 있으면(공백뿐인 경우도) 메모를 지운다.
+    memo_format은 "text" 또는 "html"이다. 고르는 일과 html이 비었는지 보는 일은 app.py가 미리 한다."""
     if content.strip() == "":
         run("DELETE FROM day_memos WHERE date = ?", (date,))
         return
-    # ON CONFLICT ... DO UPDATE: 그 날짜의 메모가 이미 있으면 새로 만들지 않고 내용만 바꾼다 (없으면 새로 만든다)
+    # ON CONFLICT ... DO UPDATE: 그 날짜의 메모가 이미 있으면 새로 만들지 않고 내용과 형식만 바꾼다 (없으면 새로 만든다)
     run(
-        "INSERT INTO day_memos (date, content) VALUES (?, ?) "
-        "ON CONFLICT(date) DO UPDATE SET content = excluded.content",
-        (date, content),
+        "INSERT INTO day_memos (date, content, format) VALUES (?, ?, ?) "
+        "ON CONFLICT(date) DO UPDATE SET content = excluded.content, format = excluded.format",
+        (date, content, memo_format),
     )

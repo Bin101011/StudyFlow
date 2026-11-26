@@ -62,7 +62,9 @@ await js(`document.querySelector('[data-tab="today"]').click()`);
 await waitFor(async () => (await js(`document.querySelectorAll("#timeline-grid .tl-event").length`)) > 0, 15000);
 await sleep(500);
 const today = await js(`viewedDate`);
-const memoOnServer = async () => (await api("/api/day-memo?date=" + today)).data.content;
+// 하루 메모는 서식 칸이라 서버에 html로 저장된다(2026-11-20). 보이는 글자로 바꿔서 비교한다
+const textOf = (h) => js(`(() => { const d = document.createElement("div"); d.style.whiteSpace = "pre-wrap"; d.innerHTML = DOMPurify.sanitize(${JSON.stringify(h)}); document.body.appendChild(d); const t = d.innerText; d.remove(); return t; })()`);
+const memoOnServer = async () => textOf((await api("/api/day-memo?date=" + today)).data.content);
 
 console.log("--- 쓰기 요청 세기 ---");
 await sleep(500);
@@ -98,7 +100,7 @@ await rule();
 
 // 칸을 벗어나서 저장하는 것과 다른 길: 커서가 칸에 없어도 저장 대기(또는 실패 뒤 다시 시도 대기) 중이면 저장한다
 await js(`dayMemoInput.blur()`); await sleep(300);
-await js(`dayMemoInput.value = "커서 없이 대기 중인 메모"; dayMemoInput.dispatchEvent(new Event("input"))`);
+await js(`dayMemoInput.textContent = "커서 없이 대기 중인 메모"; dayMemoInput.dispatchEvent(new Event("input"))`);
 await closeLikePython();
 check("커서가 칸에 없어도 저장 대기 중인 하루 메모가 저장된다", (await memoOnServer()) === "커서 없이 대기 중인 메모", await memoOnServer());
 

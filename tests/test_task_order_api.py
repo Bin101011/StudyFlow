@@ -55,7 +55,7 @@ database.update_task(b["id"], {"done": 0})
 other = database.add_task("다른 날", "2026-10-30")
 database.update_task(other["id"], {"done": 0})
 r = put({"date": D, "ids": [other["id"], 99999, a["id"]]})
-check("다른 날짜의 할 일과 없는 번호는 무시한다(오류 아님)", r.status_code == 200 and names("2026-10-30") == ["다른 날"] and [x for x in database.list_tasks("2026-10-30")][0]["sort_order"] is None)
+check("다른 날짜의 할 일과 없는 번호는 무시한다(오류 아님)", r.status_code == 200 and names("2026-10-30") == ["다른 날"] and database.get_task(other["id"])["sort_order"] == other["sort_order"])
 
 # 날짜가 바뀌면 순서가 비워진다
 put({"date": D, "ids": [e["id"], a["id"], b["id"], d["id"], f["id"]]})
@@ -104,5 +104,27 @@ c.delete("/api/tasks/%d" % u["id"])
 # 삭제 후 남은 것들의 순서는 그대로
 before = names()
 check("지운 뒤에도 나머지의 순서가 유지된다", before == [x for x in before], before)
+
+# 새 할 일은 "번호 있는 마지막 할 일" 바로 뒤에 들어간다 (번호 없는 할 일 아래로 떨어지지 않게)
+N = "2026-11-05"
+def post(content, date=N): return c.post("/api/tasks", json={"content": content, "date": date}).get_json()
+n1 = post("하나"); n2 = post("둘"); dot = post("점심")
+c.patch("/api/tasks/%d" % dot["id"], json={"no_rank": True})
+post("셋")
+check("새 할 일은 끝의 번호 없는 할 일 위, 번호 있는 마지막 할 일 바로 뒤", names(N) == ["하나", "둘", "셋", "점심"], names(N))
+c.patch("/api/tasks/%d" % n2["id"], json={"no_rank": True})
+post("넷")
+check("중간의 번호 없는 할 일은 자리를 지키고, 새 할 일은 마지막 번호 있는 할 일 뒤", names(N) == ["하나", "둘", "셋", "넷", "점심"], names(N))
+database.update_task(n1["id"], {"done": 1})
+post("다섯")
+check("끝낸 할 일은 계산에서 빠지고 아래에 그대로", names(N) == ["둘", "셋", "넷", "다섯", "점심", "하나"], names(N))
+
+E = "2026-11-06"
+only = post("저녁", E)
+c.patch("/api/tasks/%d" % only["id"], json={"no_rank": True})
+post("공부", E)
+check("번호 있는 할 일이 없으면 맨 위에 들어간다", names(E) == ["공부", "저녁"], names(E))
+inbox = c.post("/api/tasks", json={"content": "날짜 없음", "date": None}).get_json()
+check("날짜 없는 할 일(수집함)은 순서를 건드리지 않는다", database.get_task(inbox["id"])["sort_order"] is None)
 print("\n실패 %d개" % failed if failed else "\n모두 통과")
 sys.exit(1 if failed else 0)

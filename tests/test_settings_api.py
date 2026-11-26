@@ -209,22 +209,27 @@ data = client.get("/api/settings").get_json()
 today_sliders = {d["key"]: d for d in data["todaySliders"]}
 check("시간표 너비 범위는 300~500, 기본 400", (today_sliders["timelineWidth"]["min"], today_sliders["timelineWidth"]["max"], today_sliders["timelineWidth"]["default"]) == (300, 500, 400))
 check("오른쪽 칸 범위는 300~500, 기본 300", (today_sliders["todayRightWidth"]["min"], today_sliders["todayRightWidth"]["max"], today_sliders["todayRightWidth"]["default"]) == (300, 500, 300))
-check("화면에 합계 한계 850을 알려 준다", data["todayWidthsMax"] == 850)
+check("화면에 합계 한계 900을 알려 준다", data["todayWidthsMax"] == 900)
+check("메모 칸 높이 범위는 60~600, 기본 110", (today_sliders["dayMemoHeight"]["min"], today_sliders["dayMemoHeight"]["max"], today_sliders["dayMemoHeight"]["default"]) == (60, 600, 110))
+check("메모 칸 높이를 저장한다", client.put("/api/settings", json={"dayMemoHeight": 237}).get_json()["dayMemoHeight"] == 237)
+check("메모 칸 높이의 범위 밖 값은 끝값으로", client.put("/api/settings", json={"dayMemoHeight": 5000}).get_json()["dayMemoHeight"] == 600)
+check("메모 칸 높이에 글자를 보내면 무시한다", client.put("/api/settings", json={"dayMemoHeight": "큼"}).get_json()["dayMemoHeight"] == 600)
+client.put("/api/settings", json={"dayMemoHeight": 110})
 check("범위 밖 값은 끝값으로", widths({"timelineWidth": 100, "todayRightWidth": 100}) == (300, 300))
-check("합이 850이면 그대로", widths({"timelineWidth": 400, "todayRightWidth": 450}) == (400, 450))
-check("오른쪽이 450일 때 시간표만 500을 보내면 시간표가 400으로", widths({"timelineWidth": 500}) == (400, 450))
+check("합이 900이면 그대로", widths({"timelineWidth": 400, "todayRightWidth": 500}) == (400, 500))
+check("오른쪽이 500일 때 시간표만 500을 보내면 시간표가 400으로", widths({"timelineWidth": 500}) == (400, 500))
 widths({"timelineWidth": 500, "todayRightWidth": 300})
-check("시간표가 500일 때 오른쪽만 450을 보내면 오른쪽이 350으로", widths({"todayRightWidth": 450}) == (500, 350))
-check("둘 다 넘게 보내면 시간표를 줄인다", widths({"timelineWidth": 500, "todayRightWidth": 450}) == (400, 450))
+check("시간표가 500일 때 오른쪽만 500을 보내면 오른쪽이 400으로", widths({"todayRightWidth": 500}) == (500, 400))
+check("둘 다 넘게 보내면 시간표를 줄인다", widths({"timelineWidth": 500, "todayRightWidth": 500}) == (400, 500))
 widths({"timelineWidth": 380, "todayRightWidth": 300})
 check("다른 설정만 바꿔도 너비는 그대로", widths({"fontSize": 15}) == (380, 300))
-check("시간표 350 + 오른쪽 500(끝값)은 합 850이라 그대로", widths({"timelineWidth": 350, "todayRightWidth": 500}) == (350, 500))
+check("시간표 450 + 오른쪽 450은 합 900이라 그대로", widths({"timelineWidth": 450, "todayRightWidth": 450}) == (450, 450))
 check("오른쪽 칸의 범위 밖 값(600)은 500으로", widths({"timelineWidth": 300, "todayRightWidth": 600}) == (300, 500))
 widths({"timelineWidth": 380, "todayRightWidth": 300})
 with open(SETTINGS, "w", encoding="utf-8") as f:
     json.dump({"timelineWidth": 550, "todayRightWidth": 450}, f)
 values = client.get("/api/settings").get_json()["values"]
-check("파일의 옛 값(550)이나 넘는 합도 읽을 때 맞춘다", (values["timelineWidth"], values["todayRightWidth"]) == (400, 450), values)
+check("파일의 옛 값(550)이나 넘는 합도 읽을 때 맞춘다(550→500, 합 950 → 시간표 450)", (values["timelineWidth"], values["todayRightWidth"]) == (450, 450), values)
 
 # ----- 시간표 첫 위치, 일정 기본 시작·길이 -----
 values = client.get("/api/settings").get_json()["values"]
@@ -241,6 +246,18 @@ bad = client.put("/api/settings", json={"timelineCenterTime": " 20:30x", "eventD
 check("앞뒤에 글자가 붙은 시각, null, true도 원래 값을 지킨다", (bad["timelineCenterTime"], bad["eventDefaultStart"], bad["eventDefaultAllDay"], bad["eventDefaultMinutes"]) == ("20:30", "13:15", True, 30), bad)
 saved = client.put("/api/settings", json={"eventDefaultAllDay": False}).get_json()
 check("종일을 끄면 시각(13:15)으로 돌아간다", (saved["eventDefaultAllDay"], saved["eventDefaultStart"]) == (False, "13:15"), saved)
+
+# ----- 시간표에 넣을 때 기본 길이 (할 일에 걸리는 시간을 안 정했을 때, 2026-11-23) -----
+check("기본값: 시간표에 넣을 때 60분", values["planDefaultMinutes"] == 60, values)
+saved = client.put("/api/settings", json={"planDefaultMinutes": 45}).get_json()
+check("45분(길이 버튼에 있는 값)은 저장된다", saved["planDefaultMinutes"] == 45, saved)
+check("시간표 기본 길이만 바꿔도 일정 기본 길이(30분)는 그대로", saved["eventDefaultMinutes"] == 30, saved)
+for wrong in (20, 0, 180, -15, "30", True, None, 30.0, [30]):
+    bad = client.put("/api/settings", json={"planDefaultMinutes": wrong}).get_json()
+    check("틀린 값 %r은 원래 값(45분)을 지킨다" % (wrong,), bad["planDefaultMinutes"] == 45, bad)
+saved = client.put("/api/settings", json={"eventDefaultMinutes": 120}).get_json()
+check("일정 기본 길이를 바꿔도 시간표 기본 길이(45분)는 그대로", saved["planDefaultMinutes"] == 45 and saved["eventDefaultMinutes"] == 120, saved)
+client.put("/api/settings", json={"eventDefaultMinutes": 30})
 # 예전 방식("allDay"를 시각 자리에 저장)의 파일도 종일 켜기로 읽고, 시각은 기본값 09:00
 with open(SETTINGS, "w", encoding="utf-8") as f:
     json.dump({"eventDefaultStart": "allDay"}, f)
