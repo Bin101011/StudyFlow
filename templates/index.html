@@ -518,8 +518,10 @@
         <p id="project-error" class="dialog-error"></p>
 
         <div class="dialog-buttons">
-            <!-- 삭제 버튼은 프로젝트를 수정할 때만 보인다 -->
+            <!-- 삭제, 보관 버튼은 프로젝트를 수정할 때만 보인다 -->
             <button id="project-delete" class="danger" hidden>삭제</button>
+            <!-- 보관: 끝난 프로젝트를 지우지 않고 목록 맨 아래 "끝난 프로젝트"로 치워 둔다. 보관한 프로젝트에서는 "보관 풀기"가 된다 -->
+            <button id="project-archive" hidden>보관</button>
             <span class="spacer"></span>
             <button id="project-cancel">취소</button>
             <button id="project-save" class="primary">저장</button>

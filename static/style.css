@@ -3865,6 +3865,28 @@ body.project-dragging * {
     margin-bottom: 22px;
 }
 
+/* "끝난 프로젝트"(보관한 프로젝트) 구역: 폴더를 2열로 놓아도 이 구역은 두 열에 걸쳐 맨 아래에 놓는다.
+   column-span: all은 "여러 열로 나눈 상자 안에서 이 요소만 모든 열을 가로지르게" 하는 CSS다 */
+#project-list.two-folder-columns > .archived-section {
+    column-span: all;
+}
+
+/* 보관한 구역의 머리글은 폴더보다 한 단계 옅게 보인다 */
+.archived-section > .folder-head {
+    background-color: transparent;
+    border-style: dashed;
+}
+
+/* 보관한 프로젝트 카드: 조금 흐리게. 마우스를 올리면 또렷해진다 (끝났지만 단계를 확인하거나 고칠 수는 있다) */
+.project-card.archived {
+    opacity: 0.7;
+}
+
+.project-card.archived:hover,
+.project-card.archived:focus-within {
+    opacity: 1;
+}
+
 /* "폴더 2열"은 카드 열 수가 4일 때만 쓸 수 있다는 짧은 안내. 쓸 수 있을 때는 흐리게, 막혔을 때는 또렷하게 보여 이유를 알려 준다 */
 .settings-note {
     font-size: 12.5px;

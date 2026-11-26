@@ -190,6 +190,10 @@ def init_db():
     # 프로젝트 메모: 프로젝트 카드에 붙이는 자유 메모. 이미 있던 프로젝트들은 빈 글자("")로 시작한다 (DEFAULT '')
     if "memo" not in [column["name"] for column in columns]:
         run("ALTER TABLE projects ADD COLUMN memo TEXT NOT NULL DEFAULT ''")
+    # 프로젝트 보관(2026-11-24): 1이면 "끝난 프로젝트"로 치워 둔 것이다. 지우지 않으므로 할 일과의 연결이 남아서,
+    # 지난 날짜를 다시 볼 때도 그 할 일에 프로젝트 이름표와 색이 그대로 보인다. 이미 있던 프로젝트는 모두 0(보관 안 함)으로 시작한다
+    if "archived" not in [column["name"] for column in columns]:
+        run("ALTER TABLE projects ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
 
     # 하루 메모의 형식(2026-11-20): "text"는 글자 그대로(줄바꿈은 \n), "html"은 굵게·기울임·취소선이 들어간 서식 메모(<b>, <i>, <strike>, 줄은 <br>/<div>).
     # 서식을 넣기 전에 쓴 메모는 모두 "text"로 남는다(DEFAULT 'text'). 옛 메모의 내용은 여기서 바꾸지 않고, 사용자가 그 메모를 고칠 때 화면이 "html"로 저장한다
@@ -301,7 +305,8 @@ def list_open_tasks():
         "         (SELECT COUNT(*) FROM tasks c WHERE c.parent_id = t.id AND c.done = 1) AS child_done, "
         "         (SELECT MIN(c.deadline) FROM tasks c WHERE c.parent_id = t.id AND c.done = 0 AND c.deadline IS NOT NULL) AS child_deadline "
         "  FROM tasks t LEFT JOIN projects p ON p.id = t.project_id "
-        "  WHERE t.parent_id IS NULL"
+        # 보관한(끝난) 프로젝트에 남은 단계는 뺀다. 프로젝트가 없는 할 일은 p.archived가 NULL이라 COALESCE로 0으로 본다
+        "  WHERE t.parent_id IS NULL AND COALESCE(p.archived, 0) = 0"
         ") WHERE (child_total = 0 AND done = 0) OR (child_total > 0 AND child_done < child_total) "
         "ORDER BY id"
     )
@@ -534,7 +539,7 @@ def add_project(name, deadline, color, progress_mode, manual_percent, folder_id=
 
 
 # 프로젝트에서 고칠 수 있는 칸들 (EDITABLE_COLUMNS와 같은 이유로 고정된 목록)
-EDITABLE_PROJECT_COLUMNS = ("name", "deadline", "color", "progress_mode", "manual_percent", "folder_id", "memo")
+EDITABLE_PROJECT_COLUMNS = ("name", "deadline", "color", "progress_mode", "manual_percent", "folder_id", "memo", "archived")
 
 
 def update_project(project_id, changes):

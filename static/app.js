@@ -5294,6 +5294,7 @@ const projectSwatchRow = document.getElementById("project-swatch-row");
 const projectSwatches = document.getElementById("project-color-swatches");
 const projectError = document.getElementById("project-error");
 const projectDeleteButton = document.getElementById("project-delete");
+const projectArchiveButton = document.getElementById("project-archive");
 const projectFolderSelect = document.getElementById("project-folder");
 const folderDialog = document.getElementById("folder-dialog");
 const folderDialogTitle = document.getElementById("folder-dialog-title");
@@ -5312,6 +5313,10 @@ let foldersCache = [];
 let editingProject = null;
 // 삭제 버튼을 한 번 눌러서 "정말 삭제?" 확인을 기다리는 중인지
 let projectDeleteArmed = false;
+// 안 끝낸 단계가 남은 프로젝트에서 보관 버튼을 한 번 눌러서 "그래도 보관?" 확인을 기다리는 중인지
+let projectArchiveArmed = false;
+// 목록 맨 아래 "끝난 프로젝트"(보관한 프로젝트들) 구역을 펼쳐 두었는지. 앱을 켤 때마다 접힌 채로 시작한다(저장하지 않는다)
+let archivedSectionOpen = false;
 // 단계를 추가한 직후 다시 그린 카드에서, 입력 칸에 커서를 되돌려둘 프로젝트 번호. 단계를 연달아 입력하기 편하게 하려는 것이다
 let projectToFocus = null;
 // "+ 하위"로 하위 단계 입력 칸을 열어둔 단계의 번호들. 하위 단계를 연달아 적을 수 있게, 다시 그려도 열린 채로 둔다
@@ -5359,14 +5364,18 @@ function fillProjectSelect() {
     const previous = taskProjectSelect.value;
     taskProjectSelect.innerHTML = "";
     taskProjectSelect.add(new Option("프로젝트 없음", ""));
+    // 보관한(끝난) 프로젝트는 새 할 일을 붙일 곳이 아니라서 고르는 칸에 넣지 않는다
+    const activeProjects = projectsCache.filter(function (project) {
+        return !project.archived;
+    });
     // 폴더에 없는 프로젝트를 먼저 놓고, 폴더에 든 프로젝트는 폴더 이름의 묶음(optgroup)으로 보여준다
-    projectsCache.filter(function (project) {
+    activeProjects.filter(function (project) {
         return project.folderId === null;
     }).forEach(function (project) {
         taskProjectSelect.add(new Option(project.name, project.id));
     });
     foldersCache.forEach(function (folder) {
-        const inside = projectsCache.filter(function (project) {
+        const inside = activeProjects.filter(function (project) {
             return project.folderId === folder.id;
         });
         if (inside.length === 0) {
@@ -5380,7 +5389,7 @@ function fillProjectSelect() {
         taskProjectSelect.appendChild(group);
     });
     taskProjectSelect.value = previous;
-    // 그 사이 지워진 프로젝트였다면 아무것도 선택되지 않은 상태가 되므로 "프로젝트 없음"으로 돌린다
+    // 그 사이 지워지거나 보관한 프로젝트였다면 아무것도 선택되지 않은 상태가 되므로 "프로젝트 없음"으로 돌린다
     if (taskProjectSelect.value !== previous) {
         taskProjectSelect.value = "";
     }
@@ -5580,15 +5589,17 @@ function makeProjectMemo(project) {
 // 프로젝트 카드 하나를 만든다
 function makeProjectCard(project) {
     const card = document.createElement("div");
-    card.className = "project-card";
+    // 보관한(끝난) 프로젝트의 카드는 흐리게 보인다 (style.css의 .project-card.archived)
+    card.className = "project-card" + (project.archived ? " archived" : "");
     card.dataset.projectId = project.id;  // 카드가 어느 열에 있었는지 기억할 때 쓰는 이름표 (아래 "프로젝트 카드 배치")
     card.style.borderLeftColor = project.color;
 
     // 맨 윗줄: 이름, 마감일, 수정 버튼
     const head = document.createElement("div");
     head.className = "project-card-head";
-    // 카드의 맨 윗줄(이름이 있는 줄)을 잡고 끌면 폴더로 옮길 수 있다. 폴더가 하나도 없으면 옮길 곳이 없으니 끌기를 켜지 않는다
-    if (foldersCache.length > 0) {
+    // 카드의 맨 윗줄(이름이 있는 줄)을 잡고 끌면 폴더로 옮길 수 있다. 폴더가 하나도 없으면 옮길 곳이 없으니 끌기를 켜지 않는다.
+    // 보관한 프로젝트는 "끝난 프로젝트" 구역에 모여 있어서 폴더로 옮겨도 보이지 않으므로 끌기를 켜지 않는다 (폴더는 수정 창에서 바꿀 수 있다)
+    if (foldersCache.length > 0 && !project.archived) {
         card.classList.add("draggable");
         head.addEventListener("pointerdown", function (e) {
             beginProjectDrag(e, head, card, project);
@@ -5603,7 +5614,8 @@ function makeProjectCard(project) {
     if (project.deadline) {
         const deadline = describeDeadline(project.deadline);
         const deadlineText = document.createElement("span");
-        deadlineText.className = "project-deadline" + (deadline.urgent ? " urgent" : "");
+        // 끝난 프로젝트는 마감이 지났어도 급한 일이 아니므로 빨간색으로 강조하지 않는다
+        deadlineText.className = "project-deadline" + (deadline.urgent && !project.archived ? " urgent" : "");
         deadlineText.textContent = deadline.text;
         head.appendChild(deadlineText);
     }
@@ -6073,6 +6085,10 @@ function folderIdOfSection(section) {
 function projectDropTarget(x, y) {
     const element = document.elementFromPoint(x, y);
     const section = element ? element.closest(".folder-section") : null;
+    // "끝난 프로젝트" 구역은 폴더가 아니라서 놓을 곳이 아니다 (보관은 수정 창의 [보관] 버튼으로 한다)
+    if (section && section.classList.contains("archived-section")) {
+        return null;
+    }
     return section && projectListElement.contains(section) ? section : null;
 }
 
@@ -6098,7 +6114,8 @@ function startProjectDragVisuals(drag) {
         zoneHint.textContent = "여기에 놓으면 폴더에서 뺍니다";
         zoneHead.append(zoneName, zoneHint);
         zone.appendChild(zoneHead);
-        projectListElement.appendChild(zone);
+        // "끝난 프로젝트" 구역이 있으면 그 위에 끼워 넣는다 (insertBefore의 두 번째 값이 null이면 맨 끝에 붙인다)
+        projectListElement.insertBefore(zone, projectListElement.querySelector(".archived-section"));
         drag.tempZone = zone;
     }
 }
@@ -6358,17 +6375,29 @@ function renderProjectsNow() {
         return;
     }
 
-    const loose = projectsCache.filter(function (project) {
+    // 보관한(끝난) 프로젝트는 폴더에 넣지 않고 맨 아래 "끝난 프로젝트" 구역에만 모은다. 폴더 요약(개수, 평균 %)에서도 빠진다
+    const active = projectsCache.filter(function (project) {
+        return !project.archived;
+    });
+    const archived = projectsCache.filter(function (project) {
+        return project.archived;
+    });
+    const loose = active.filter(function (project) {
         return project.folderId === null;
     });
     if (foldersCache.length === 0) {
-        projectListElement.appendChild(makeProjectGrid(loose));
+        if (loose.length > 0) {
+            projectListElement.appendChild(makeProjectGrid(loose));
+        }
+        if (archived.length > 0) {
+            projectListElement.appendChild(makeArchivedSection(archived));
+        }
         layoutProjectGrids();
         return;
     }
 
     foldersCache.forEach(function (folder) {
-        const inside = projectsCache.filter(function (project) {
+        const inside = active.filter(function (project) {
             return project.folderId === folder.id;
         });
         projectListElement.appendChild(makeFolderSection(folder, inside));
@@ -6389,7 +6418,54 @@ function renderProjectsNow() {
         section.lastChild.classList.add("folder-body");
         projectListElement.appendChild(section);
     }
+    if (archived.length > 0) {
+        projectListElement.appendChild(makeArchivedSection(archived));
+    }
     layoutProjectGrids();  // 모두 화면에 붙인 뒤에 열에 나눠 쌓는다
+}
+
+// 목록 맨 아래의 "끝난 프로젝트 N개" 구역. 폴더처럼 머리글을 누르면 접히고 펴진다(처음에는 접혀 있다).
+// 폴더와 달리 접힘 상태를 저장하지 않는다. 가끔 지난 프로젝트를 찾아볼 때만 펴는 곳이라서다
+function makeArchivedSection(projects) {
+    const section = document.createElement("section");
+    section.className = "folder-section archived-section" + (archivedSectionOpen ? "" : " collapsed");
+
+    const head = document.createElement("div");
+    head.className = "folder-head";
+    head.tabIndex = 0;
+    head.setAttribute("role", "button");
+    head.setAttribute("aria-expanded", String(archivedSectionOpen));
+
+    const arrow = document.createElement("span");
+    arrow.className = "folder-arrow";
+    arrow.textContent = archivedSectionOpen ? "▾" : "▸";
+    const name = document.createElement("span");
+    name.className = "folder-name";
+    name.textContent = "끝난 프로젝트";
+    const summary = document.createElement("span");
+    summary.className = "folder-summary";
+    summary.textContent = projects.length + "개 · 보관한 프로젝트";
+    head.append(arrow, name, summary);
+
+    function toggle() {
+        archivedSectionOpen = !archivedSectionOpen;
+        renderProjects();
+    }
+    head.addEventListener("click", toggle);
+    head.addEventListener("keydown", function (e) {
+        if ((e.key === "Enter" || e.key === " ") && e.target === head) {
+            e.preventDefault();
+            toggle();
+        }
+    });
+    section.appendChild(head);
+
+    if (archivedSectionOpen) {
+        const body = makeProjectGrid(projects);
+        body.classList.add("folder-body");
+        section.appendChild(body);
+    }
+    return section;
 }
 
 // ----- 프로젝트 색 고르기 도우미 -----
@@ -6517,6 +6593,12 @@ function openProjectDialog(project, options) {
     projectDeleteArmed = false;
     projectDeleteButton.textContent = "삭제";
     projectDeleteButton.hidden = !editingProject;
+    projectArchiveArmed = false;
+    projectArchiveButton.hidden = !editingProject;
+    projectArchiveButton.textContent = editingProject && editingProject.archived ? "보관 풀기" : "보관";
+    projectArchiveButton.title = editingProject && editingProject.archived
+        ? "다시 원래 자리(폴더)로 꺼냅니다"
+        : "끝난 프로젝트로 치워 둡니다. 지우지 않아서 지난 날짜의 할 일에 프로젝트 이름과 색이 남습니다";
     projectDialogTitle.textContent = editingProject ? "프로젝트 수정" : "새 프로젝트";
 
     projectNameInput.value = editingProject ? editingProject.name : "";
@@ -6592,6 +6674,31 @@ async function deleteProject() {
         await sendRequest("/api/projects/" + editingProject.id, "DELETE");
         projectDialog.close();
         await loadProjects({ animate: true, repackFolderIds: [folderId] });  // 지운 카드의 빈칸을 아래 카드들이 올라와 메운다
+    } catch (error) {
+        projectError.textContent = error.message;
+    }
+}
+
+// 프로젝트 보관 / 보관 풀기. 보관하면 카드가 목록 맨 아래 "끝난 프로젝트" 구역으로 옮겨진다(지우는 것이 아니다).
+// 안 끝낸 단계가 남아 있으면 삭제처럼 두 번 눌러야 보관된다. 보관하면 그 단계들은 우선순위 탭에도 나오지 않기 때문이다.
+// 창에서 고치던 다른 값(이름 등)은 저장하지 않는다 (삭제 버튼과 같다)
+async function archiveProject() {
+    const project = editingProject;
+    const archiving = !project.archived;  // 지금 보관 안 된 것이면 보관하기, 보관된 것이면 풀기
+    const unfinished = project.total - project.doneCount;
+    if (archiving && unfinished > 0 && !projectArchiveArmed) {
+        projectArchiveArmed = true;
+        projectArchiveButton.textContent = "안 끝낸 단계 " + unfinished + "개 · 그래도 보관?";
+        return;
+    }
+    try {
+        await sendRequest("/api/projects/" + project.id, "PATCH", { archived: archiving });
+        projectDialog.close();
+        showToast(archiving
+            ? "'" + project.name + "'을(를) 끝난 프로젝트로 보관했습니다 (목록 맨 아래)"
+            : "'" + project.name + "'을(를) 보관에서 꺼냈습니다");
+        // 카드가 빠지거나 들어온 폴더의 카드들을 다시 쌓아서 빈칸을 메운다
+        await loadProjects({ animate: true, repackFolderIds: [project.folderId] });
     } catch (error) {
         projectError.textContent = error.message;
     }
@@ -6675,6 +6782,7 @@ document.getElementById("project-cancel").addEventListener("click", function () 
     projectDialog.close();
 });
 projectDeleteButton.addEventListener("click", deleteProject);
+projectArchiveButton.addEventListener("click", archiveProject);
 document.getElementById("project-deadline-clear").addEventListener("click", function () {
     projectDeadlineInput.value = "";
 });

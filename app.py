@@ -1421,6 +1421,7 @@ def project_json(project, tasks):
         "manualPercent": project["manual_percent"],
         "folderId": project["folder_id"],
         "memo": project["memo"],
+        "archived": bool(project["archived"]),
         "total": project["total"],
         "doneCount": project["done_count"],
         "percent": percent,
@@ -1497,6 +1498,12 @@ def parse_project_fields(data):
             return None, (jsonify({"error": f"메모는 {PROJECT_MEMO_MAX}자까지 쓸 수 있습니다."}), 400)
         fields["memo"] = memo.strip()  # 앞뒤 공백과 줄바꿈은 정리한다. 내용이 없으면 빈 글자("")가 되어 메모가 지워진다
 
+    if "archived" in data:
+        # 보관(끝난 프로젝트로 치워 두기). 폴더의 collapsed와 같이 true/false만 받는다
+        if not isinstance(data["archived"], bool):
+            return None, (jsonify({"error": "'archived'는 true 또는 false여야 합니다."}), 400)
+        fields["archived"] = 1 if data["archived"] else 0  # SQLite에는 true/false 대신 1/0으로 저장한다
+
     if "manualPercent" in data:
         try:
             # 0~100 밖의 값은 안쪽으로 맞춘다
@@ -1545,7 +1552,7 @@ def api_create_project():
     return jsonify(project), 201
 
 
-# 프로젝트 일부 수정 (PATCH): 이름, 마감일, 색, 진행률 방식, 직접 입력한 %. 보낸 것만 바꾼다
+# 프로젝트 일부 수정 (PATCH): 이름, 마감일, 색, 진행률 방식, 직접 입력한 %, 폴더, 메모, 보관. 보낸 것만 바꾼다
 @app.route("/api/projects/<int:project_id>", methods=["PATCH"])
 def api_update_project(project_id):
     fields, error_response = parse_project_fields(request.get_json())
